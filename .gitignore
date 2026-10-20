@@ -1,0 +1,48 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+
+# Frontend
+node_modules/
+.next/
+out/
+coverage/
+
+# Editors and OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# Data and model artifacts: do not commit raw ticket data or trained weights by default
+data/raw/
+data/private/
+data/interim/
+artifacts/
+models/*.joblib
+models/*.pkl
+models/*.pt
+models/*.onnx
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Logs
+*.log
