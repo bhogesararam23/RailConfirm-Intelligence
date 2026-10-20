@@ -51,6 +51,13 @@ RailConfirm is being developed as both a research project and a web application.
 - [Architecture Decision Records](docs/adr/README.md)
 - [Changelog](CHANGELOG.md)
 - [Development/session log](docs/DEVELOPMENT_LOG.md)
+- [Project canvas and priorities](docs/CANVAS.md)
+- [Definition of done](docs/DEFINITION_OF_DONE.md)
+- [Model card template](docs/model/MODEL_CARD_TEMPLATE.md)
+- [Status glossary](docs/model/STATUS_GLOSSARY.md)
+- [API contract](docs/architecture/API_CONTRACT.md)
+- [Experiment template](docs/EXPERIMENT_TEMPLATE.md)
+- [Third-party data policy](THIRD_PARTY_DATA.md)
 
 ## License
 
