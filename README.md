@@ -1,0 +1,61 @@
+# RailConfirm Intelligence
+
+An ML-powered Indian Railways ticket confirmation probability predictor for waitlisted (WL) and Reservation Against Cancellation (RAC) tickets, with passenger-wise forecasts, group-level outcome analysis, historical trend modelling, and a path toward authorized live status tracking.
+
+RailConfirm is being developed as both a research project and a web application. The goal is not to produce a percentage that looks precise; the goal is to estimate meaningful probabilities, evaluate them against real outcomes, and be clear about where the model does and does not have enough evidence.
+
+> **Project status:** Documentation and research planning. A trained prediction model, production data pipeline, and live PNR integration are not yet claimed to exist. Estimates must not be presented as reliable until validated on held-out real-world outcomes.
+
+## What it is intended to do
+
+- Estimate each passenger's final reservation outcome using information available at a defined prediction time.
+- Distinguish confirmed berth (CNF), RAC, and waitlisted outcomes where data and labels support those targets.
+- Estimate group outcomes, including the chance that all passengers are confirmed, all receive CNF/RAC, or at least a specified number receive confirmed berths.
+- Track how a prediction changes when new, authorized status observations become available.
+- Use historical trends and verified context only when they improve out-of-sample performance.
+- Report probability calibration, evidence coverage, freshness, and uncertainty rather than relying on unsupported accuracy claims.
+
+## Principles
+
+1. **Evidence before percentages.** Every displayed probability must be traceable to a model version, prediction timestamp, and documented input data.
+2. **No invented data.** Synthetic examples may be used for tests and UI development, but must never be presented as real railway history or model performance.
+3. **No leakage.** A historical prediction may use only information that would have been available at that prediction time.
+4. **Evaluate probabilities, not just labels.** Calibration and proper scoring rules matter.
+5. **Broad goals, honest coverage.** The long-term goal includes multiple WL/RAC categories, but support is enabled only when data quality and evaluation justify it.
+6. **Authorized access.** Do not bypass access controls or assume that a publicly reachable endpoint permits bulk collection, storage, or model training.
+7. **Privacy by design.** Avoid collecting passenger names and other unnecessary personal data. Protect PNRs and define retention before enabling tracking.
+8. **Explain limits.** RailConfirm is an estimate, not an official railway decision or a guarantee of a final reservation outcome.
+
+## Current roadmap
+
+- [ ] Establish a data source register and verify permitted use.
+- [ ] Define schemas for trains, route segments, statuses, observations, passenger outcomes, and group outcomes.
+- [ ] Build a historical-frequency baseline.
+- [ ] Define chronological backtesting and calibration evaluation.
+- [ ] Build manual-entry prediction flow.
+- [ ] Train and validate a model only after suitable data is available.
+- [ ] Add live status tracking only through an authorized provider.
+
+## Documentation
+
+- [Project status and scope](docs/PROJECT_STATUS.md)
+- [Research plan](docs/research/RESEARCH_PLAN.md)
+- [Data acquisition and source policy](docs/data/DATA_ACQUISITION.md)
+- [Data contract](docs/data/DATA_CONTRACT.md)
+- [Prediction targets](docs/model/PREDICTION_TARGETS.md)
+- [Evaluation protocol](docs/research/EVALUATION_PROTOCOL.md)
+- [Architecture overview](docs/architecture/OVERVIEW.md)
+- [Security and privacy](docs/SECURITY_AND_PRIVACY.md)
+- [Agent operating guide](AGENTS.md)
+- [Contributor guide](CONTRIBUTING.md)
+- [Architecture Decision Records](docs/adr/README.md)
+- [Changelog](CHANGELOG.md)
+- [Development/session log](docs/DEVELOPMENT_LOG.md)
+
+## License
+
+Software and documentation in this repository are licensed under the Apache License 2.0 unless a file or directory says otherwise. This license does not grant rights to third-party datasets, railway systems, trademarks, APIs, or service content. See [LICENSE](LICENSE) and [THIRD_PARTY_DATA.md](THIRD_PARTY_DATA.md).
+
+## Disclaimer
+
+RailConfirm Intelligence is an independent research and software project. It is not an official Indian Railways or IRCTC service and should not be represented as affiliated with, endorsed by, or operated by either. Final reservation status is determined by the relevant railway systems and applicable rules. Do not make travel or financial decisions solely on an unvalidated prediction.
