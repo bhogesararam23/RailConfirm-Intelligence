@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Research and data governance
+    url: https://github.com/bhogesararam23/RailConfirm-Intelligence/tree/main/docs
+    about: Review the research, data, licensing and privacy requirements before proposing data use.
