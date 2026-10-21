@@ -31,6 +31,10 @@ The product must remain useful in a local/manual mode when external services are
 - **Treat any available API as automatically acceptable:** Rejected because access, storage, model training, publication, privacy and commercial rights can differ.
 - **Allow arbitrary news headlines to alter probabilities directly:** Rejected; source items must be structured, time-stamped and evaluated for incremental value.
 
+## Relationship to ADR-0007
+
+ADR-0007 remains in force for Phases 0–7 and continues to prohibit third-party runtime API dependencies in the current build. This ADR clarifies and supersedes any interpretation of ADR-0007 that would make later live-data integrations permanently out of scope. It does not authorize a specific provider or change current implementation permissions.
+
 ## Consequences
 
 - The current build remains offline/local-first and requires no third-party credentials for core development, testing or manual input.
