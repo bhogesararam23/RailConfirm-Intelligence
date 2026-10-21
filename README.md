@@ -28,23 +28,19 @@ RailConfirm is being developed as both a research project and a web application.
 
 ## Current roadmap
 
-- [ ] Establish a data source register and verify permitted use.
-- [ ] Define schemas for trains, route segments, statuses, observations, passenger outcomes, and group outcomes.
-- [ ] Build a historical-frequency baseline.
-- [ ] Define chronological backtesting and calibration evaluation.
-- [ ] Build manual-entry prediction flow.
-- [ ] Train and validate a model only after suitable data is available.
-- [ ] Add live status tracking only through an authorized provider.
+The current build is local-first: no third-party runtime APIs, live PNR lookup, automated polling, or live news/event feeds. Research agents may help identify and prepare datasets, but each dataset must pass provenance, licence, privacy, label-quality and leakage checks before training.
+
+See the [detailed roadmap](docs/ROADMAP.md), [dataset intake checklist](docs/data/DATASET_INTAKE_CHECKLIST.md), and [local-first development rules](docs/technical/LOCAL_FIRST_DEVELOPMENT.md).
 
 ## Documentation
 
-Start with the [documentation map](docs/README.md) for the recommended reading order.
+Start with the [documentation map](docs/README.md) for the recommended reading order. The [roadmap](docs/ROADMAP.md) is the canonical execution plan.
 
 **Product:** [Product brief](docs/product/PRODUCT_BRIEF.md) · [Requirements](docs/product/PRODUCT_REQUIREMENTS.md) · [User journeys](docs/product/USER_JOURNEYS.md) · [MVP acceptance criteria](docs/product/MVP_ACCEPTANCE.md)
 
 **Technical:** [System design](docs/technical/SYSTEM_DESIGN.md) · [Domain model](docs/technical/DOMAIN_MODEL.md) · [Storage model](docs/technical/STORAGE_MODEL.md) · [Inference and group probabilities](docs/technical/INFERENCE_AND_GROUP_PROBABILITIES.md) · [Ingestion and tracking](docs/technical/INGESTION_AND_TRACKING.md)
 
-**Build and operations:** [Implementation plan](docs/technical/IMPLEMENTATION_PLAN.md) · [Testing strategy](docs/technical/TESTING_STRATEGY.md) · [Frontend guide](docs/technical/FRONTEND_GUIDE.md) · [Observability](docs/technical/OBSERVABILITY.md) · [Deployment runbook](docs/technical/DEPLOYMENT_RUNBOOK.md) · [Agent handoff](docs/AGENT_HANDOFF.md)
+**Build and operations:** [Roadmap](docs/ROADMAP.md) · [Agent handoff](docs/AGENT_HANDOFF.md) · [Implementation plan](docs/technical/IMPLEMENTATION_PLAN.md) · [Testing strategy](docs/technical/TESTING_STRATEGY.md) · [Frontend guide](docs/technical/FRONTEND_GUIDE.md) · [Observability](docs/technical/OBSERVABILITY.md) · [Deployment runbook](docs/technical/DEPLOYMENT_RUNBOOK.md) · [Agent handoff](docs/AGENT_HANDOFF.md)
 
 **Research and governance:** [Project status](docs/PROJECT_STATUS.md) · [Research plan](docs/research/RESEARCH_PLAN.md) · [Data acquisition](docs/data/DATA_ACQUISITION.md) · [Data contract](docs/data/DATA_CONTRACT.md) · [Prediction targets](docs/model/PREDICTION_TARGETS.md) · [Evaluation protocol](docs/research/EVALUATION_PROTOCOL.md) · [Security and privacy](docs/SECURITY_AND_PRIVACY.md) · [Architecture Decision Records](docs/adr/README.md)
 
