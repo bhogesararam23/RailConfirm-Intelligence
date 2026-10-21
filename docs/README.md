@@ -5,18 +5,19 @@ Start here if this is your first time working on RailConfirm Intelligence.
 ## Recommended reading order
 
 1. [Repository README](../README.md) — project purpose and current status.
-2. [Roadmap](ROADMAP.md) — phased delivery plan and exit gates.
-3. [Product brief](product/PRODUCT_BRIEF.md) — the problem, intended users and product position.
-4. [Product requirements](product/PRODUCT_REQUIREMENTS.md) — scope, priorities and acceptance criteria.
-5. [User journeys](product/USER_JOURNEYS.md) and [MVP acceptance criteria](product/MVP_ACCEPTANCE.md).
-6. [Agent handoff](AGENT_HANDOFF.md) — exact entry point and first recommended coding task.
-7. [Architecture overview](architecture/OVERVIEW.md) and [system design](technical/SYSTEM_DESIGN.md).
-8. [Domain model](technical/DOMAIN_MODEL.md) and [storage model](technical/STORAGE_MODEL.md).
-9. [API contract](architecture/API_CONTRACT.md) and [frontend guide](technical/FRONTEND_GUIDE.md).
-10. [Data contract](data/DATA_CONTRACT.md) and [data acquisition](data/DATA_ACQUISITION.md).
-11. [Prediction targets](model/PREDICTION_TARGETS.md) and [inference/group probabilities](technical/INFERENCE_AND_GROUP_PROBABILITIES.md).
-12. [Evaluation protocol](research/EVALUATION_PROTOCOL.md) and [testing strategy](technical/TESTING_STRATEGY.md).
-13. [Implementation plan](technical/IMPLEMENTATION_PLAN.md), [observability](technical/OBSERVABILITY.md) and [deployment runbook](technical/DEPLOYMENT_RUNBOOK.md).
+2. [Roadmap](ROADMAP.md) — phased delivery plan and exit gates, including future core integration phases.
+3. [ADR-0008](adr/ADR-0008-live-data-integrations-as-long-term-core-capability.md) — explains why the first build is local-first while live data integrations remain part of the long-term goal.
+4. [Product brief](product/PRODUCT_BRIEF.md) — the problem, intended users and product position.
+5. [Product requirements](product/PRODUCT_REQUIREMENTS.md) — scope, priorities and acceptance criteria.
+6. [User journeys](product/USER_JOURNEYS.md) and [MVP acceptance criteria](product/MVP_ACCEPTANCE.md).
+7. [Agent handoff](AGENT_HANDOFF.md) — exact entry point and first recommended coding task.
+8. [Architecture overview](architecture/OVERVIEW.md) and [system design](technical/SYSTEM_DESIGN.md).
+9. [Domain model](technical/DOMAIN_MODEL.md) and [storage model](technical/STORAGE_MODEL.md).
+10. [API contract](architecture/API_CONTRACT.md) and [frontend guide](technical/FRONTEND_GUIDE.md).
+11. [Data contract](data/DATA_CONTRACT.md) and [data acquisition](data/DATA_ACQUISITION.md).
+12. [Prediction targets](model/PREDICTION_TARGETS.md) and [inference/group probabilities](technical/INFERENCE_AND_GROUP_PROBABILITIES.md).
+13. [Evaluation protocol](research/EVALUATION_PROTOCOL.md) and [testing strategy](technical/TESTING_STRATEGY.md).
+14. [Implementation plan](technical/IMPLEMENTATION_PLAN.md), [observability](technical/OBSERVABILITY.md) and [deployment runbook](technical/DEPLOYMENT_RUNBOOK.md).
 
 ## Roadmap and execution
 
