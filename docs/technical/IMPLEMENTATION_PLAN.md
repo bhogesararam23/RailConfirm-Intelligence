@@ -6,7 +6,7 @@ Status: planned work order. The canonical phase gates are in [ROADMAP.md](../ROA
 
 The initial build is local-first and has no third-party runtime APIs. The project can use its own internal API between frontend and backend. Research agents may discover and prepare candidate dataset files, but those files must pass the [dataset intake checklist](../data/DATASET_INTAKE_CHECKLIST.md) before they can be used for model training.
 
-Do not implement live PNR lookup, polling, news feeds, external calendar/weather/event APIs or hosted inference in the current roadmap.
+Do not implement live PNR lookup, polling, news feeds, external calendar/weather/event APIs or hosted inference in Phases 0–7. These are planned core long-term capabilities in roadmap Phases 8–10, not permanently out of scope. Preserve clean adapter boundaries while keeping the current app fully local.
 
 ## Phase 0 — Data feasibility and source rights
 
@@ -97,9 +97,9 @@ Do not implement live PNR lookup, polling, news feeds, external calendar/weather
 
 **Exit:** A clean environment can run core checks and a supported local demo without third-party services.
 
-## Future proposal only — External integrations
+## Later roadmap phases — Planned core integrations
 
-This is not an active phase. Any proposal for live PNR lookup, automatic status updates, external news/context feeds or hosted inference requires a new ADR, verified permissions, security/privacy review, cost/rate-limit assessment, a disable switch, and evidence of product value.
+These are not part of the current implementation sequence through Phase 7, but they are planned capabilities of the target product. Follow [ROADMAP.md](../ROADMAP.md): Phase 8 covers authorized live ticket/status data; Phase 9 covers verified operational/news/event/calendar context with temporal ablation; Phase 10 covers continuous tracking and forecast updates. For each actual provider, obtain source-specific ADR approval, verify access/storage/training/publication terms, assess cost and failure behavior, add privacy/retention controls and a kill switch, and preserve the local/manual fallback. The need for a source-specific ADR is an implementation gate, not a reason to remove these capabilities from the product goal.
 
 ## First coding task
 
