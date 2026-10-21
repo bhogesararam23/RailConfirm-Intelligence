@@ -10,6 +10,7 @@ The format is inspired by Keep a Changelog; dates use ISO 8601.
 - Initial project overview and research scope.
 - Repository-wide agent operating rules and contribution guidance.
 - Product brief, product requirements, user journeys, MVP acceptance criteria and phased local-first roadmap.
+- Explicit long-term phases for authorized live ticket/status sources, verified current/upcoming context, and continuous prediction updates.
 - Agent-assisted dataset intake checklist, manifest template and local data workspace guidance.
 - Agent handoff and a central documentation map.
 - Detailed system design, domain model, storage model and API/frontend contracts.
@@ -18,11 +19,11 @@ The format is inspired by Keep a Changelog; dates use ISO 8601.
 - Data acquisition policy, data contract and source register.
 - Prediction-target definitions and chronological evaluation/calibration protocol.
 - Architecture Decision Records and session/experiment templates.
-- Privacy/security baseline, third-party data policy, local-first development constraints and ADR-0007.
+- Privacy/security baseline, third-party data policy, local-first development constraints (ADR-0007) and the clarification that live-data integrations remain planned core long-term capabilities (ADR-0008).
 - Apache License 2.0 for original repository materials.
 
 ### Notes
-- The current implementation scope explicitly excludes third-party runtime APIs, live PNR polling, external context feeds and hosted inference. Data may be researched/prepared by agents, but must pass source, rights, privacy and quality review.
+- The current implementation scope through roadmap Phase 7 is local-first and does not call third-party runtime APIs. Live status integrations, verified context/news/event sources and continuous tracking are planned core capabilities for Phases 8–10, subject to source permissions, security, reliability and measured predictive value. Data may be researched/prepared by agents, but must pass source, rights, privacy and quality review.
 - The repository remains a documentation and planning baseline. A running frontend/API, trained model, verified performance figures, production data pipeline and live PNR integration are not claimed by these documents.
 - Dataset rights and access availability remain subject to source-by-source verification.
 - Proposed schemas and API examples must be implemented and tested before being treated as a functioning contract.
