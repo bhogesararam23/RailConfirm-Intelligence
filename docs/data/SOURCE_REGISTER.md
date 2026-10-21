@@ -10,11 +10,11 @@ This register is intentionally conservative. A source is not approved merely bec
 |---|---|---|---|
 | Government open-data train timetable catalogue | Initial route/train metadata research | Candidate; not yet ingested | Currentness, actual downloadable schema, licence and coverage |
 | Official railway enquiry surfaces | Understand public status vocabulary and user-facing constraints | Reference only | Automated access, retention and ML use are not assumed permitted |
-| Official/contracted PNR enquiry provider | Possible live status integration | Not integrated | Eligibility, contract, fees, quotas, storage and model-training rights |
+| Official/contracted PNR enquiry provider | Potential future live status integration | Deferred; not in current roadmap | Any future proposal needs an ADR plus verified access, terms, cost, storage and ML-use rights |
 | Historical PNR/status trajectory dataset | Supervised model training and chronological evaluation | No dataset approved | Provenance, licence, outcome labels, sample coverage and redistribution/publication rights |
-| User-contributed status observations | Prospective observations where consent and provider terms allow | Design only | Consent wording, validation, retention, sampling bias and deletion process |
-| Public holiday/calendar data | Contextual feature research | Not yet selected | Source, date coverage, licence and update process |
-| Verified operational event/news sources | Structured event features | Not yet selected | Source reliability, timestamps, extraction rights and measured predictive value |
+| User-contributed status observations | Potential future prospective dataset | Design only; not required for local MVP | Consent wording, validation, retention, sampling bias and deletion process |
+| Public holiday/calendar data | Contextual feature research | Deferred; not in current roadmap | A future offline dataset must have provenance, usage review, coverage and update process |
+| Verified operational event/news sources | Structured event features | Deferred; no runtime feeds in current roadmap | Any future offline or runtime use needs source review and evidence of incremental value |
 
 ## Template for adding a source
 
@@ -40,6 +40,10 @@ Copy this block for each source.
 - **Known biases and limitations:**
 - **Decision:** Approved / Restricted / Under review / Rejected
 - **Decision owner and rationale:**
+
+## Current scope note
+
+The current build has no third-party runtime API or provider integration (ADR-0007). Agents may research candidate local datasets, but must submit the manifest and intake report before training. Runtime providers listed above are deferred research possibilities, not approved integrations.
 
 ## Approval rule
 
