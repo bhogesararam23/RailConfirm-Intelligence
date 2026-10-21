@@ -8,7 +8,7 @@ RailConfirm Intelligence is planned as a research-backed web application that es
 
 The repository currently contains specifications and governance documentation. Do not assume a working frontend, API, database, model, dataset or live provider exists just because their interfaces are documented.
 
-The current scope is local-first: no third-party runtime API, live PNR lookup, polling, news/event feed or hosted inference. The product may implement its own internal API. Agents may research and prepare candidate datasets offline, but every candidate must pass docs/data/DATASET_INTAKE_CHECKLIST.md.
+The current implementation scope (roadmap Phases 0–7) is local-first: no third-party runtime API, live PNR lookup, polling, news/event feed or hosted inference. The product may implement its own internal API. These external data integrations remain planned core capabilities of the long-term product in roadmap Phases 8–10; do not build them now, but do not remove them from the goal. Agents may research and prepare candidate datasets offline, but every candidate must pass docs/data/DATASET_INTAKE_CHECKLIST.md.
 
 ## Read first
 
@@ -17,7 +17,7 @@ The current scope is local-first: no third-party runtime API, live PNR lookup, p
 3. Roadmap
 4. Product brief and requirements
 5. Implementation plan
-6. ADR index, including ADR-0007
+6. ADR index, especially ADR-0007 (current local-first build boundary) and ADR-0008 (future core integration phases)
 7. Dataset intake checklist and data acquisition policy
 8. Evaluation protocol
 
@@ -35,7 +35,7 @@ The current scope is local-first: no third-party runtime API, live PNR lookup, p
 
 ## First task
 
-Read docs/ROADMAP.md and implement Phase 1: the domain contract and status parsing layer with unit tests. In parallel or before model training, have a research agent inventory candidate datasets and submit intake reports; do not integrate any external runtime API. Before finalizing any raw status mapping, verify the intended mapping from an authoritative source and record that reference. Preserve raw input and model unknown values explicitly.
+Read docs/ROADMAP.md and implement Phase 1: the domain contract and status parsing layer with unit tests. In parallel or before model training, have a research agent inventory candidate datasets and submit intake reports; do not integrate any external runtime API in Phases 0–7. Keep later live-status and verified-context integration capabilities represented in the architecture, with source-specific decisions deferred until their roadmap phases. Before finalizing any raw status mapping, verify the intended mapping from an authoritative source and record that reference. Preserve raw input and model unknown values explicitly.
 
 Do not begin with live PNR integration or a complex model. Data rights and historical outcome availability are still explicit project dependencies.
 
