@@ -97,3 +97,26 @@ Converted the staged implementation plan into a single phased roadmap and made t
 
 ### Next step
 Implement Phase 1 of docs/ROADMAP.md: domain/status schema and parsing tests. Continue agent-assisted dataset discovery as a separately tracked task, completing a manifest and intake report for each candidate.
+
+
+## 2026-10-21 — Product scope consistency audit
+
+### Scope
+Audited product, roadmap, agent, architecture, data and ADR documents for language that could cause the first local-first build boundary to be mistaken for a permanent exclusion of live data integrations.
+
+### Findings and corrections
+- Kept ADR-0007's local-first restriction for implementation Phases 0–7.
+- Added ADR-0008 to state that authorized live ticket/status sources, verified current/upcoming operational/news/event context, and continuous forecast updates are planned core capabilities of the long-term product.
+- Expanded docs/ROADMAP.md with planned Phases 8–10 and explicit permission, reliability, privacy, data-freshness and incremental-value exit gates.
+- Aligned the product brief, product requirements, canvas, project status, source register, implementation plan, local-first guide, API contract, ingestion/tracking guide, user journeys, README and agent instructions with the same distinction.
+- Added dataset-source controls so agent-prepared files remain candidates until rights, label meaning, privacy and quality pass review.
+
+### Validation
+- Scanned key goal/scope documents for contradictory phrasing and verified that current-build restrictions refer to Phases 0–7 while the long-term integrations appear in Phases 8–10.
+- Checked the updated roadmap, ADR index, source register and agent handoff.
+- No application tests, model training, live API integration or dataset ingestion was run; this session was documentation review and correction only.
+
+### Remaining work
+- Implement Phase 1 domain/status contracts and tests.
+- Continue candidate dataset discovery and produce an intake report for each dataset.
+- Keep concrete provider selection and source-specific ADRs pending until the underlying rights/terms and usefulness are verified.
