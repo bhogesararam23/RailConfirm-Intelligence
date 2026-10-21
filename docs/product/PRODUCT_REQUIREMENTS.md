@@ -18,7 +18,7 @@ Status: initial requirements baseline. Requirements are subject to revisions thr
 - **PR-004 (P0):** Each manually supplied latest status records an observation timestamp or is explicitly marked as timestamp unknown.
 - **PR-005 (P0):** Raw status text is preserved; normalization does not silently convert unknown values.
 - **PR-006 (P0):** Invalid or incomplete inputs produce useful validation errors before a prediction is requested.
-- **PR-007 (P1):** An authorized lookup adapter can prefill journey and passenger status information, only after provider access and terms are verified.
+- **PR-007 (P2 / deferred):** A future ADR may propose an authorized lookup adapter. It is not part of the current build, and the manual workflow must not depend on an external provider.
 
 ### Predictions
 
@@ -32,13 +32,13 @@ Status: initial requirements baseline. Requirements are subject to revisions thr
 - **PR-017 (P1):** Where available and validated, results show data freshness, coverage and uncertainty.
 - **PR-018 (P2):** The product shows how predictions change across observed snapshots without confusing prediction movement with ticket-status movement.
 
-### Tracking
+### External integrations (deferred; not in current roadmap)
 
-- **PR-020 (P0):** Live tracking is disabled if no authorized provider is configured.
-- **PR-021 (P1):** The system records an observation timestamp, source and verification state for every fetched status.
-- **PR-022 (P1):** A provider outage does not make old observations appear current.
-- **PR-023 (P1):** Tracking records have defined access control, retention and deletion.
-- **PR-024 (P2):** The user can opt into status-change notifications after a secure tracking path exists.
+- **PR-020 (current scope):** The application starts and supports its manual workflow without third-party API credentials or provider connectivity.
+- **PR-021 (current scope):** Tests and core UI behavior do not call live railway, news, calendar, weather or hosted-inference services.
+- **PR-022 (deferred):** Live PNR lookup and scheduled status refresh require a separate ADR, documented source permissions, privacy/retention controls and failure behavior.
+- **PR-023 (deferred):** Future tracking data must have access control, a defined retention policy and tested deletion behavior before enablement.
+- **PR-024 (deferred):** Notifications or other provider-backed services are outside the current build.
 
 ### Research and governance
 
@@ -54,10 +54,10 @@ Status: initial requirements baseline. Requirements are subject to revisions thr
 
 - **NFR-001 — Honesty:** UI must not imply that an untrained or unsupported estimate is a validated probability.
 - **NFR-002 — Privacy:** Passenger names are not needed. Avoid raw PNRs in URLs, logs, analytics and error traces.
-- **NFR-003 — Security:** Provider credentials stay server-side; external inputs are validated; requests use bounded timeouts and retries.
+- **NFR-003 — Security:** The current core path has no third-party runtime API dependency; validate all user-supplied/local data. Any future provider credentials must stay server-side and use bounded timeouts/retries.
 - **NFR-004 — Reproducibility:** Model evaluation can be reconstructed from a code revision, data version, split definition and configuration.
 - **NFR-005 — Traceability:** Each estimate includes target semantics, timestamp and model version.
-- **NFR-006 — Resilience:** Missing data or provider failure returns explicit degraded/unavailable behavior.
+- **NFR-006 — Resilience:** Missing local data/model artifacts return explicit setup/unsupported behavior; the core workflow must not depend on provider availability.
 - **NFR-007 — Maintainability:** Product UI, domain logic, data ingestion, training and inference are separable.
 - **NFR-008 — Accessibility:** Forms have labels, keyboard operation, focus visibility, useful error messages and non-color-only status cues.
 - **NFR-009 — Performance:** Latency targets are set after implementation and measured with a representative workload; do not publish invented targets.
@@ -65,4 +65,4 @@ Status: initial requirements baseline. Requirements are subject to revisions thr
 
 ## Release gates
 
-A feature cannot be described as prediction-ready unless target definitions, model versioning, evaluation evidence, error handling and coverage disclosures are present. Live tracking needs an additional provider-authority and privacy gate.
+A feature cannot be described as prediction-ready unless target definitions, model versioning, evaluation evidence, error handling and coverage disclosures are present. Any future live tracking or external context integration is deferred and would need a new provider-authority, privacy and security gate.
