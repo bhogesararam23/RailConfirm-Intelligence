@@ -60,9 +60,9 @@ The API must state whether probabilities include an explicit OTHER/UNKNOWN outco
 
 Use consistent error responses for invalid input, unknown status, unsupported category, no trained model, insufficient evidence, provider failure, rate limits and server errors. Do not turn upstream failure into a zero probability.
 
-## Future tracking routes
+## Future tracking and context routes
 
-Potential routes such as `POST /v1/tracking` and `GET /v1/tracking/{tracking_id}` must remain unavailable until an approved provider integration and retention controls are implemented. Raw PNRs should not appear in path parameters.
+Potential routes such as `POST /v1/tracking` and `GET /v1/tracking/{tracking_id}` belong to the planned long-term product scope (roadmap Phases 8–10), but must remain unavailable in the current local-first build until an approved provider/source and retention controls are implemented. A later context-ingestion interface may accept normalized event records from an approved adapter or reviewed local import. Raw PNRs should not appear in path parameters. These are intended future capabilities, not proof of current functionality.
 
 ## Compatibility
 
