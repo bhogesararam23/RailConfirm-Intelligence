@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 # No external runtime APIs, no private datasets, no model weights required.
 # All checks must pass without credentials or network access to third-party services.
