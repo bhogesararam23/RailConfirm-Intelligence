@@ -23,7 +23,9 @@ Start here if this is your first time working on RailConfirm Intelligence.
 - [Roadmap](ROADMAP.md)
 - [Agent handoff](AGENT_HANDOFF.md)
 - [Dataset intake checklist](data/DATASET_INTAKE_CHECKLIST.md)
+- [Dataset manifest template](data/DATASET_MANIFEST_TEMPLATE.yaml)
 - [Local-first development rules](technical/LOCAL_FIRST_DEVELOPMENT.md)
+- [Local-first scope decision, ADR-0007](adr/ADR-0007-local-first-no-external-runtime-apis.md)
 
 ## Product documents
 
