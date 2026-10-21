@@ -27,7 +27,7 @@ Build a reliable, transparent prediction workflow in stages:
 - Allow research agents to discover and prepare candidate datasets, but approve each source only after provenance, licence/terms, privacy, labels and quality have been reviewed.
 - Make predictions only from an evaluated model or a documented baseline with demonstrated coverage.
 - Evaluate predictions against verified outcomes and publish limitations alongside performance results.
-- Treat external integrations as future work requiring a new ADR and a concrete, evidence-backed product need.
+- Treat authorized live ticket/status sources and verified current/upcoming contextual signals as planned core capabilities of the target product. They are not part of the first local-first build; they follow the local data/model/evaluation foundation in roadmap Phases 8–10. Each actual provider/source still requires a source-specific ADR, permission review and evidence of reliability/value.
 
 ## Intended users
 
@@ -41,7 +41,8 @@ These are working user groups. Product analytics or user research may narrow the
 
 - Passenger-level CNF/RAC/WL probability estimates when supported.
 - Group-event probabilities derived from a joint or validated structured outcome distribution.
-- A status and prediction timeline that preserves observation timestamps.
+- A status and prediction timeline that preserves observation timestamps, including future authorized live ticket/status updates.
+- Incorporation of verified current and upcoming operational/news/event signals, once source permissions and incremental predictive value are established.
 - A readable explanation of evidence coverage, model version and limitations.
 - Clear rejection/abstention behavior for unsupported data or status categories.
 - An auditable research trail from data source to model evaluation.
@@ -55,9 +56,17 @@ Success is not defined by how many percentages the interface displays. It is def
 - group-level estimates are evaluated separately from individual estimates;
 - users can distinguish observed status from predicted outcome;
 - uncertainty and gaps are visible;
-- and all locally used data has documented provenance and permitted-use status.
+- all locally used data has documented provenance and permitted-use status, and future live integrations are reliable, authorized and shown to improve the user experience.
 
 Numeric success thresholds must be specified after data coverage is understood and before the locked test set is evaluated.
+
+## Deferred from the first release, but part of the long-term product goal
+
+- Authorized live ticket/PNR status integration and status refresh.
+- Verified current/upcoming operational, event/news and calendar-context feeds, after source review and evaluation.
+- Continuous forecast history and later alerting based on new observations.
+
+These capabilities are planned for roadmap Phases 8–10. Their provider choices and exact implementation are not yet decided. If no suitable authorized source is available, the limitation must be stated; access restrictions must never be bypassed.
 
 ## Non-goals for the first release
 
