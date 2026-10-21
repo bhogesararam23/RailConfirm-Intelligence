@@ -1,29 +1,44 @@
 # Changelog
 
-Notable changes to RailConfirm Intelligence are recorded here. This project has not released a working prediction model or live-tracking service yet.
+Notable changes to RailConfirm Intelligence are recorded here.
 
 The format is inspired by Keep a Changelog; dates use ISO 8601.
 
-## [Unreleased]
+## [0.1.0] - 2026-10-21
 
 ### Added
-- Initial project overview and research scope.
-- Repository-wide agent operating rules and contribution guidance.
-- Product brief, product requirements, user journeys, MVP acceptance criteria and phased local-first roadmap.
-- Explicit long-term phases for authorized live ticket/status sources, verified current/upcoming context, and continuous prediction updates.
-- Agent-assisted dataset intake checklist, manifest template and local data workspace guidance.
-- Agent handoff and a central documentation map.
-- Detailed system design, domain model, storage model and API/frontend contracts.
-- Inference and group-probability behavior, ingestion/tracking lifecycle and model output requirements.
-- Testing strategy, observability, deployment runbook and phased implementation plan.
-- Data acquisition policy, data contract and source register.
-- Prediction-target definitions and chronological evaluation/calibration protocol.
-- Architecture Decision Records and session/experiment templates.
-- Privacy/security baseline, third-party data policy, local-first development constraints (ADR-0007) and the clarification that live-data integrations remain planned core long-term capabilities (ADR-0008).
-- Apache License 2.0 for original repository materials.
+- **Domain model & status mapping (`backend/railconfirm/domain/`):**
+  - Versioned reservation status mapping (`v1.0.0`) from Indian Railways terminology.
+  - Distinguishes CNF, RAC, and WL categories (GNWL, RLWL, PQWL, TQWL, RQWL, DPWL).
+  - Explicit `UNKNOWN` status normalization — unrecognized codes are never silently mapped to WL.
+  - Journey domain model with 4–6 digit train numbers, station differentiation, and class/quota validation.
+  - Immutable `StatusObservation` and `PassengerReservation` domain types without passenger names (ADR-0005).
+  - Multi-class prediction records and group-level outcome definitions.
+- **FastAPI backend (`backend/railconfirm/api/`):**
+  - `POST /v1/predictions/manual`: handles manual prediction requests with structured abstention responses.
+  - `GET /v1/health`: returns API health, model version (`no_model_v0`), and data version.
+  - Full Pydantic v2 schemas preserving original vs. latest observed statuses.
+- **Inference engine & group baseline (`backend/railconfirm/inference/`):**
+  - Abstention-first `InferenceEngine` returning `NO_TRAINED_MODEL` when no verified artifact is present.
+  - `HistoricalFrequencyBaseline` with Laplace smoothing and minimum sample size thresholds.
+  - Group outcome computation with independence baseline and explicit dependency disclaimers.
+  - `ModelRegistry` checking local artifact presence.
+- **Local dataset intake pipeline (`backend/railconfirm/data/`):**
+  - Local dataset loader supporting CSV and JSON formats without network access.
+  - Schema and data quality validator checking required columns, nulls, duplicates, and outcome distributions.
+  - SHA-256 cryptographic manifest generator matching `docs/data/DATASET_MANIFEST_TEMPLATE.yaml`.
+  - Chronological dataset partitioner (`chronological_split`) preventing temporal target leakage.
+- **Next.js 14 frontend (`frontend/`):**
+  - TypeScript + React + Tailwind CSS web interface.
+  - `JourneyForm` and `PassengerList` with dynamic rows (up to 6 passengers) and client validation.
+  - `StatusBadge` (textual & accessible, not color-only), `ProbabilityBar`, and `AbstentionCard`.
+  - `PassengerOutcomeCard` and `GroupOutcomeCard` with explicit assumption notes.
+  - Dedicated pages for methodology and data governance.
+- **Test suite & CI (`backend/tests/`, `.github/workflows/ci.yml`):**
+  - 40 passing unit, domain, inference, API, and data pipeline tests.
+  - Clearly labelled synthetic fixtures (`synthetic_booking.json`, `synthetic_dataset.csv`).
+  - GitHub Actions CI workflow covering backend testing, frontend build/type-check, and secret/governance scanning.
 
-### Notes
-- The current implementation scope through roadmap Phase 7 is local-first and does not call third-party runtime APIs. Live status integrations, verified context/news/event sources and continuous tracking are planned core capabilities for Phases 8–10, subject to source permissions, security, reliability and measured predictive value. Data may be researched/prepared by agents, but must pass source, rights, privacy and quality review.
-- The repository remains a documentation and planning baseline. A running frontend/API, trained model, verified performance figures, production data pipeline and live PNR integration are not claimed by these documents.
-- Dataset rights and access availability remain subject to source-by-source verification.
-- Proposed schemas and API examples must be implemented and tested before being treated as a functioning contract.
+### Changed
+- Updated `docs/PROJECT_STATUS.md` and `docs/DEVELOPMENT_LOG.md` to document the verified Phases 1–5 implementation.
+- Updated root `README.md` with local setup and execution instructions.

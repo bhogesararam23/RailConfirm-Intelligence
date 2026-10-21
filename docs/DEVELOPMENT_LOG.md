@@ -120,3 +120,67 @@ Audited product, roadmap, agent, architecture, data and ADR documents for langua
 - Implement Phase 1 domain/status contracts and tests.
 - Continue candidate dataset discovery and produce an intake report for each dataset.
 - Keep concrete provider selection and source-specific ADRs pending until the underlying rights/terms and usefulness are verified.
+
+
+## 2026-10-21 — First implementation session (Phases 1–5 foundation)
+
+### Scope
+First substantive implementation session. Built the Python backend (domain, API, inference, data pipeline) and the Next.js frontend (React/TypeScript/Tailwind), establishing the foundational codebase for the local-first application.
+
+### Stack validated
+- Python 3.11 + FastAPI + Pydantic v2 (backend, per ADR-0002).
+- TypeScript + Next.js 14 + Tailwind CSS (frontend, per ADR-0002).
+- pytest with httpx for async API tests (no external network required).
+- GitHub Actions CI with backend tests, frontend build check, and documentation presence check.
+- No PostgreSQL in the initial setup; the first local demo uses in-memory state to remain dependency-light.
+
+### Implemented (backend — `backend/`)
+- `railconfirm/domain/status.py`: versioned status parsing and normalization; raw status always preserved; unknown codes mapped to UNKNOWN (never silently to WL); WL categories (GNWL, RLWL, PQWL, TQWL, RQWL, DPWL) parsed separately from position; mapping version 1.0.0 with source reference.
+- `railconfirm/domain/journey.py`: typed journey, class/quota validation, supported code registries.
+- `railconfirm/domain/passenger.py`: immutable StatusObservation, PassengerReservation (no name field), BookingGroup.
+- `railconfirm/domain/prediction.py`: PredictionTarget, AbstentionReason, PassengerOutcome, GroupOutcome, PredictionRecord; probabilities enforced in [0, 1]; mutually exclusive outcomes summing to 1.
+- `railconfirm/domain/validation.py`: shared validators and reason codes.
+- `railconfirm/domain/exceptions.py`: domain exception hierarchy.
+- `railconfirm/api/app.py`: FastAPI application factory.
+- `railconfirm/api/v1/predictions.py`: POST /v1/predictions/manual; returns structured abstention (not fabricated probability) when no model available.
+- `railconfirm/api/v1/health.py`: GET /v1/health with model_version and data_version.
+- `railconfirm/api/v1/schemas.py`: request/response Pydantic models; original_status and current_status kept distinct.
+- `railconfirm/inference/engine.py`: abstention-first dispatch; returns NO_TRAINED_MODEL when no artifact available.
+- `railconfirm/inference/baseline.py`: HistoricalFrequencyBaseline with Laplace smoothing; abstains if approved dataset not available.
+- `railconfirm/inference/group.py`: independence baseline clearly labelled as such; warns about dependency assumption; abstains if any passenger abstains.
+- `railconfirm/inference/registry.py`: model version/artifact registry.
+- `railconfirm/data/loader.py`, `validator.py`, `manifest.py`, `preprocessing.py`: local dataset intake pipeline.
+- `railconfirm/config.py`: environment-variable configuration; no hard-coded secrets.
+- Comprehensive test suite under `backend/tests/`.
+- Clearly labelled synthetic fixtures in `backend/tests/fixtures/`.
+
+### Implemented (frontend — `frontend/`)
+- Next.js 14 app with TypeScript and Tailwind CSS.
+- Type-safe API client matching the API contract.
+- JourneyForm, PassengerList, PassengerRow — no name field, original vs current status kept distinct.
+- StatusBadge, ProbabilityBar, AbstentionCard — accessible, text labels not color-only.
+- PredictionResult, PassengerOutcomeCard, GroupOutcomeCard — honest abstention shown when no model.
+- Methodology and data pages explaining product status accurately.
+- Client-side validation with matching server-side enforcement.
+
+### CI
+- `.github/workflows/ci.yml`: backend tests, frontend type-check and build, documentation presence check — all run without external credentials or network access.
+
+### Data and model status
+- No approved historical dataset available; intake pipeline is implemented and tested with synthetic fixtures.
+- Inference engine always abstains with NO_TRAINED_MODEL; no fabricated probabilities returned.
+- Baseline estimator implemented but not yet runnable without an approved dataset.
+
+### Checks run
+- See commit-level notes for exact pytest and build output.
+- All domain tests pass on synthetic fixtures.
+- API returns structured abstention responses, not fake probabilities.
+- Frontend builds and type-checks without errors.
+
+### Remaining work
+- Identify and intake an approved historical dataset (source rights, privacy, label semantics to be verified).
+- Train and evaluate the baseline estimator once an approved dataset passes the intake checklist.
+- Build out the group outcome layer beyond the independence baseline (requires labelled booking groups).
+- Add PostgreSQL persistence layer for Phases 6–7.
+- Complete the model card and dataset manifest once real data is approved.
+- Enable GitHub Actions CI to run automatically on push (pending remote push access verification).

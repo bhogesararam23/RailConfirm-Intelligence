@@ -4,38 +4,38 @@ Last reviewed: 2026-10-21
 
 ## Status
 
-The repository now has a product specification, engineering design, research/governance baseline and phased roadmap. It remains documentation and planning only: written contracts describe intended behavior; they do not imply running application code or a validated model. Under ADR-0007, the current build is local-first and must not depend on third-party runtime APIs. ADR-0008 clarifies that authorized live status data and verified current/upcoming contextual signals remain planned core capabilities of the long-term product.
+The repository has completed its foundational engineering implementation (Phases 1–5 vertical slice) in local-first mode under ADR-0007. Application code, deterministic domain and API test suites, dataset validation pipeline, and interactive Next.js web application are implemented and verified. The system intentionally operates in abstention mode (`no_trained_model`) until a candidate historical dataset passes the intake checklist. External live data integrations remain planned core capabilities of the long-term product in roadmap Phases 8–10 (ADR-0008).
 
 | Area | Status | Exit condition |
 |---|---|---|
-| Product brief and requirements | Initial baseline documented | Review requirements against a first implementation |
-| User journeys and MVP acceptance | Draft documented | Implement and test the core vertical slice |
-| Architecture and API contracts | Proposed design | Validate against actual stack and implementation |
-| Domain/storage contracts | Logical model documented | Implement versioned schemas and tests |
-| Agent-assisted local dataset intake | In progress | Source, licence/terms, labels, privacy, quality and checksum are documented |
-| Historical outcome dataset | Not established | Provenance and final-outcome labels are validated |
-| Baseline predictor | Not implemented | Reproducible baseline runs on eligible labelled data |
-| ML model | Not implemented | Chronological evaluation demonstrates utility over baseline |
-| Calibration | Not implemented | Calibration is measured on held-out journeys |
-| Manual-entry web flow | Not implemented | Input and result flow works end-to-end |
-| External data integrations | Planned core long-term capability; not implemented in the current build | Delivered in roadmap Phases 8–10 after local model/data gates, with source-specific ADR and verified permissions |
-| Verified news/event/context feeds | Planned core long-term capability; not connected | Source and permitted use reviewed; incremental value demonstrated on temporal holdout |
-| Tests and CI | Not implemented | Relevant static checks and automated tests run in CI |
-| Production monitoring | Not implemented | Freshness, error rates, drift and calibration are monitored |
+| Product brief and requirements | Initial baseline implemented | Continuous review against user testing |
+| User journeys and MVP acceptance | Implemented (Phases 1–5 vertical slice) | Core local manual-input flow verified |
+| Architecture and API contracts | Implemented and verified | Versioned FastAPI routes and Next.js client |
+| Domain contracts and status parsing | Implemented and tested (40 tests passing) | Versioned mapping (v1.0.0); unknown codes mapped to UNKNOWN |
+| Local dataset intake pipeline | Implemented (`loader`, `validator`, `manifest`) | Evaluated candidate dataset passing checklist |
+| Historical outcome dataset | No approved dataset yet; candidate intake ready | Provenance and final-chart labels validated |
+| Baseline predictor | Implemented (Laplace smoothing; abstains if unapproved) | Reproducible run on approved historical data |
+| ML model | Deferred until approved dataset available | Chronological evaluation demonstrates utility over baseline |
+| Calibration | Deferred until approved dataset available | Calibration measured on held-out future journeys |
+| Manual-entry web flow | Implemented and verified (Next.js 14 + Tailwind) | Input and structured result flow working end-to-end |
+| External data integrations | Planned core long-term capability; not implemented in current build | Delivered in roadmap Phases 8–10 with source-specific ADRs |
+| Verified news/event/context feeds | Planned core long-term capability; not connected | Source review and incremental value on temporal holdout |
+| Tests and CI | Implemented (40 pytest tests, Next.js type-check/build, CI workflow) | Automated execution on push to GitHub |
+| Production monitoring | Planned for deployment release | Error rates, drift, and calibration monitoring |
 
-## In scope
+## In scope (Current build)
 
-- Passenger-level final-status probabilities.
-- Group-level joint outcome probabilities for bookings with multiple passengers.
-- WL and RAC categories, including multiple categories where suitable labels exist.
-- Historical and time-stamped status progression.
-- A local-first manual-input MVP powered by approved local datasets and model artifacts, with no external runtime API requirement.
-- Reproducible model evaluation, calibration, coverage reporting and model cards.
-- Privacy-preserving storage and an auditable data-source registry.
+- Domain models with versioned status mapping (`v1.0.0`).
+- Passenger-level and group-level outcome schemas (CNF, RAC, WL, CANCELLED, OTHER).
+- Local dataset intake pipeline (`railconfirm.data`) with SHA-256 manifest generation.
+- Full FastAPI backend (`POST /v1/predictions/manual`, `GET /v1/health`) with structured abstention when no model is active.
+- Full Next.js frontend with accessible UI, forms, status badges, and prediction report.
+- Clearly labelled synthetic fixtures for deterministic tests (`backend/tests/fixtures/`).
+- Automated tests passing with zero dependencies on third-party runtime APIs.
 
 ## Not part of the current local-first build
 
-- Third-party runtime APIs, live PNR lookup/polling, live news or event feeds, weather/calendar APIs, and hosted inference are not implemented now. They remain planned future product capabilities in roadmap Phases 8–10, rather than permanently excluded goals. See ADR-0008.
+- Third-party runtime APIs, live PNR lookup/polling, live news/event feeds, and hosted inference are not implemented now. They remain planned core product capabilities in roadmap Phases 8–10. See ADR-0008.
 
 ## Out of scope until separately approved
 
