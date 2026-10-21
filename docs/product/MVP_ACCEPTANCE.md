@@ -2,6 +2,8 @@
 
 The first MVP is a manual-input, model-aware application shell. It is not required to make numerical forecasts before an eligible baseline/model and labelled dataset exist. No mock probability can be presented as a real forecast.
 
+These criteria govern the first local-first release (roadmap Phases 0–7), not completion of the full target product. Authorized live ticket/status sources, verified current/upcoming context feeds and continuous forecast updates are planned core capabilities for roadmap Phases 8–10; they are intentionally not required to pass this first release.
+
 ## Entry form
 - [ ] Train number, journey date, boarding station and destination are collected.
 - [ ] Class and quota can be selected or explicitly marked unknown where the design allows it.
