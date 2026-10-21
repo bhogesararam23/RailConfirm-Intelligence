@@ -8,6 +8,10 @@ A credible confirmation model requires observed reservation status over time and
 
 Do not assume that historical PNR trajectories or an official live PNR API are freely available for unrestricted collection, storage or model training. Each source must be checked directly.
 
+## Current operating mode: agent-assisted, local-only
+
+The current product build must not depend on any third-party runtime API. Agents may help research sources, prepare permitted files, normalize documented schemas and write intake reports as a separate data-preparation activity. Data must be delivered as an inspectable local file or a user-supplied artifact, not fetched through a hidden network call when the application runs. Follow docs/data/DATASET_INTAKE_CHECKLIST.md for every candidate. An agent's research summary is not a licence, and a downloadable file is not automatically approved for model training. If no suitable dataset is available, report the blocker and continue with domain/test work; do not invent rows or labels.
+
 ## Source tiers
 
 ### Tier 1 — Official/open metadata
