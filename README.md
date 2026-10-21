@@ -1,6 +1,6 @@
 # RailConfirm Intelligence
 
-An ML-powered Indian Railways ticket confirmation probability predictor for waitlisted (WL) and Reservation Against Cancellation (RAC) tickets, with passenger-wise forecasts, group-level outcome analysis, and historical trend modelling.
+An ML-powered Indian Railways ticket confirmation probability predictor for waitlisted (WL) and Reservation Against Cancellation (RAC) tickets, with passenger-wise forecasts, group-level outcome analysis, historical trend modelling, and a planned path to authorized live ticket/status data and verified current/upcoming operational context.
 
 RailConfirm is being developed as both a research project and a web application. The goal is not to produce a percentage that looks precise; the goal is to estimate meaningful probabilities, evaluate them against real outcomes, and be clear about where the model does and does not have enough evidence.
 
@@ -28,7 +28,7 @@ RailConfirm is being developed as both a research project and a web application.
 
 ## Current roadmap
 
-The current build is local-first: no third-party runtime APIs, live PNR lookup, automated polling, or live news/event feeds. Research agents may help identify and prepare datasets, but each dataset must pass provenance, licence, privacy, label-quality and leakage checks before training.
+The current build is local-first: no third-party runtime APIs, live PNR lookup, automated polling, or live news/event feeds are implemented now. These are planned core capabilities of the target product in roadmap Phases 8–10, after the local data/model foundations. Research agents may help identify and prepare datasets, but each dataset must pass provenance, licence, privacy, label-quality and leakage checks before training.
 
 See the [detailed roadmap](docs/ROADMAP.md), [dataset intake checklist](docs/data/DATASET_INTAKE_CHECKLIST.md), [dataset manifest template](docs/data/DATASET_MANIFEST_TEMPLATE.yaml), and [local-first development rules](docs/technical/LOCAL_FIRST_DEVELOPMENT.md).
 
@@ -44,7 +44,7 @@ Start with the [documentation map](docs/README.md) for the recommended reading o
 
 **Research and governance:** [Project status](docs/PROJECT_STATUS.md) · [Research plan](docs/research/RESEARCH_PLAN.md) · [Data acquisition](docs/data/DATA_ACQUISITION.md) · [Data contract](docs/data/DATA_CONTRACT.md) · [Prediction targets](docs/model/PREDICTION_TARGETS.md) · [Evaluation protocol](docs/research/EVALUATION_PROTOCOL.md) · [Security and privacy](docs/SECURITY_AND_PRIVACY.md) · [Architecture Decision Records](docs/adr/README.md)
 
-The current no-third-party-runtime-API boundary is recorded in [ADR-0007](docs/adr/ADR-0007-local-first-no-external-runtime-apis.md). Agent-sourced data remains subject to the dataset intake gate.
+The current no-third-party-runtime-API boundary is recorded in [ADR-0007](docs/adr/ADR-0007-local-first-no-external-runtime-apis.md). [ADR-0008](docs/adr/ADR-0008-live-data-integrations-as-long-term-core-capability.md) records that authorized live status and verified context integrations remain part of the long-term product goal. Agent-sourced data remains subject to the dataset intake gate.
 
 Also see [AGENTS.md](AGENTS.md), [CONTRIBUTING.md](CONTRIBUTING.md), [CHANGELOG.md](CHANGELOG.md), [development log](docs/DEVELOPMENT_LOG.md), and [third-party data policy](THIRD_PARTY_DATA.md).
 
