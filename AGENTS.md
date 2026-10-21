@@ -25,7 +25,8 @@ This file is the repository-wide instruction set for coding agents and automated
 
 ## Current execution scope (ADR-0007)
 
-- The current build is local-first and must not depend on third-party runtime APIs or providers.
+- The current build (roadmap Phases 0–7) is local-first and must not depend on third-party runtime APIs or providers.
+- The target product's long-term scope includes authorized live ticket/status sources and verified current/upcoming operational/news/event context in roadmap Phases 8–10. Do not interpret current API restrictions as removing those future core capabilities from requirements or architecture documents. Do not build them before their planned phase; keep adapters modular and record source-specific ADRs before concrete integrations.
 - Do not implement live PNR lookups, scheduled ticket polling, external news/calendar/weather/event feeds, or hosted model inference in the current roadmap.
 - An internal API between the project's own frontend and backend is allowed.
 - Agents may research and prepare candidate data files outside the product runtime. Every candidate must pass docs/data/DATASET_INTAKE_CHECKLIST.md and be recorded in docs/data/SOURCE_REGISTER.md before training.
