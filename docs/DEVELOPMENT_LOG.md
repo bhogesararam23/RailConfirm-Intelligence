@@ -71,3 +71,29 @@ Expanded the documentation from project/research principles into implementation-
 - Complete source/terms feasibility review.
 - Build the manual-entry API/UI shell with an explicit no-model response.
 - Establish a reproducible baseline once permitted labelled data is available.
+
+
+## 2026-10-21 — Local-first roadmap
+
+### Scope
+Converted the staged implementation plan into a single phased roadmap and made the current runtime boundary explicit.
+
+### Added
+- Local-first roadmap with phase deliverables and exit gates.
+- ADR-0007 for no third-party runtime APIs in the current build.
+- Dataset intake checklist and manifest template for agent-prepared candidate data.
+- Local data workspace instructions and ignored local dataset paths.
+- Updated product, implementation, agent and project status documentation.
+
+### Decisions
+- The current application has no third-party runtime API dependency; an internal frontend/backend API remains allowed.
+- Agents may research and prepare candidate data, but files are not approved for training until source rights, provenance, privacy, labels and quality pass review.
+- Live PNR lookup/polling, news/context feeds and hosted inference are deferred beyond the current roadmap and require a new ADR to reopen.
+
+### Checks
+- Confirmed the new files were committed to the repository's default branch.
+- No dataset was downloaded or approved in this session.
+- No application code, training, automated tests or deployment was run in this documentation session.
+
+### Next step
+Implement Phase 1 of docs/ROADMAP.md: domain/status schema and parsing tests. Continue agent-assisted dataset discovery as a separately tracked task, completing a manifest and intake report for each candidate.
