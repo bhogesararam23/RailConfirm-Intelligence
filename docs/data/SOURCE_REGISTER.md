@@ -10,11 +10,11 @@ This register is intentionally conservative. A source is not approved merely bec
 |---|---|---|---|
 | Government open-data train timetable catalogue | Initial route/train metadata research | Candidate; not yet ingested | Currentness, actual downloadable schema, licence and coverage |
 | Official railway enquiry surfaces | Understand public status vocabulary and user-facing constraints | Reference only | Automated access, retention and ML use are not assumed permitted |
-| Official/contracted PNR enquiry provider | Potential future live status integration | Deferred; not in current roadmap | Any future proposal needs an ADR plus verified access, terms, cost, storage and ML-use rights |
+| Official/contracted PNR enquiry provider | Planned future live ticket/status source (roadmap Phase 8) | Planned; provider not selected and not enabled in current build | Source-specific ADR; verify access, terms, cost, storage, retention and ML-use rights |
 | Historical PNR/status trajectory dataset | Supervised model training and chronological evaluation | No dataset approved | Provenance, licence, outcome labels, sample coverage and redistribution/publication rights |
 | User-contributed status observations | Potential future prospective dataset | Design only; not required for local MVP | Consent wording, validation, retention, sampling bias and deletion process |
-| Public holiday/calendar data | Contextual feature research | Deferred; not in current roadmap | A future offline dataset must have provenance, usage review, coverage and update process |
-| Verified operational event/news sources | Structured event features | Deferred; no runtime feeds in current roadmap | Any future offline or runtime use needs source review and evidence of incremental value |
+| Public holiday/calendar data | Planned current/upcoming context (roadmap Phase 9) | Planned; source not selected | Provenance, usage review, coverage, timestamps, refresh model and measurable predictive value |
+| Verified operational event/news sources | Planned current/upcoming factors (roadmap Phase 9) | Planned; no feed currently connected | Source review, publication/effective timestamps, permitted use and evidence of incremental value |
 
 ## Template for adding a source
 
@@ -41,9 +41,9 @@ Copy this block for each source.
 - **Decision:** Approved / Restricted / Under review / Rejected
 - **Decision owner and rationale:**
 
-## Current scope note
+## Current scope and target-product note
 
-The current build has no third-party runtime API or provider integration (ADR-0007). Agents may research candidate local datasets, but must submit the manifest and intake report before training. Runtime providers listed above are deferred research possibilities, not approved integrations.
+The current build has no third-party runtime API or provider integration (ADR-0007). Agents may research candidate local datasets, but must submit the manifest and intake report before training. Live status and current/upcoming contextual integrations are planned core capabilities in roadmap Phases 8–10; the entries above are potential source categories, not approved providers. Do not treat planned product capability as permission to use a specific source.
 
 ## Approval rule
 
