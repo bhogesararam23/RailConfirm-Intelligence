@@ -9,10 +9,7 @@ Ensures strict temporal integrity and prevents target leakage (ADR-0004, docs/te
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Tuple
 
-import numpy as np
 import pandas as pd
 
 from railconfirm.domain.status import parse_status
@@ -25,9 +22,9 @@ class DatasetSplits:
     train: pd.DataFrame
     val: pd.DataFrame
     test: pd.DataFrame
-    train_dates: Tuple[str, str]
-    val_dates: Tuple[str, str]
-    test_dates: Tuple[str, str]
+    train_dates: tuple[str, str]
+    val_dates: tuple[str, str]
+    test_dates: tuple[str, str]
 
 
 def extract_features(df: pd.DataFrame) -> pd.DataFrame:

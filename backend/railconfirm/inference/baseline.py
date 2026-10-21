@@ -15,7 +15,6 @@ Key rules
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from railconfirm.config import settings
 from railconfirm.domain.prediction import (
@@ -48,7 +47,7 @@ class HistoricalFrequencyBaseline:
 
     def __init__(
         self,
-        min_sample_threshold: Optional[int] = None,
+        min_sample_threshold: int | None = None,
     ) -> None:
         self.min_sample_threshold = (
             min_sample_threshold
@@ -147,14 +146,10 @@ class HistoricalFrequencyBaseline:
 
         # ── Laplace-smoothed frequencies ───────────────────────────────────────
         outcomes = ["CNF", "RAC", "WL", "CANCELLED", "OTHER"]
-        smoothed_counts = [
-            counts.get(o, 0) + _LAPLACE_ALPHA for o in outcomes
-        ]
-        total_smoothed = sum(smoothed_counts) + _LAPLACE_ALPHA * _N_CLASSES
-        # Already included alpha in each count above; denominator is total + alpha * N
-        # More precisely: use additive smoothing where denominator = total + alpha * N
         denom = total_count + _LAPLACE_ALPHA * _N_CLASSES
-        probs = [(counts.get(o, 0) + _LAPLACE_ALPHA) / denom for o in outcomes]
+        raw_probs = [(counts.get(o, 0) + _LAPLACE_ALPHA) / denom for o in outcomes]
+        prob_sum = sum(raw_probs)
+        probs = [p / prob_sum for p in raw_probs]
 
         return PassengerOutcome(
             passenger_id=passenger_id,

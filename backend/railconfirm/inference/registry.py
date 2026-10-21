@@ -6,8 +6,6 @@ Currently: no artifacts exist (Phase 0–7, local-first build).
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from railconfirm.config import settings
 
 

@@ -11,8 +11,8 @@ a PredictionResponse, even for abstentions.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
+from typing import TypedDict
 
 from fastapi import APIRouter
 
@@ -23,10 +23,18 @@ from railconfirm.api.v1.schemas import (
     PredictionResponse,
 )
 from railconfirm.domain.journey import make_journey
-from railconfirm.domain.passenger import make_observation
+from railconfirm.domain.passenger import StatusObservation, make_observation
 from railconfirm.domain.prediction import PredictionTarget
-from railconfirm.domain.status import NormalizedStatus, parse_status
 from railconfirm.inference.engine import InferenceEngine
+
+
+class PassengerInferenceInput(TypedDict):
+    passenger_id: str
+    original_obs: StatusObservation
+    current_obs: StatusObservation
+    original_status_raw: str
+    current_status_raw: str
+
 
 router = APIRouter()
 _engine = InferenceEngine()
@@ -56,8 +64,8 @@ async def predict_manual(request: PredictionRequest) -> PredictionResponse:
     )
 
     # ── Build passenger observations ───────────────────────────────────────────
-    now = datetime.now(timezone.utc)
-    passenger_inputs = []
+    now = datetime.now(UTC)
+    passenger_inputs: list[PassengerInferenceInput] = []
     for p_req in request.passengers:
         p_id = str(uuid.uuid4())
         original_obs = make_observation(
@@ -125,7 +133,7 @@ async def predict_manual(request: PredictionRequest) -> PredictionResponse:
         )
 
     # ── Build group outcome response ───────────────────────────────────────────
-    group_resp: Optional[GroupOutcomeResponse] = None
+    group_resp: GroupOutcomeResponse | None = None
     if prediction.group_outcome is not None:
         go = prediction.group_outcome
         group_resp = GroupOutcomeResponse(
@@ -153,6 +161,7 @@ async def predict_manual(request: PredictionRequest) -> PredictionResponse:
         model_version=prediction.model_version,
         feature_schema_version=prediction.feature_schema_version,
         evidence_coverage=prediction.evidence_coverage,
+        is_supported=any(p.is_supported for p in passenger_responses),
         passenger_count=len(passenger_responses),
         passenger_outcomes=passenger_responses,
         group_outcome=group_resp,

@@ -1,6 +1,5 @@
 """Unit tests for prediction records, probabilities, and abstention types."""
 
-from datetime import datetime
 import pytest
 
 from railconfirm.domain.prediction import (

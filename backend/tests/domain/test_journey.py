@@ -1,6 +1,7 @@
 """Unit tests for Journey domain model in RailConfirm Intelligence."""
 
 from datetime import date
+
 import pytest
 
 from railconfirm.domain.journey import Journey, make_journey
@@ -61,4 +62,4 @@ def test_unknown_class_and_quota_warns():
             class_code="UNKNOWN_CLASS",
             quota_code="GN",
         )
-        assert j.is_class_supported() is False
+    assert j.is_class_supported() is False

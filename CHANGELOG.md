@@ -35,9 +35,12 @@ The format is inspired by Keep a Changelog; dates use ISO 8601.
   - `PassengerOutcomeCard` and `GroupOutcomeCard` with explicit assumption notes.
   - Dedicated pages for methodology and data governance.
 - **Test suite & CI (`backend/tests/`, `.github/workflows/ci.yml`):**
-  - 40 passing unit, domain, inference, API, and data pipeline tests.
-  - Clearly labelled synthetic fixtures (`synthetic_booking.json`, `synthetic_dataset.csv`).
-  - GitHub Actions CI workflow covering backend testing, frontend build/type-check, and secret/governance scanning.
+  - 43 passing unit, domain, inference, API, and data pipeline tests with 84% statement coverage.
+  - Added feature extraction and chronological partitioning unit tests (`test_preprocessing.py`).
+  - Added `ruff`, `mypy`, `pytest-cov`, and `types-PyYAML` to backend dev dependencies.
+  - Standardized `pyproject.toml` build backend to `setuptools.build_meta`.
+  - Consolidated single active GitHub Actions CI workflow at `.github/workflows/ci.yml` covering backend lint/type/tests, frontend build/type-check, and repository security scans.
+  - Aligned `PredictionResponse.is_supported` across backend FastAPI schema and frontend Next.js types.
 
 ### Changed
 - Updated `docs/PROJECT_STATUS.md` and `docs/DEVELOPMENT_LOG.md` to document the verified Phases 1–5 implementation.

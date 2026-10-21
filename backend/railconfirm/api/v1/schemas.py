@@ -15,10 +15,8 @@ Key rules
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
-
 
 # ── Request schemas ────────────────────────────────────────────────────────────
 
@@ -75,7 +73,7 @@ class JourneyRequest(BaseModel):
         return v.strip().upper()
 
     @model_validator(mode="after")
-    def stations_must_differ(self) -> "JourneyRequest":
+    def stations_must_differ(self) -> JourneyRequest:
         if self.boarding_station == self.destination_station:
             raise ValueError(
                 "boarding_station and destination_station must be different."
@@ -100,7 +98,7 @@ class PassengerRequest(BaseModel):
             "May equal original_status if unchanged."
         ),
     )
-    current_status_observed_at: Optional[datetime] = Field(
+    current_status_observed_at: datetime | None = Field(
         default=None,
         description="ISO-8601 timestamp when current_status was observed. Null if unknown.",
     )
@@ -135,30 +133,30 @@ class PassengerOutcomeResponse(BaseModel):
     original_status_normalized: str
     current_status: str
     current_status_normalized: str
-    p_cnf: Optional[float] = Field(
+    p_cnf: float | None = Field(
         default=None,
         description="Probability of confirmed berth at final chart. Null when abstaining.",
     )
-    p_rac: Optional[float] = Field(
+    p_rac: float | None = Field(
         default=None,
         description="Probability of RAC at final chart. Null when abstaining.",
     )
-    p_wl: Optional[float] = Field(
+    p_wl: float | None = Field(
         default=None,
         description="Probability of waitlisted at final chart. Null when abstaining.",
     )
-    p_cancelled: Optional[float] = Field(
+    p_cancelled: float | None = Field(
         default=None,
         description="Probability of cancelled outcome. Null when abstaining.",
     )
-    p_other: Optional[float] = Field(
+    p_other: float | None = Field(
         default=None,
         description="Probability of other recognized outcome. Null when abstaining.",
     )
     is_supported: bool = Field(
         description="True if a probability estimate is available; False if abstaining.",
     )
-    abstention_reason: Optional[str] = Field(
+    abstention_reason: str | None = Field(
         default=None,
         description="Stable reason code if abstaining; null if supported.",
     )
@@ -171,13 +169,13 @@ class PassengerOutcomeResponse(BaseModel):
 class GroupOutcomeResponse(BaseModel):
     """Group-level joint event probabilities."""
 
-    p_all_cnf: Optional[float] = None
-    p_all_cnf_or_rac: Optional[float] = None
-    p_at_least_one_wl: Optional[float] = None
+    p_all_cnf: float | None = None
+    p_all_cnf_or_rac: float | None = None
+    p_at_least_one_wl: float | None = None
     method: str
     assumptions: str
     is_supported: bool
-    abstention_reason: Optional[str] = None
+    abstention_reason: str | None = None
 
 
 class PredictionResponse(BaseModel):
@@ -203,9 +201,13 @@ class PredictionResponse(BaseModel):
     evidence_coverage: str = Field(
         description="Assessment of evidence quality: 'sufficient', 'partial', 'insufficient'.",
     )
+    is_supported: bool = Field(
+        default=False,
+        description="True if at least one passenger outcome is supported; False if all abstain.",
+    )
     passenger_count: int
     passenger_outcomes: list[PassengerOutcomeResponse]
-    group_outcome: Optional[GroupOutcomeResponse] = None
+    group_outcome: GroupOutcomeResponse | None = None
     limitations: list[str] = Field(
         description="Known limitations of this prediction.",
     )
@@ -229,7 +231,7 @@ class ErrorDetail(BaseModel):
 
     code: str
     message: str
-    field: Optional[str] = None
+    field: str | None = None
 
 
 class ErrorResponse(BaseModel):
@@ -237,7 +239,7 @@ class ErrorResponse(BaseModel):
 
     error: str
     details: list[ErrorDetail] = Field(default_factory=list)
-    request_id: Optional[str] = None
+    request_id: str | None = None
 
 
 # ── Health response ────────────────────────────────────────────────────────────

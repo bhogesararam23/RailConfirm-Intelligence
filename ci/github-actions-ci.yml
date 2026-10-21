@@ -45,10 +45,10 @@ jobs:
           source .venv/bin/activate
           mypy railconfirm/ --ignore-missing-imports
 
-      - name: Run tests
+      - name: Run tests with coverage
         run: |
           source .venv/bin/activate
-          pytest tests/ -v --tb=short
+          pytest tests/ -v --tb=short --cov=railconfirm --cov-report=term-missing
         # These tests must not require external APIs or private datasets.
         # Synthetic fixtures are clearly labelled in tests/fixtures/.
 
@@ -86,7 +86,7 @@ jobs:
           NEXT_PUBLIC_API_URL: http://localhost:8000
 
   docs-checks:
-    name: Documentation — link check
+    name: Documentation and Security Checks
     runs-on: ubuntu-latest
 
     steps:

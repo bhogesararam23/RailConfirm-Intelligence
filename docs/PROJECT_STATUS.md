@@ -11,7 +11,7 @@ The repository has completed its foundational engineering implementation (Phases
 | Product brief and requirements | Initial baseline implemented | Continuous review against user testing |
 | User journeys and MVP acceptance | Implemented (Phases 1–5 vertical slice) | Core local manual-input flow verified |
 | Architecture and API contracts | Implemented and verified | Versioned FastAPI routes and Next.js client |
-| Domain contracts and status parsing | Implemented and tested (40 tests passing) | Versioned mapping (v1.0.0); unknown codes mapped to UNKNOWN |
+| Domain contracts and status parsing | Implemented and tested (43 tests passing) | Versioned mapping (v1.0.0); unknown codes mapped to UNKNOWN |
 | Local dataset intake pipeline | Implemented (`loader`, `validator`, `manifest`) | Evaluated candidate dataset passing checklist |
 | Historical outcome dataset | No approved dataset yet; candidate intake ready | Provenance and final-chart labels validated |
 | Baseline predictor | Implemented (Laplace smoothing; abstains if unapproved) | Reproducible run on approved historical data |
@@ -20,7 +20,7 @@ The repository has completed its foundational engineering implementation (Phases
 | Manual-entry web flow | Implemented and verified (Next.js 14 + Tailwind) | Input and structured result flow working end-to-end |
 | External data integrations | Planned core long-term capability; not implemented in current build | Delivered in roadmap Phases 8–10 with source-specific ADRs |
 | Verified news/event/context feeds | Planned core long-term capability; not connected | Source review and incremental value on temporal holdout |
-| Tests and CI | Implemented (40 pytest tests, Next.js type-check/build, CI workflow) | Automated execution on push to GitHub |
+| Tests and CI | Implemented (43 pytest tests, 84% coverage, ruff, mypy, Next.js build, .github/workflows/ci.yml) | Automated execution on push to GitHub |
 | Production monitoring | Planned for deployment release | Error rates, drift, and calibration monitoring |
 
 ## In scope (Current build)

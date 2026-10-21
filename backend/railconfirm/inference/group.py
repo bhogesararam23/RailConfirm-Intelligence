@@ -12,9 +12,6 @@ Key rules (ADR-0003, docs/technical/INFERENCE_AND_GROUP_PROBABILITIES.md):
 
 from __future__ import annotations
 
-import math
-from typing import Optional
-
 from railconfirm.domain.prediction import (
     AbstentionReason,
     GroupOutcome,
@@ -24,7 +21,7 @@ from railconfirm.domain.prediction import (
 
 def compute_group_outcomes(
     passenger_outcomes: list[PassengerOutcome],
-) -> Optional[GroupOutcome]:
+) -> GroupOutcome | None:
     """Compute group-level outcome probabilities from passenger outcomes.
 
     Parameters

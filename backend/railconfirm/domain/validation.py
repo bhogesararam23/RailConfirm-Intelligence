@@ -10,9 +10,6 @@ import re
 from datetime import date, datetime
 from typing import Any
 
-from railconfirm.domain.journey import SUPPORTED_CLASS_CODES, SUPPORTED_QUOTA_CODES
-
-
 _TRAIN_NUMBER_RE = re.compile(r"^\d{4,6}$")
 
 

@@ -11,15 +11,14 @@ with NO_TRAINED_MODEL.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Optional
+from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
+from typing import Any
 
-from railconfirm.config import settings
 from railconfirm.domain.journey import Journey
 from railconfirm.domain.passenger import StatusObservation
 from railconfirm.domain.prediction import (
     AbstentionReason,
-    GroupOutcome,
     PassengerOutcome,
     PredictionRecord,
     PredictionTarget,
@@ -36,8 +35,8 @@ class InferenceEngine:
 
     def __init__(
         self,
-        registry: Optional[ModelRegistry] = None,
-        baseline: Optional[HistoricalFrequencyBaseline] = None,
+        registry: ModelRegistry | None = None,
+        baseline: HistoricalFrequencyBaseline | None = None,
     ) -> None:
         self.registry = registry or ModelRegistry()
         self.baseline = baseline or HistoricalFrequencyBaseline()
@@ -45,8 +44,8 @@ class InferenceEngine:
     def predict(
         self,
         journey: Journey,
-        passenger_inputs: list[dict[str, Any]],
-        prediction_at: Optional[datetime] = None,
+        passenger_inputs: Sequence[Mapping[str, Any]],
+        prediction_at: datetime | None = None,
         target: PredictionTarget = PredictionTarget.FINAL_CHART_CNF,
     ) -> PredictionRecord:
         """Run prediction pipeline for a journey and set of passenger inputs.
@@ -67,7 +66,7 @@ class InferenceEngine:
         PredictionRecord
             Immutable result containing per-passenger outcomes and group outcome.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         effective_prediction_at = prediction_at or now
 
         # Check model availability in registry

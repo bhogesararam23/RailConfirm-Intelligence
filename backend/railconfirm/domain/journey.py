@@ -14,8 +14,6 @@ import re
 import warnings
 from dataclasses import dataclass
 from datetime import date
-from typing import Optional
-
 
 # ── Supported code registries ──────────────────────────────────────────────────
 
@@ -104,7 +102,7 @@ class Journey:
 
         # journey_date must be a date instance
         if not isinstance(self.journey_date, date):
-            raise ValueError(
+            raise TypeError(
                 f"journey_date must be a datetime.date instance, "
                 f"got {type(self.journey_date).__name__}."
             )

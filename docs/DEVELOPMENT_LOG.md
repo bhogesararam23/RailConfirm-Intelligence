@@ -184,3 +184,38 @@ First substantive implementation session. Built the Python backend (domain, API,
 - Add PostgreSQL persistence layer for Phases 6–7.
 - Complete the model card and dataset manifest once real data is approved.
 - Enable GitHub Actions CI to run automatically on push (pending remote push access verification).
+
+## 2026-10-21 — CI consolidation, code quality tooling, and verification
+
+### Scope
+Consolidated continuous integration workflow, configured backend developer tooling (`ruff`, `mypy`, `pytest-cov`), fixed packaging build backend, and executed full verification across the repository.
+
+### Changes
+- **CI Workflow consolidation:**
+  - Migrated active workflow to `.github/workflows/ci.yml` with push and PR triggers on `main`.
+  - Removed redundant `ci/github-actions-ci.yml` to maintain a single source of truth; updated `ci/README.md`.
+  - Configured jobs for backend checks (`ruff`, `mypy`, `pytest --cov`), frontend checks (`npm ci`, `type-check`, `lint`, `build`), and docs/security scans.
+- **Backend developer tooling & packaging:**
+  - Added `ruff>=0.4.0`, `mypy>=1.10.0`, `pytest-cov>=5.0.0`, and `types-PyYAML>=6.0.12` to `[project.optional-dependencies].dev` in `backend/pyproject.toml`.
+  - Fixed `[build-system]` to use standard PEP 517 `setuptools.build_meta`.
+  - Cleaned up unused local variables in `railconfirm/inference/baseline.py` (`total_smoothed`, `smoothed_counts`) and added strict probability normalization.
+  - Resolved `ruff` and `mypy` issues: converted `ValueError` to `TypeError` on invalid journey date type, fixed timezone awareness with `timezone.utc`, added typed dict for passenger inputs, and broadened engine sequence signature to `Sequence[Mapping[str, Any]]`.
+  - Aligned `PredictionResponse.is_supported` field between backend schema and frontend Next.js types.
+- **Tests:**
+  - Added `backend/tests/data/test_preprocessing.py` covering feature extraction and chronological partitioning without temporal leakage.
+  - Test suite expanded to 43 passing tests.
+
+### Checks run & results
+- **Backend Linting:** `ruff check railconfirm/ tests/` &rarr; 0 errors (all checks passed).
+- **Backend Type-checking:** `mypy railconfirm/ --ignore-missing-imports` &rarr; 0 errors (success: no issues found in 26 source files).
+- **Backend Tests & Coverage:** `pytest tests/ -v --cov=railconfirm --cov-report=term-missing` &rarr; 43 passed in 1.13s with 84% statement coverage.
+- **FastAPI Endpoints:** Verified `GET /v1/health` (200 OK) and `POST /v1/predictions/manual` (200 OK with `is_supported=False` and structured `no_trained_model` abstention).
+- **Frontend Type-check:** `npm run type-check` (`tsc --noEmit`) &rarr; 0 errors.
+- **Frontend Lint:** `npm run lint` (`next lint`) &rarr; 0 errors or warnings.
+- **Frontend Production Build:** `npm run build` &rarr; compiled successfully, generated all 6 static routes.
+- **Markdown Links:** Verified all relative documentation links resolving correctly.
+- **Security & Privacy:** Scanned repository for `.env` files and unredacted 10-digit PNR strings; confirmed zero private data or secrets committed.
+
+### Remaining work
+- Observe GitHub Actions CI execution upon remote push to `origin/main`.
+- Intake and evaluate candidate historical dataset under `docs/data/DATASET_INTAKE_CHECKLIST.md`.

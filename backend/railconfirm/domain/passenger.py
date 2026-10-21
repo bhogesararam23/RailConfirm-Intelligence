@@ -15,12 +15,10 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
-from railconfirm.domain.status import ParsedStatus, parse_status
 from railconfirm.domain.journey import Journey
-
+from railconfirm.domain.status import ParsedStatus, parse_status
 
 # ── StatusObservation ──────────────────────────────────────────────────────────
 
@@ -50,7 +48,7 @@ class StatusObservation:
     raw_status: str
     parsed: ParsedStatus
     source: str
-    observed_at: Optional[datetime]     # None = unknown time, not fabricated
+    observed_at: datetime | None     # None = unknown time, not fabricated
     ingested_at: datetime               # System ingestion time (required)
     validation_state: str               # "valid" | "unknown_status" | "parse_warning"
 
@@ -68,8 +66,8 @@ class StatusObservation:
 def make_observation(
     raw_status: str,
     source: str,
-    observed_at: Optional[datetime] = None,
-    ingested_at: Optional[datetime] = None,
+    observed_at: datetime | None = None,
+    ingested_at: datetime | None = None,
 ) -> StatusObservation:
     """Construct a :class:`StatusObservation` by parsing ``raw_status``.
 
@@ -82,7 +80,7 @@ def make_observation(
     from railconfirm.domain.status import NormalizedStatus
 
     parsed = parse_status(raw_status)
-    now = ingested_at or datetime.now(timezone.utc)
+    now = ingested_at or datetime.now(UTC)
 
     if parsed.normalized == NormalizedStatus.UNKNOWN:
         state = "unknown_status"
@@ -125,8 +123,8 @@ class PassengerReservation:
     passenger_id: str = field(
         default_factory=lambda: str(uuid.uuid4())
     )
-    original_booking_observation: Optional[StatusObservation] = None
-    latest_observation: Optional[StatusObservation] = None
+    original_booking_observation: StatusObservation | None = None
+    latest_observation: StatusObservation | None = None
     observation_history: list[StatusObservation] = field(default_factory=list)
 
     def add_observation(self, obs: StatusObservation) -> None:
@@ -176,9 +174,9 @@ class BookingGroup:
     group_id: str = field(
         default_factory=lambda: str(uuid.uuid4())
     )
-    journey: Optional[Journey] = None
+    journey: Journey | None = None
     passengers: list[PassengerReservation] = field(default_factory=list)
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def add_passenger(self, passenger: PassengerReservation) -> None:
         """Add a passenger to the group."""

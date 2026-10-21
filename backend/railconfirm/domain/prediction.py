@@ -19,10 +19,8 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Optional
-
 
 # ── Enumerations ───────────────────────────────────────────────────────────────
 
@@ -92,12 +90,12 @@ class PassengerOutcome:
     """
 
     passenger_id: str
-    p_cnf: Optional[float]
-    p_rac: Optional[float]
-    p_wl: Optional[float]
-    p_cancelled: Optional[float]
-    p_other: Optional[float]
-    abstention_reason: Optional[AbstentionReason]
+    p_cnf: float | None
+    p_rac: float | None
+    p_wl: float | None
+    p_cancelled: float | None
+    p_other: float | None
+    abstention_reason: AbstentionReason | None
 
     def __post_init__(self) -> None:
         self._validate()
@@ -166,12 +164,12 @@ class GroupOutcome:
     one booking share context and their outcomes may be correlated.
     """
 
-    p_all_cnf: Optional[float]
-    p_all_cnf_or_rac: Optional[float]
-    p_at_least_one_wl: Optional[float]
+    p_all_cnf: float | None
+    p_all_cnf_or_rac: float | None
+    p_at_least_one_wl: float | None
     method: str       # e.g. "independence_baseline", "joint_model", "insufficient_data"
     assumptions: str  # Explicit description of all assumptions made
-    abstention_reason: Optional[AbstentionReason]
+    abstention_reason: AbstentionReason | None
 
 
 # ── Prediction record ──────────────────────────────────────────────────────────
@@ -195,12 +193,12 @@ class PredictionRecord:
 
     prediction_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     target: PredictionTarget = PredictionTarget.FINAL_CHART_CNF
-    prediction_at: Optional[datetime] = None   # Time of prediction request
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    prediction_at: datetime | None = None   # Time of prediction request
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     model_version: str = "no_model_v0"
     feature_schema_version: str = "1.0.0"
     passenger_outcomes: list[PassengerOutcome] = field(default_factory=list)
-    group_outcome: Optional[GroupOutcome] = None
+    group_outcome: GroupOutcome | None = None
     evidence_coverage: str = "insufficient"
     limitations: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)

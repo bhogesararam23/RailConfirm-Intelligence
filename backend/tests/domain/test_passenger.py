@@ -1,12 +1,10 @@
 """Unit tests for passenger reservation and observation domain types."""
 
-from datetime import datetime
-import pytest
+from datetime import UTC, datetime
 
 from railconfirm.domain.passenger import (
     BookingGroup,
     PassengerReservation,
-    StatusObservation,
     make_observation,
 )
 from railconfirm.domain.status import NormalizedStatus
@@ -16,13 +14,13 @@ def test_make_observation():
     obs = make_observation(
         raw_status="GNWL/15",
         source="manual_entry",
-        observed_at=datetime(2026, 11, 10, 8, 0, 0),
+        observed_at=datetime(2026, 11, 10, 8, 0, 0, tzinfo=UTC),
     )
     assert obs.raw_status == "GNWL/15"
     assert obs.parsed.normalized == NormalizedStatus.WL
     assert obs.parsed.position == 15
     assert obs.source == "manual_entry"
-    assert obs.observed_at == datetime(2026, 11, 10, 8, 0, 0)
+    assert obs.observed_at == datetime(2026, 11, 10, 8, 0, 0, tzinfo=UTC)
     assert obs.validation_state == "valid"
 
 

@@ -9,9 +9,8 @@ from __future__ import annotations
 import hashlib
 import sys
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
 import yaml
 
@@ -44,7 +43,7 @@ class DatasetManifest:
     valid_records: int
     rejected_records: int
     approval_status: str  # "approved_for_training", "quarantined", "metadata_only", "synthetic_test_only"
-    notes: Optional[str] = None
+    notes: str | None = None
 
     def to_yaml(self) -> str:
         return yaml.dump(asdict(self), sort_keys=False)
@@ -58,7 +57,7 @@ def generate_manifest(
     license_terms: str = "unspecified",
     is_synthetic: bool = False,
     approval_status: str = "quarantined",
-    notes: Optional[str] = None,
+    notes: str | None = None,
 ) -> DatasetManifest:
     """Generate a manifest for a candidate dataset file."""
     path = Path(file_path)
@@ -71,7 +70,7 @@ def generate_manifest(
         dataset_version=dataset_version,
         file_name=path.name,
         sha256=sha,
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
         source_reference=source_ref,
         license_or_terms=license_terms,
         is_synthetic=is_synthetic,

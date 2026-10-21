@@ -1,6 +1,5 @@
 """Unit tests for status normalization and parsing in RailConfirm Intelligence."""
 
-import pytest
 
 from railconfirm.domain.status import (
     MAPPING_VERSION,

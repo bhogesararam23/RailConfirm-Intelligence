@@ -13,7 +13,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
 
 # ── Versioning ─────────────────────────────────────────────────────────────────
 MAPPING_VERSION = "1.0.0"
@@ -77,10 +76,10 @@ class ParsedStatus:
 
     raw: str                                       # Always preserved
     normalized: NormalizedStatus
-    wl_category: Optional[WaitlistCategory]        # Only for WL statuses
-    position: Optional[int]                        # Nullable; never fabricated
+    wl_category: WaitlistCategory | None        # Only for WL statuses
+    position: int | None                        # Nullable; never fabricated
     mapping_version: str = MAPPING_VERSION
-    parse_note: Optional[str] = None               # Warnings for review
+    parse_note: str | None = None               # Warnings for review
 
 
 # ── Internal helpers ───────────────────────────────────────────────────────────
@@ -115,7 +114,7 @@ _RAC_PATTERN = re.compile(
 _CK_PATTERN = re.compile(r"^CK$", re.IGNORECASE)
 
 
-def _parse_position(pos_str: Optional[str]) -> Optional[int]:
+def _parse_position(pos_str: str | None) -> int | None:
     """Return validated integer position or None."""
     if pos_str is None:
         return None
@@ -131,7 +130,7 @@ def _parse_position(pos_str: Optional[str]) -> Optional[int]:
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 
-def parse_status(raw: Optional[str]) -> ParsedStatus:
+def parse_status(raw: str | None) -> ParsedStatus:
     """Parse a raw railway status string into a :class:`ParsedStatus`.
 
     Design rules

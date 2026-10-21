@@ -8,12 +8,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Union
 
 import pandas as pd
 
 
-def load_dataset_file(file_path: Union[str, Path]) -> pd.DataFrame:
+def load_dataset_file(file_path: str | Path) -> pd.DataFrame:
     """Load a candidate dataset file from disk.
 
     Supports CSV and JSON formats.
