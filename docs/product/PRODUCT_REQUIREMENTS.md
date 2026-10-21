@@ -6,7 +6,7 @@ Status: initial requirements baseline. Requirements are subject to revisions thr
 
 - **P0 — Required for a trustworthy first vertical slice**
 - **P1 — Required before calling the ML predictor research-validated**
-- **P2 — Later capability, dependent on evidence, rights or product feedback**
+- **P2 — Planned later product capability, gated by evidence, rights and operational readiness**
 
 ## Functional requirements
 
@@ -18,7 +18,7 @@ Status: initial requirements baseline. Requirements are subject to revisions thr
 - **PR-004 (P0):** Each manually supplied latest status records an observation timestamp or is explicitly marked as timestamp unknown.
 - **PR-005 (P0):** Raw status text is preserved; normalization does not silently convert unknown values.
 - **PR-006 (P0):** Invalid or incomplete inputs produce useful validation errors before a prediction is requested.
-- **PR-007 (P2 / deferred):** A future ADR may propose an authorized lookup adapter. It is not part of the current build, and the manual workflow must not depend on an external provider.
+- **PR-007 (P2 / planned):** Add an authorized live ticket/status lookup adapter in a later roadmap phase. It is a planned core product capability, but is not part of the current local-first build; the manual workflow must remain functional without it.
 
 ### Predictions
 
@@ -32,13 +32,14 @@ Status: initial requirements baseline. Requirements are subject to revisions thr
 - **PR-017 (P1):** Where available and validated, results show data freshness, coverage and uncertainty.
 - **PR-018 (P2):** The product shows how predictions change across observed snapshots without confusing prediction movement with ticket-status movement.
 
-### External integrations (deferred; not in current roadmap)
+### External integrations (planned core product capabilities; deferred from current build)
 
 - **PR-020 (current scope):** The application starts and supports its manual workflow without third-party API credentials or provider connectivity.
 - **PR-021 (current scope):** Tests and core UI behavior do not call live railway, news, calendar, weather or hosted-inference services.
-- **PR-022 (deferred):** Live PNR lookup and scheduled status refresh require a separate ADR, documented source permissions, privacy/retention controls and failure behavior.
-- **PR-023 (deferred):** Future tracking data must have access control, a defined retention policy and tested deletion behavior before enablement.
-- **PR-024 (deferred):** Notifications or other provider-backed services are outside the current build.
+- **PR-022 (P2 / planned):** Integrate an authorized live PNR/current-status source and support refreshes after the local model/data pipeline is validated.
+- **PR-023 (P2 / planned):** Use newly observed statuses to create timestamped prediction revisions while retaining prior predictions.
+- **PR-024 (P2 / planned):** Ingest verified current/upcoming operational and news/event/calendar context through permitted sources; retain signals only when temporal evaluation shows incremental value.
+- **PR-025 (P2 / planned):** Add optional user alerts for meaningful status/prediction changes after tracking, consent, freshness and delivery behavior are validated.
 
 ### Research and governance
 
@@ -48,7 +49,7 @@ Status: initial requirements baseline. Requirements are subject to revisions thr
 - **PR-033 (P1):** The evaluation reports proper scoring rules, calibration, sample counts and coverage.
 - **PR-034 (P1):** Performance is reported across supported status categories, quotas, classes and prediction horizons where sample size permits.
 - **PR-035 (P1):** Model and data versions are recorded to reproduce results.
-- **PR-036 (P2):** Verified external event features are added only after a feature ablation demonstrates incremental value.
+- **PR-036 (P2 / planned):** Current/upcoming context is a target-product capability. Each context feature group must pass a temporal ablation demonstrating incremental value before it can affect user-facing probabilities.
 
 ## Non-functional requirements
 
@@ -65,4 +66,4 @@ Status: initial requirements baseline. Requirements are subject to revisions thr
 
 ## Release gates
 
-A feature cannot be described as prediction-ready unless target definitions, model versioning, evaluation evidence, error handling and coverage disclosures are present. Any future live tracking or external context integration is deferred and would need a new provider-authority, privacy and security gate.
+A feature cannot be described as prediction-ready unless target definitions, model versioning, evaluation evidence, error handling and coverage disclosures are present. The current build must remain provider-independent. Planned integrations in roadmap Phases 8–10 require source-specific ADRs, verified permitted use, privacy/security review, failure handling and evidence-based acceptance.
