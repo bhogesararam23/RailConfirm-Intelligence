@@ -40,7 +40,7 @@ Start with the [documentation map](docs/README.md) for the recommended reading o
 
 **Technical:** [System design](docs/technical/SYSTEM_DESIGN.md) · [Domain model](docs/technical/DOMAIN_MODEL.md) · [Storage model](docs/technical/STORAGE_MODEL.md) · [Inference and group probabilities](docs/technical/INFERENCE_AND_GROUP_PROBABILITIES.md) · [Ingestion and tracking](docs/technical/INGESTION_AND_TRACKING.md)
 
-**Build and operations:** [Roadmap](docs/ROADMAP.md) · [Agent handoff](docs/AGENT_HANDOFF.md) · [Implementation plan](docs/technical/IMPLEMENTATION_PLAN.md) · [Testing strategy](docs/technical/TESTING_STRATEGY.md) · [Frontend guide](docs/technical/FRONTEND_GUIDE.md) · [Observability](docs/technical/OBSERVABILITY.md) · [Deployment runbook](docs/technical/DEPLOYMENT_RUNBOOK.md) · [Agent handoff](docs/AGENT_HANDOFF.md)
+**Build and operations:** [Roadmap](docs/ROADMAP.md) · [Agent handoff](docs/AGENT_HANDOFF.md) · [Implementation plan](docs/technical/IMPLEMENTATION_PLAN.md) · [Local-first development](docs/technical/LOCAL_FIRST_DEVELOPMENT.md) · [Testing strategy](docs/technical/TESTING_STRATEGY.md) · [Frontend guide](docs/technical/FRONTEND_GUIDE.md) · [Observability](docs/technical/OBSERVABILITY.md) · [Deployment runbook](docs/technical/DEPLOYMENT_RUNBOOK.md)
 
 **Research and governance:** [Project status](docs/PROJECT_STATUS.md) · [Research plan](docs/research/RESEARCH_PLAN.md) · [Data acquisition](docs/data/DATA_ACQUISITION.md) · [Data contract](docs/data/DATA_CONTRACT.md) · [Prediction targets](docs/model/PREDICTION_TARGETS.md) · [Evaluation protocol](docs/research/EVALUATION_PROTOCOL.md) · [Security and privacy](docs/SECURITY_AND_PRIVACY.md) · [Architecture Decision Records](docs/adr/README.md)
 
