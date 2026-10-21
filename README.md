@@ -1,10 +1,10 @@
 # RailConfirm Intelligence
 
-An ML-powered Indian Railways ticket confirmation probability predictor for waitlisted (WL) and Reservation Against Cancellation (RAC) tickets, with passenger-wise forecasts, group-level outcome analysis, historical trend modelling, and a path toward authorized live status tracking.
+An ML-powered Indian Railways ticket confirmation probability predictor for waitlisted (WL) and Reservation Against Cancellation (RAC) tickets, with passenger-wise forecasts, group-level outcome analysis, and historical trend modelling.
 
 RailConfirm is being developed as both a research project and a web application. The goal is not to produce a percentage that looks precise; the goal is to estimate meaningful probabilities, evaluate them against real outcomes, and be clear about where the model does and does not have enough evidence.
 
-> **Project status:** Documentation and research planning. A trained prediction model, production data pipeline, and live PNR integration are not yet claimed to exist. Estimates must not be presented as reliable until validated on held-out real-world outcomes.
+> **Project status:** Documentation and research planning. The current roadmap is local-first and has no third-party runtime API dependency. A trained prediction model, production data pipeline, and live PNR integration are not yet claimed to exist. Estimates must not be presented as reliable until validated on held-out real-world outcomes.
 
 ## What it is intended to do
 
@@ -30,7 +30,7 @@ RailConfirm is being developed as both a research project and a web application.
 
 The current build is local-first: no third-party runtime APIs, live PNR lookup, automated polling, or live news/event feeds. Research agents may help identify and prepare datasets, but each dataset must pass provenance, licence, privacy, label-quality and leakage checks before training.
 
-See the [detailed roadmap](docs/ROADMAP.md), [dataset intake checklist](docs/data/DATASET_INTAKE_CHECKLIST.md), and [local-first development rules](docs/technical/LOCAL_FIRST_DEVELOPMENT.md).
+See the [detailed roadmap](docs/ROADMAP.md), [dataset intake checklist](docs/data/DATASET_INTAKE_CHECKLIST.md), [dataset manifest template](docs/data/DATASET_MANIFEST_TEMPLATE.yaml), and [local-first development rules](docs/technical/LOCAL_FIRST_DEVELOPMENT.md).
 
 ## Documentation
 
@@ -43,6 +43,8 @@ Start with the [documentation map](docs/README.md) for the recommended reading o
 **Build and operations:** [Roadmap](docs/ROADMAP.md) · [Agent handoff](docs/AGENT_HANDOFF.md) · [Implementation plan](docs/technical/IMPLEMENTATION_PLAN.md) · [Testing strategy](docs/technical/TESTING_STRATEGY.md) · [Frontend guide](docs/technical/FRONTEND_GUIDE.md) · [Observability](docs/technical/OBSERVABILITY.md) · [Deployment runbook](docs/technical/DEPLOYMENT_RUNBOOK.md) · [Agent handoff](docs/AGENT_HANDOFF.md)
 
 **Research and governance:** [Project status](docs/PROJECT_STATUS.md) · [Research plan](docs/research/RESEARCH_PLAN.md) · [Data acquisition](docs/data/DATA_ACQUISITION.md) · [Data contract](docs/data/DATA_CONTRACT.md) · [Prediction targets](docs/model/PREDICTION_TARGETS.md) · [Evaluation protocol](docs/research/EVALUATION_PROTOCOL.md) · [Security and privacy](docs/SECURITY_AND_PRIVACY.md) · [Architecture Decision Records](docs/adr/README.md)
+
+The current no-third-party-runtime-API boundary is recorded in [ADR-0007](docs/adr/ADR-0007-local-first-no-external-runtime-apis.md). Agent-sourced data remains subject to the dataset intake gate.
 
 Also see [AGENTS.md](AGENTS.md), [CONTRIBUTING.md](CONTRIBUTING.md), [CHANGELOG.md](CHANGELOG.md), [development log](docs/DEVELOPMENT_LOG.md), and [third-party data policy](THIRD_PARTY_DATA.md).
 
