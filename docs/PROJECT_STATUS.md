@@ -4,20 +4,23 @@ Last reviewed: 2026-10-21
 
 ## Status
 
-The repository is at the initial documentation and research-planning stage. The contents define what we intend to build and the conditions under which predictions may be described as reliable; they do not claim that the software or model has already been implemented.
+The repository now has a product specification, engineering design and research/governance baseline. It remains documentation and planning only: written contracts describe intended behavior; they do not imply running application code or a validated model.
 
 | Area | Status | Exit condition |
 |---|---|---|
-| Product requirements | Initial draft | Requirements are testable and scoped |
+| Product brief and requirements | Initial baseline documented | Review requirements against a first implementation |
+| User journeys and MVP acceptance | Draft documented | Implement and test the core vertical slice |
+| Architecture and API contracts | Proposed design | Validate against actual stack and implementation |
+| Domain/storage contracts | Logical model documented | Implement versioned schemas and tests |
 | Data-source discovery | In progress | Sources, rights, coverage and costs are recorded |
 | Historical outcome dataset | Not established | Provenance and final-outcome labels are validated |
-| Data contract | Initial specification | Schemas and normalization tests exist in code |
 | Baseline predictor | Not implemented | Reproducible baseline runs on eligible labelled data |
 | ML model | Not implemented | Chronological evaluation demonstrates utility over baseline |
 | Calibration | Not implemented | Calibration is measured on held-out journeys |
 | Manual-entry web flow | Not implemented | Input and result flow works end-to-end |
 | Live PNR tracking | Not integrated | Written permission/terms and a functioning provider are verified |
 | News/event features | Research candidate | Incremental value demonstrated on temporal holdout |
+| Tests and CI | Not implemented | Relevant static checks and automated tests run in CI |
 | Production monitoring | Not implemented | Freshness, error rates, drift and calibration are monitored |
 
 ## In scope
