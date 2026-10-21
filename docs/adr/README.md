@@ -50,3 +50,4 @@ How will the decision be tested or revisited? Record evidence, not assumptions.
 | [ADR-0004](ADR-0004-temporal-evaluation-and-calibration.md) | Chronological evaluation and probability calibration | Accepted |
 | [ADR-0005](ADR-0005-data-governance-and-pnr-privacy.md) | Source rights, live access and PNR privacy | Accepted |
 | [ADR-0006](ADR-0006-apache-2-license.md) | Apache-2.0 for original repository materials | Accepted |
+| [ADR-0007](ADR-0007-local-first-no-external-runtime-apis.md) | Local-first MVP without third-party runtime APIs | Accepted |
