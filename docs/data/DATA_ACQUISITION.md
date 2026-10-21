@@ -10,7 +10,7 @@ Do not assume that historical PNR trajectories or an official live PNR API are f
 
 ## Current operating mode: agent-assisted, local-only
 
-The current product build must not depend on any third-party runtime API. Agents may help research sources, prepare permitted files, normalize documented schemas and write intake reports as a separate data-preparation activity. Data must be delivered as an inspectable local file or a user-supplied artifact, not fetched through a hidden network call when the application runs. Follow docs/data/DATASET_INTAKE_CHECKLIST.md for every candidate. An agent's research summary is not a licence, and a downloadable file is not automatically approved for model training. If no suitable dataset is available, report the blocker and continue with domain/test work; do not invent rows or labels.
+The current product build must not depend on any third-party runtime API. This is the Phase 0–7 implementation boundary, not a permanent restriction on the target product: authorized live ticket/status sources and verified current/upcoming context feeds are planned for Phases 8–10. Agents may help research sources, prepare permitted files, normalize documented schemas and write intake reports as a separate data-preparation activity. Data must be delivered as an inspectable local file or a user-supplied artifact, not fetched through a hidden network call when the application runs. Follow docs/data/DATASET_INTAKE_CHECKLIST.md for every candidate. An agent's research summary is not a licence, and a downloadable file is not automatically approved for model training. If no suitable dataset is available, report the blocker and continue with domain/test work; do not invent rows or labels.
 
 ## Source tiers
 
