@@ -1,137 +1,106 @@
 # Implementation plan
 
-Status: planned order of work. This document is intended to give a new coding agent a concrete starting sequence without requiring it to invent missing requirements.
+Status: planned work order. The canonical phase gates are in [ROADMAP.md](../ROADMAP.md).
 
-## Working rules
+## Current scope
 
-- Read AGENTS.md, the product requirements, the architecture decision index and current project status first.
-- Inspect current code before creating or renaming files.
-- Use the smallest useful vertical slice and keep tests with the code.
-- Do not build live tracking or claim a model exists while data rights and evidence are missing.
-- Add material decisions as sequential ADRs. Update CHANGELOG and DEVELOPMENT_LOG at appropriate milestones.
-- Do not inflate commit count. Make related, reviewable changes.
+The initial build is local-first and has no third-party runtime APIs. The project can use its own internal API between frontend and backend. Research agents may discover and prepare candidate dataset files, but those files must pass the [dataset intake checklist](../data/DATASET_INTAKE_CHECKLIST.md) before they can be used for model training.
 
-## Phase 0 — Feasibility, specifications and repo hygiene
+Do not implement live PNR lookup, polling, news feeds, external calendar/weather/event APIs or hosted inference in the current roadmap.
 
-Tasks:
-1. Review candidate data sources and the source register.
-2. Confirm which sources may be used for reference, storage, derived features, training and publication.
-3. Choose the first supported reservation status taxonomy from authoritative references.
-4. Refine the target/label/censoring rules with available dataset semantics.
-5. Decide on a concrete initial runtime stack only after reviewing environment/cost constraints.
-6. Set up the minimal package layout and CI after the first code task is selected.
+## Phase 0 — Data feasibility and source rights
 
-Exit criteria:
-- An approved or explicitly unavailable data path is documented.
-- Target semantics and unknown status handling are clear.
-- No accidental claim of historical-model readiness appears in docs or UI.
+1. Inventory candidate historical data and primary-source documentation.
+2. Record each candidate in the source register.
+3. Review permitted local storage, transformations, model training, aggregate publication and commercial use separately.
+4. Determine whether reliable status trajectories and final outcome labels are available.
+5. Quarantine files containing unexpected PNRs or identifiable passenger data until reviewed.
+6. Mark synthetic fixtures separately from real observations.
+
+**Exit:** An approved data path exists, or the data blocker is documented honestly. A source is not approved just because a file is downloadable.
 
 ## Phase 1 — Domain package and contracts
 
-Tasks:
-1. Define typed journey, passenger status, status observation and prediction contracts.
-2. Implement status parsing without discarding raw strings.
-3. Implement validation and stable reason codes.
-4. Add tests for mixed RAC/WL groups and malformed/unknown inputs.
-5. Publish schema/version rules and keep API docs in sync.
+1. Define typed journey, passenger status, observation, prediction and abstention structures.
+2. Verify supported status mappings from authoritative references.
+3. Preserve raw statuses and parsed positions separately.
+4. Implement validation and stable reason codes.
+5. Test mixed RAC/WL groups, malformed positions, timestamps and unknown statuses.
 
-Exit criteria:
-- Deterministic domain tests cover normal and edge behavior.
-- Unknown status is never silently mapped to a supported target.
+**Exit:** Unknown categories cannot silently enter a supported model path; deterministic tests cover documented invariants.
 
-## Phase 2 — API shell and manual form
+## Phase 2 — Local dataset intake and quality
 
-Tasks:
-1. Build the manual-entry form and passenger row management.
-2. Add request validation in the API.
-3. Return a stable no-model-available response when no evaluated model is registered.
-4. Build the result page's supported/abstained states.
-5. Add frontend/API contract tests.
-6. Make the UI accessible and avoid color-only meaning.
+1. Implement a loader for the approved local file format.
+2. Validate schema, dates, train/class/quota coverage, status distribution, duplicates and contradictions.
+3. Store source/dataset version and transformation provenance.
+4. Build as-of-time snapshots without using future observations.
+5. Produce inclusion/exclusion and missing-label reports.
+6. Keep raw/private datasets outside Git unless an explicit rights and privacy review permits publication.
 
-Exit criteria:
-- User can submit a valid scenario and get a truthful state.
-- No fake numeric probabilities are rendered.
-- The experience works without provider credentials.
+**Exit:** Dataset provenance, labels, quality and permitted use are documented well enough to define an experiment.
 
-## Phase 3 — Data quality pipeline and baseline
+## Phase 3 — Historical/statistical baseline
 
-Tasks:
-1. Implement an ingestion path for an approved dataset or an explicitly documented local fixture.
-2. Store source/version and validation metadata.
-3. Add data-quality summaries and exclusion reasons.
-4. Reconstruct as-of-time snapshots.
-5. Implement the historical-frequency baseline.
-6. Add chronological and booking-group partition logic.
-7. Write leakage and reproducibility tests.
+1. Define the target and eligible outcomes.
+2. Choose chronological train/validation/test cutoffs based on available data.
+3. Keep snapshots of the same booking/journey in a single partition.
+4. Implement a smoothed historical-frequency baseline and a status/time baseline where fields allow.
+5. Compute Brier score, log loss, calibration, coverage and subgroup sample counts.
+6. Record all configuration and results in an experiment report.
 
-Exit criteria:
-- A reproducible baseline run exists only for eligible real labelled data.
-- Synthetic fixtures are excluded from empirical metric outputs.
-- Split and feature-timestamp checks pass.
+**Exit:** An approved, reproducible baseline evaluation exists, with leakage checks. Synthetic data is not used to report predictive performance.
 
-## Phase 4 — Candidate models and calibration
+## Phase 4 — Candidate ML and calibration
 
-Tasks:
-1. Compare the baseline with one or more tabular candidates.
-2. Train and select using development/validation periods only.
-3. Calibrate on validation data.
-4. Evaluate on a locked future period using Brier score, log loss and calibration.
-5. Report subgroup sample counts and uncertainty.
-6. Create a versioned model card and evaluation report.
-7. Add artifact compatibility checks to inference.
+1. Select candidate models only after assessing dataset size and coverage.
+2. Tune candidates on development/validation data only.
+3. Fit calibration only on the designated calibration/validation split.
+4. Evaluate once on the locked later test period.
+5. Compare with the baseline and include uncertainty and subgroup limitations.
+6. Version the model, feature schema, target definition and dataset.
+7. Document the result in a model card.
 
-Exit criteria:
-- Candidate utility over baseline is measured on holdout.
-- Supported categories and limitations are explicitly documented.
-- If the model fails to beat baseline, report the failure and do not promote it.
+**Exit:** The model is promoted only if the evidence supports its use. If candidates do not beat the baseline, report that and retain the stronger simpler approach or abstain.
 
-## Phase 5 — Group outcome estimation
+## Phase 5 — Manual local web/API vertical slice
 
-Tasks:
-1. Establish the available group-level labelled sample.
-2. Build a transparent baseline for group events.
-3. Implement a joint/structured candidate with explicit assumptions.
-4. Evaluate all-CNF, all-CNF/RAC and count-based events on held-out groups.
-5. Compare calibration and proper scoring rules.
-6. Expose only events with enough evidence.
+1. Build the journey form and multi-passenger input.
+2. Preserve original and current status separately.
+3. Implement the internal API contract and server-side validation.
+4. Run inference from a compatible local model artifact only when one is available.
+5. Return an explicit no-model/unsupported result where coverage is absent.
+6. Show passenger probabilities, model version, prediction time and limits only when the model is validated.
+7. Test end-to-end without external API credentials or network access.
 
-Exit criteria:
-- Passenger and group outputs remain coherent.
-- Dependence assumptions are documented and tested.
-- Unsupported group estimates abstain.
+**Exit:** Manual input works end-to-end locally, and no unsupported numeric estimate is fabricated.
 
-## Phase 6 — Authorized live data and tracking
+## Phase 6 — Group outcome estimates
 
-Tasks:
-1. Assess a real provider and update the source register.
-2. Verify access, storage, rate-limit, model-training and publication terms.
-3. Implement an adapter behind a feature/configuration switch.
-4. Add secure identifier mapping, consent, retention and deletion.
-5. Add freshness states, idempotency, bounded retries and provider health.
-6. Test disabled/outage/rate-limit/unknown-status behavior.
+1. Define the available held-out booking-group population.
+2. Implement a transparent group baseline.
+3. Evaluate a joint/structured outcome method against that baseline.
+4. Measure all-CNF, all-CNF/RAC, exactly-k-CNF and at-least-k-CNF events.
+5. Check probability coherence and subgroup coverage.
+6. Abstain for groups/categories without supporting evidence.
 
-Exit criteria:
-- Written source terms cover the actual operations performed.
-- The adapter can be disabled without breaking manual entry.
-- Old data is clearly labelled stale.
+**Exit:** Group performance is evaluated on labelled groups and does not depend on an unvalidated independence assumption.
 
-## Phase 7 — External context and ongoing monitoring
+## Phase 7 — Hardening and reproducibility
 
-Tasks:
-1. Select structured calendar/operational event sources and verify terms.
-2. Normalize events with source and publication timestamps.
-3. Test feature ablation on temporal holdout.
-4. Add drift, freshness, calibration and abstention monitoring.
-5. Define a documented retraining and rollback workflow.
+1. Add unit, contract and local integration tests.
+2. Add safe CI checks that do not require private datasets or external credentials.
+3. Document local setup, configuration, migrations and model loading.
+4. Verify log redaction, data boundary and secret hygiene.
+5. Test missing model, missing dataset, unsupported input and corrupt artifact behavior.
+6. Prepare local release instructions, model card, dataset manifest and runbook.
 
-Exit criteria:
-- External context is retained only if it adds measurable value.
-- Retraining cannot silently reuse the locked test set.
-- Monitoring alerts and operational ownership are documented.
+**Exit:** A clean environment can run core checks and a supported local demo without third-party services.
 
-## First coding task recommended
+## Future proposal only — External integrations
 
-Start with the domain schema and reservation-status normalization tests—not a trained model and not live PNR automation. These concepts underpin form validation, storage, historical data and inference, and they can be implemented/tested without pretending data access is solved.
+This is not an active phase. Any proposal for live PNR lookup, automatic status updates, external news/context feeds or hosted inference requires a new ADR, verified permissions, security/privacy review, cost/rate-limit assessment, a disable switch, and evidence of product value.
 
-The precise first status mapping must be checked against an authoritative reference before production use.
+## First coding task
+
+Start with the domain schema and status parsing/normalization tests. This is independent of live data and provides the foundation for ingestion, API validation, training and the UI. Verify the exact status mappings from authoritative references before coding them as production behavior.
