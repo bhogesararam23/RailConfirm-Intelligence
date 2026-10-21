@@ -2,6 +2,8 @@
 
 Status: current implementation constraint.
 
+Local-first is a sequencing and resilience strategy for the first release, not a permanent limit on the product's intended capabilities. ADR-0008 and roadmap Phases 8–10 retain authorized live status sources and verified current/upcoming contextual feeds as planned core long-term capabilities.
+
 ## What local-first means here
 
 The first working version must be useful for development and research using local code, reviewed input files, local/configured storage and versioned model artifacts. It must not require any third-party runtime API to start the app, validate manual inputs, run tests or execute a supported local model.
@@ -20,6 +22,8 @@ The application may expose its own backend API between its frontend and backend.
 - Synthetic fixtures for software tests, clearly marked and isolated from empirical evaluation.
 
 ## Not allowed as a core runtime dependency in the current build
+
+The following are deferred from the first implementation, not removed from the long-term product goal. The roadmap intends to add suitable authorized sources in later phases.
 
 - Live IRCTC or third-party PNR APIs.
 - Automatic ticket-status polling.
@@ -50,6 +54,10 @@ Recommended logical layout:
 - artifacts/ — local model/evaluation outputs, ignored by Git unless an intentionally distributable artifact is approved.
 
 The exact directory structure can be finalized by the first data implementation. Do not put private data into a public path merely because .gitignore exists; local files can still be accidentally staged.
+
+## Preparing for later core integrations
+
+Keep source adapters, status observations, source provenance and prediction revision boundaries modular. Do not couple domain normalization or model inference to one provider's JSON schema. This preserves a route to the planned future integrations without adding runtime dependencies to the current local-first app. Do not implement those integrations until their roadmap phase and source-specific review are reached.
 
 ## Definition of local-first done
 
