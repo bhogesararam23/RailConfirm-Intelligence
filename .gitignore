@@ -23,6 +23,8 @@ node_modules/
 .next/
 out/
 coverage/
+.eslintcache
+*.tsbuildinfo
 
 # Editors and OS
 .DS_Store
@@ -35,11 +37,15 @@ Thumbs.db
 data/raw/
 data/private/
 data/interim/
+data/processed/
+data/validated/
 artifacts/
-models/*.joblib
-models/*.pkl
-models/*.pt
-models/*.onnx
+models/
+*.joblib
+*.pkl
+*.pt
+*.onnx
+*.h5
 
 # Notebooks
 .ipynb_checkpoints/
@@ -49,5 +55,13 @@ models/*.onnx
 
 # Local-first dataset workspaces (manifests/docs remain trackable)
 /local/
-data/processed/
 data/sample-private/
+
+# Test coverage artifacts
+htmlcov/
+.coverage
+coverage.xml
+
+# Research pipeline outputs
+reports/
+experiments/
