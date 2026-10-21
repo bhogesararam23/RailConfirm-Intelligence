@@ -4,7 +4,7 @@ Last reviewed: 2026-10-21
 
 ## Status
 
-The repository now has a product specification, engineering design, research/governance baseline and phased roadmap. It remains documentation and planning only: written contracts describe intended behavior; they do not imply running application code or a validated model. Under ADR-0007, the current build is local-first and must not depend on third-party runtime APIs.
+The repository now has a product specification, engineering design, research/governance baseline and phased roadmap. It remains documentation and planning only: written contracts describe intended behavior; they do not imply running application code or a validated model. Under ADR-0007, the current build is local-first and must not depend on third-party runtime APIs. ADR-0008 clarifies that authorized live status data and verified current/upcoming contextual signals remain planned core capabilities of the long-term product.
 
 | Area | Status | Exit condition |
 |---|---|---|
@@ -18,7 +18,7 @@ The repository now has a product specification, engineering design, research/gov
 | ML model | Not implemented | Chronological evaluation demonstrates utility over baseline |
 | Calibration | Not implemented | Calibration is measured on held-out journeys |
 | Manual-entry web flow | Not implemented | Input and result flow works end-to-end |
-| Third-party runtime integrations | Deferred / out of current scope | Reconsidered only through a new ADR and verified permission review |
+| External data integrations | Planned core long-term capability; not implemented in the current build | Delivered in roadmap Phases 8–10 after local model/data gates, with source-specific ADR and verified permissions |
 | News/event features | Research candidate | Incremental value demonstrated on temporal holdout |
 | Tests and CI | Not implemented | Relevant static checks and automated tests run in CI |
 | Production monitoring | Not implemented | Freshness, error rates, drift and calibration are monitored |
@@ -33,9 +33,9 @@ The repository now has a product specification, engineering design, research/gov
 - Reproducible model evaluation, calibration, coverage reporting and model cards.
 - Privacy-preserving storage and an auditable data-source registry.
 
-## Out of scope for the current roadmap
+## Not part of the current local-first build
 
-- Third-party runtime APIs, live PNR lookup/polling, live news or event feeds, weather/calendar APIs, and hosted model inference. Any future proposal requires a new ADR.
+- Third-party runtime APIs, live PNR lookup/polling, live news or event feeds, weather/calendar APIs, and hosted inference are not implemented now. They remain planned future product capabilities in roadmap Phases 8–10, rather than permanently excluded goals. See ADR-0008.
 
 ## Out of scope until separately approved
 
