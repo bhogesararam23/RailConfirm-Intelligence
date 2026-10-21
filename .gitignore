@@ -46,3 +46,8 @@ models/*.onnx
 
 # Logs
 *.log
+
+# Local-first dataset workspaces (manifests/docs remain trackable)
+/local/
+data/processed/
+data/sample-private/
