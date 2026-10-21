@@ -23,6 +23,16 @@ This file is the repository-wide instruction set for coding agents and automated
 - Update `CHANGELOG.md` for user- or developer-visible changes and `docs/DEVELOPMENT_LOG.md` at meaningful session boundaries. Log the actual date, scope, evidence, tests run and unresolved issues; do not invent elapsed time or outcomes.
 - For experiments, record a reproducible configuration, dataset provenance, split logic, metric definitions and results. Mark pending work as pending.
 
+## Current execution scope (ADR-0007)
+
+- The current build is local-first and must not depend on third-party runtime APIs or providers.
+- Do not implement live PNR lookups, scheduled ticket polling, external news/calendar/weather/event feeds, or hosted model inference in the current roadmap.
+- An internal API between the project's own frontend and backend is allowed.
+- Agents may research and prepare candidate data files outside the product runtime. Every candidate must pass docs/data/DATASET_INTAKE_CHECKLIST.md and be recorded in docs/data/SOURCE_REGISTER.md before training.
+- Agent-sourced data is not automatically approved. Verify source provenance, relevant terms, storage/training/publication rights, privacy, label meaning and schema quality. If a term or right is unclear, mark the dataset quarantined or under review.
+- Do not add hidden network calls to app startup, the manual prediction path, unit tests or CI.
+- Any proposal to reopen external integrations must be documented in a new sequential ADR before implementation.
+
 ## Data and prediction rules
 
 - Treat data provenance, licensing, consent and usage rights as first-class requirements.
