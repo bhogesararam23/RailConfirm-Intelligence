@@ -67,3 +67,18 @@ This journey is disabled until an approved provider and data-retention policy ar
 5. The report documents failed comparisons and known limitations.
 
 **Acceptance signal:** Performance claims can be audited without exposing raw PNRs or passenger identity.
+
+
+## Journey G — A verified current/upcoming factor changes the forecast (future Phase 9)
+
+This is a planned product journey, not a current feature. It requires a permitted external or agent-prepared source, a structured event record and evidence that the signal improves predictions.
+
+1. A later-phase source adapter or reviewed local data import provides an event with source, publication time, effective window and affected route/train context.
+2. The ingestion layer validates permission, schema, timestamp semantics and relevance.
+3. The feature pipeline uses the event only for predictions made after the information would have been available.
+4. The model recalculates only if the event type is supported by the evaluated feature schema.
+5. The user can see that a new observation/context record was incorporated, with its source time and limitations.
+6. The product must not imply that a headline caused an outcome or allow a language model to change the probability directly.
+7. If the source is unavailable, stale or unsupported, the existing local/manual workflow continues and the event is not treated as current evidence.
+
+**Acceptance signal:** Current/upcoming context influences forecasts only through validated structured features that improved temporal holdout performance; otherwise, the feature is omitted from inference.
