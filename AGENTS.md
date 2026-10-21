@@ -27,12 +27,12 @@ This file is the repository-wide instruction set for coding agents and automated
 
 - The current build (roadmap Phases 0–7) is local-first and must not depend on third-party runtime APIs or providers.
 - The target product's long-term scope includes authorized live ticket/status sources and verified current/upcoming operational/news/event context in roadmap Phases 8–10. Do not interpret current API restrictions as removing those future core capabilities from requirements or architecture documents. Do not build them before their planned phase; keep adapters modular and record source-specific ADRs before concrete integrations.
-- Do not implement live PNR lookups, scheduled ticket polling, external news/calendar/weather/event feeds, or hosted model inference in the current roadmap.
+- Do not implement live PNR lookups, scheduled ticket polling, external news/calendar/weather/event feeds, or hosted model inference in roadmap Phases 0–7; those planned core capabilities belong to Phases 8–10.
 - An internal API between the project's own frontend and backend is allowed.
 - Agents may research and prepare candidate data files outside the product runtime. Every candidate must pass docs/data/DATASET_INTAKE_CHECKLIST.md and be recorded in docs/data/SOURCE_REGISTER.md before training.
 - Agent-sourced data is not automatically approved. Verify source provenance, relevant terms, storage/training/publication rights, privacy, label meaning and schema quality. If a term or right is unclear, mark the dataset quarantined or under review.
 - Do not add hidden network calls to app startup, the manual prediction path, unit tests or CI.
-- Any proposal to reopen external integrations must be documented in a new sequential ADR before implementation.
+- Any concrete external source/provider implementation must be documented in a new sequential ADR before implementation. Do not treat the required provider-specific ADR as a reason to omit planned integrations from the overall product roadmap.
 
 ## Data and prediction rules
 
