@@ -21,6 +21,7 @@ Start here if this is your first time working on RailConfirm Intelligence.
 ## Roadmap and execution
 
 - [Roadmap](ROADMAP.md)
+- [ADR-0008: planned live-data integrations](adr/ADR-0008-live-data-integrations-as-long-term-core-capability.md)
 - [Agent handoff](AGENT_HANDOFF.md)
 - [Dataset intake checklist](data/DATASET_INTAKE_CHECKLIST.md)
 - [Dataset manifest template](data/DATASET_MANIFEST_TEMPLATE.yaml)
@@ -40,7 +41,7 @@ Start here if this is your first time working on RailConfirm Intelligence.
 - [Domain model](technical/DOMAIN_MODEL.md)
 - [Storage model](technical/STORAGE_MODEL.md)
 - [Inference and group probabilities](technical/INFERENCE_AND_GROUP_PROBABILITIES.md)
-- [Ingestion and tracking](technical/INGESTION_AND_TRACKING.md)
+- [Ingestion and tracking](technical/INGESTION_AND_TRACKING.md) — planned core capability for later phases
 - [Frontend guide](technical/FRONTEND_GUIDE.md)
 - [API contract](architecture/API_CONTRACT.md)
 - [Testing strategy](technical/TESTING_STRATEGY.md)
