@@ -13,7 +13,7 @@ The initial version is **local-first and has no third-party runtime integrations
 - Data may be researched, manually collected, reviewed or prepared by a coding/research agent, and may also be supplied as user-owned files. Every source still needs provenance, applicable licence/terms, permitted-use notes, schema validation and a quality report.
 - An agent must not invent data, claim a data source exists without evidence, or bypass a website's restrictions to obtain data.
 - The app should work from a controlled local dataset and a versioned model artifact. Missing datasets or unsupported categories must produce an explicit no-data/unsupported state, not a fabricated probability.
-- External runtime integration is a later, separately approved direction. It is not part of the MVP or the phases below.
+- The current build has no third-party runtime API dependency. However, authorized live ticket/status data and verified current/upcoming operational-context signals are planned core capabilities of the long-term product, not permanently excluded features. They are scheduled as future Phases 8–10 after the local data/model/application foundation. ADR-0007 defines the current build boundary; ADR-0008 clarifies the product goal and later phases.
 
 ## Product outcome
 
@@ -32,15 +32,17 @@ The first milestone is not "show a percentage." It is to produce a defensible en
 | 4 | Model candidates and calibration | Compared candidate model and calibrated probabilities | Candidate evaluated on locked later journeys and compared with baseline |
 | 5 | Manual web/API vertical slice | Working local manual-entry flow | User can enter a mixed-status booking and receive supported result or honest abstention |
 | 6 | Passenger/group outcome quality | Joint/group estimate and evaluation | Group metrics and dependency assumptions are validated |
-| 7 | Hardening and reproducible release | Test coverage, model card, setup and release docs | Fresh environment can reproduce the approved demo without third-party APIs |
-| Later / out of current scope | Live tracking and external context | Optional integration proposal | Requires new ADR, verified permissions, security/privacy review and measured product need |
+| 7 | Hardening and reproducible local release | Test coverage, model card, setup and release docs | Fresh environment can reproduce the approved demo without third-party APIs |
+| 8 — Future core phase | Authorized live ticket/status data | Provider adapter and status observations | Authorized, suitable source; permitted access/storage/use; privacy and retention controls |
+| 9 — Future core phase | Verified current/upcoming context | Structured operational, event/news and calendar signals | Source review and measurable incremental value in temporal evaluation |
+| 10 — Future core phase | Continuous tracking and forecast updates | Time series of observations/predictions; optional alerts | Freshness, failure, retention, security and model-quality behavior verified |
 
 Phases can overlap only when their dependencies are satisfied. Do not advance to a later gate by replacing missing evidence with synthetic data.
 
 ## Phase 0 — Lock scope and investigate data
 
 ### Work
-- Confirm that the initial product has no external runtime APIs or provider integrations.
+- Confirm that the initial implementation has no external runtime APIs or provider integrations, while preserving Phases 8–10 as planned core capabilities of the target product.
 - Inventory candidate historical datasets that agents can discover and prepare lawfully.
 - Separate datasets that are merely downloadable from those whose licence/terms permit our actual use: local inspection, transformation, research, model training, aggregate publication and commercial deployment.
 - Identify whether records include observation timestamps and verified final outcomes.
@@ -213,15 +215,45 @@ Phases can overlap only when their dependencies are satisfied. Do not advance to
 - Sensitive data is not required for ordinary development tests.
 - The scope/status page accurately describes what works and what remains research-only.
 
-## Later — Explicitly out of the current build
+## Future core phases — planned, but not part of the first local release
 
-Live PNR lookup, automated status refresh, live news/event feeds, external calendar APIs, push notifications and third-party hosted prediction services are not MVP work. Reconsider them only when there is a clear need and a separate ADR establishes:
-- source/provider and current terms;
-- permitted access, persistence, model use and publication;
-- cost/rate-limit and failure behavior;
-- privacy, security and retention requirements;
-- test strategy and a way to disable the integration;
-- evidence that the integration materially improves the product.
+These phases are part of the long-term product direction. They are deliberately sequenced after Phases 0–7 rather than being implemented now.
+
+### Phase 8 — Authorized live ticket/status data
+
+- Select a suitable authorized source for current PNR/reservation status and relevant availability observations.
+- Verify access method, contractual terms, rate limits, storage/retention, derived-data and ML-training rights, aggregate publication rights, and cost.
+- Implement a provider adapter that maps source responses into the versioned domain contract.
+- Keep credentials server-side and sensitive identifiers out of logs, URLs, analytics and public IDs.
+- Store observations with source, observation time, ingestion time and verification state.
+- Add stale-data, provider-outage, rate-limit, schema-change and kill-switch behavior.
+- Keep manual entry fully functional when the provider is disabled or unavailable.
+
+**Exit gate:** A suitable authorized source exists, all intended operations are permitted, and adapter tests show that source failures do not break the local/manual workflow. If access is unavailable, document the blocker and retain manual/local observation support; never bypass restrictions.
+
+### Phase 9 — Verified current and upcoming factors
+
+- Build a structured signal pipeline for relevant operational changes and upcoming factors, potentially including train/coaching/service changes, special services, holiday/event demand, and credible news or advisories.
+- Prefer primary/authoritative sources where possible; record publication time, effective window, affected trains/routes/regions, event type and provenance.
+- Keep source retrieval separate from event classification and model inference.
+- Do not let an LLM or headline directly assign a probability adjustment.
+- Evaluate each feature group through temporal ablation against the status/history baseline.
+- Retain a signal only when it improves the predeclared evaluation without unacceptable calibration, coverage, latency, privacy or reproducibility costs.
+
+**Exit gate:** Source permissions and timestamps are documented, signal extraction is reproducible, and the incremental value is demonstrated on held-out future journeys. If a source has no demonstrated value, do not use it as a model feature.
+
+### Phase 10 — Continuous tracking and forecast updates
+
+- Combine newly observed ticket statuses and supported contextual signals into time-stamped feature snapshots.
+- Store prediction history immutably so users can see how the forecast evolved.
+- Explain which new observations caused a re-evaluation without implying causation from feature importance.
+- Establish per-source freshness windows and explicit stale/unavailable states.
+- Add user opt-in alerts only after tracking accuracy, consent, delivery and retention behavior are tested.
+- Monitor source failures, coverage drift, probability calibration and group-level performance.
+
+**Exit gate:** The system can refresh and audit predictions without overwriting prior results, misrepresenting stale data as live, or silently changing model versions.
+
+A concrete provider or major source integration still requires a source-specific ADR and permission review. That is a safety and implementation gate for a planned capability, not a decision to remove it from the product goal.
 
 ## How agents should handle data
 
