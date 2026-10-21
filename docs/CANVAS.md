@@ -2,77 +2,72 @@
 
 Last reviewed: 2026-10-21
 
-This page is the concise working canvas for the project. It tracks current assumptions and the next decisions; the detailed specifications remain in the linked documents.
+This is the short working view of the project. The canonical phase-by-phase plan is [the roadmap](ROADMAP.md).
 
 ## Problem
 
-People with WL and RAC tickets have uncertainty about final accommodation, especially when a booking contains several passengers whose outcomes may differ.
+People holding WL and RAC tickets do not know the likely final reservation outcome, especially when a booking has multiple passengers whose final statuses can differ.
 
-## Intended value
+## Intended product
 
-- Passenger-wise probability estimates.
-- Group-outcome probabilities for multi-passenger bookings.
-- Time-aware estimates that change only when new evidence arrives.
-- A transparent explanation of data coverage, freshness and uncertainty.
-- Research results that can be reproduced and audited.
+A research-backed manual-entry web application that can estimate passenger-level outcomes and, when validated, group-level outcomes using reviewed historical data and local model artifacts.
 
-## Primary users
+## Current build boundary
 
-People checking an existing ticket, people evaluating a potential journey, and researchers evaluating probabilistic reservation-outcome models. The exact first user group will be narrowed based on MVP feedback and data access.
+**Local-first. No third-party runtime APIs.**
 
-## Assumptions to test
+- No live IRCTC/PNR lookups or polling.
+- No external news, holiday, weather, crowd or event APIs.
+- No hosted model-inference dependency.
+- The app may use its own internal backend API.
+- Data can be researched or prepared by agents and supplied as local files, but provenance, licence/terms, privacy, target labels and quality must be checked before training.
+- Missing approved data or model coverage must be shown honestly; synthetic fixtures are only for development/tests.
 
-- Historical status trajectories can be obtained under valid rights.
-- Final outcomes can be verified consistently.
-- Status movement contains useful signal beyond a current WL/RAC position.
-- Joint group outcomes can be evaluated on enough multi-passenger bookings.
-- Context features add value beyond a strong historical/status baseline.
+See [ADR-0007](adr/ADR-0007-local-first-no-external-runtime-apis.md).
 
-None of these assumptions is a result until tested.
+## Current priorities
 
-## Constraints
+**P0 — Scope and data intake**
+1. Keep the local-only runtime boundary explicit.
+2. Research candidate datasets through primary-source links and agent-assisted intake.
+3. Complete the [dataset intake checklist](data/DATASET_INTAKE_CHECKLIST.md) for every candidate.
+4. Identify if any dataset has reliable status trajectories and final outcomes permitted for ML training.
 
-- Historical PNR outcomes may not be publicly available for unrestricted reuse.
-- Live status access may require an approved provider and fees.
-- Coverage will differ across quota, class, route, status category and prediction horizon.
-- Passenger data and ticket identifiers need careful retention and access controls.
-- The project must not imply official railway affiliation or guarantee outcomes.
+**P1 — Domain correctness**
+1. Implement status/domain types and parsing.
+2. Preserve raw statuses and unknown codes.
+3. Add tests for positions, timestamps, missing inputs and mixed RAC/WL groups.
 
-## Current priority
+**P2 — Baseline and evaluation**
+1. Build quality checks and as-of-time snapshots for approved local data.
+2. Implement a historical/statistical baseline.
+3. Use chronological, booking-group-aware evaluation.
+4. Report calibration, proper scoring rules, coverage and uncertainty.
 
-**P0 — Data feasibility and research contract**
-1. Identify candidate historical outcome datasets and verify rights.
-2. Finalize status and target glossary from authoritative definitions.
-3. Profile the first legitimate dataset or explicitly record that none is yet available.
-4. Implement schema validation and provenance.
-5. Build a reproducible baseline only once eligible outcome labels exist.
+**P3 — Local web vertical slice**
+1. Build manual form and passenger rows.
+2. Add internal API and local inference interface.
+3. Display model results only when backed by an evaluated model; otherwise return a clear no-model/unsupported state.
+4. Add user-facing evidence and limitations.
 
-**P1 — First vertical slice**
-- Manual-entry API contract and form.
-- Domain validation.
-- Explicit unsupported/no-model response.
-- Result layout ready for versioned passenger/group probabilities.
+**P4 — Group modelling and hardening**
+1. Evaluate group-outcome estimation on real labelled groups.
+2. Complete tests, model card, local setup and CI.
+3. Verify the application runs without third-party API credentials.
 
-**P2 — Model evaluation**
-- Historical baseline.
-- Chronological split.
-- Proper scoring rules and calibration.
-- Group-level evaluation and ablation study.
+## Explicitly deferred
 
-**P3 — Live tracking**
-- Provider and permissions review.
-- Secure identifier handling.
-- Observation retention and deletion.
-- Status updates and model refresh.
+Live PNR tracking, external provider integrations, news/calendar/weather/event APIs, hosted inference, push notifications and automatic refresh are not in the current roadmap. Reopen them only through a new ADR after a concrete need is established.
 
-## Not doing yet
+## Assumptions still to test
 
-- Advertising an accuracy percentage.
-- Publishing synthetic predictions as evidence.
-- Automatic collection from restricted railway systems.
-- Making news headlines directly manipulate predicted probabilities.
-- Building billing, user subscriptions or complex notifications before the core model is credible.
+- A legally usable dataset with consistent final outcomes can be obtained.
+- Status progression contains useful predictive signal.
+- There are enough mixed-status groups to evaluate joint outcomes.
+- The candidate model improves on a baseline and can be calibrated.
+
+These are hypotheses, not findings.
 
 ## Next review
 
-Update this canvas after the first dataset audit and again when a first working end-to-end prediction path exists. Record changes to priority in the development log and material architectural changes in ADRs.
+Update this canvas when the dataset inventory is complete and again after the first reproducible baseline. Do not mark a milestone complete without the documented exit criteria in ROADMAP.md.
