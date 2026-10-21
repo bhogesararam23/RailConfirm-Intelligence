@@ -1,6 +1,10 @@
 # Ingestion and tracking lifecycle
 
-Status: proposed. Live tracking must remain disabled until an authorized provider and data-retention design are approved.
+Status: planned architecture for future roadmap Phases 8–10. Live tracking must remain disabled in the current local-first build until an authorized source and data-retention design are approved. Live status and verified current/upcoming context are part of the long-term product goal, not a permanently excluded feature.
+
+## Planned capability and current boundary
+
+The initial application must work without these adapters. The future target is to ingest authorized live ticket/status observations and verified current/upcoming operational/news/event signals through source adapters. A provider or signal family is not approved merely because it appears in this design; each source requires a source-specific ADR and the rights/quality review described in the roadmap. Keep adapters separate from the model so a provider schema cannot become the model's domain contract.
 
 ## Source adapter interface
 
