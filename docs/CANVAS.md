@@ -55,9 +55,9 @@ See [ADR-0007](adr/ADR-0007-local-first-no-external-runtime-apis.md).
 2. Complete tests, model card, local setup and CI.
 3. Verify the application runs without third-party API credentials.
 
-## Explicitly deferred
+## Planned future core capabilities (not in the current local-first build)
 
-Live PNR tracking, external provider integrations, news/calendar/weather/event APIs, hosted inference, push notifications and automatic refresh are not in the current roadmap. Reopen them only through a new ADR after a concrete need is established.
+The product goal includes authorized live ticket/PNR status lookup and refresh, verified operational/news/event/calendar context for current and upcoming factors, and a timeline of changing predictions. These are planned for roadmap Phases 8–10, after local data, model calibration and group outcome evaluation have a solid foundation. They are not to be deleted from the product scope or treated as permanently out of scope. Specific providers are not selected; each needs a source-specific ADR, a permitted-use review, privacy/retention controls and evidence of reliability/value. The current app must still work without these sources.
 
 ## Assumptions still to test
 
