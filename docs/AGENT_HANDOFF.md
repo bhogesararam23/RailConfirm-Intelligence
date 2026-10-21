@@ -8,15 +8,17 @@ RailConfirm Intelligence is planned as a research-backed web application that es
 
 The repository currently contains specifications and governance documentation. Do not assume a working frontend, API, database, model, dataset or live provider exists just because their interfaces are documented.
 
+The current scope is local-first: no third-party runtime API, live PNR lookup, polling, news/event feed or hosted inference. The product may implement its own internal API. Agents may research and prepare candidate datasets offline, but every candidate must pass docs/data/DATASET_INTAKE_CHECKLIST.md.
+
 ## Read first
 
 1. AGENTS.md
 2. Project status
-3. Product brief
-4. Product requirements
+3. Roadmap
+4. Product brief and requirements
 5. Implementation plan
-6. ADR index
-7. Data acquisition
+6. ADR index, including ADR-0007
+7. Dataset intake checklist and data acquisition policy
 8. Evaluation protocol
 
 ## Non-negotiable constraints
@@ -33,7 +35,7 @@ The repository currently contains specifications and governance documentation. D
 
 ## First task
 
-Implement the domain contract and status parsing layer with unit tests. Before finalizing any raw status mapping, verify the intended mapping from an authoritative source and record that reference. Preserve raw input and model unknown values explicitly.
+Read docs/ROADMAP.md and implement Phase 1: the domain contract and status parsing layer with unit tests. In parallel or before model training, have a research agent inventory candidate datasets and submit intake reports; do not integrate any external runtime API. Before finalizing any raw status mapping, verify the intended mapping from an authoritative source and record that reference. Preserve raw input and model unknown values explicitly.
 
 Do not begin with live PNR integration or a complex model. Data rights and historical outcome availability are still explicit project dependencies.
 
