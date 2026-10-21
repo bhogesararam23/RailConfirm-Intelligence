@@ -1,0 +1,65 @@
+dataset_id: replace-with-stable-non-sensitive-id
+title: replace-with-dataset-title
+status: candidate # candidate | approved | restricted | quarantined | rejected
+
+source:
+  publisher: unknown
+  canonical_url: null
+  received_from: null
+  retrieved_on: null # YYYY-MM-DD
+  source_register_entry: null
+  terms_url: null
+  licence_name: unknown
+  licence_review_status: pending # pending | approved | restricted | rejected
+  allowed_uses:
+    local_inspection: unknown
+    transformation: unknown
+    model_training: unknown
+    aggregate_metric_publication: unknown
+    commercial_deployment: unknown
+    redistribution: unknown
+  attribution_requirements: unknown
+
+file:
+  local_path: null # local-only path; do not include private file URLs
+  format: unknown
+  sha256: null
+  schema_version: "0.1"
+  size_bytes: null
+
+coverage:
+  row_count: null
+  start_date: null
+  end_date: null
+  train_coverage_summary: unknown
+  class_coverage_summary: unknown
+  quota_coverage_summary: unknown
+  status_coverage_summary: unknown
+  final_outcome_label_definition: unknown
+  label_verification_method: unknown
+  observation_timestamp_semantics: unknown
+
+quality:
+  missingness_report: null
+  duplicate_count: null
+  contradictory_record_count: null
+  censored_or_unverified_outcome_count: null
+  known_biases: []
+  cleaning_script_revision: null
+  validation_report_path: null
+  exclusions_and_reasons: []
+
+privacy:
+  contains_personal_data: unknown
+  contains_raw_pnr: unknown
+  contains_passenger_names: unknown
+  minimization_review: pending
+  retention_policy: unknown
+  approval_notes: null
+
+decision:
+  reviewed_by: null
+  reviewed_on: null
+  decision: under_review # approved | restricted | quarantined | rejected | under_review
+  rationale: null
+  unresolved_questions: []
