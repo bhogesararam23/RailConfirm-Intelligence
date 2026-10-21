@@ -19,7 +19,7 @@ The repository now has a product specification, engineering design, research/gov
 | Calibration | Not implemented | Calibration is measured on held-out journeys |
 | Manual-entry web flow | Not implemented | Input and result flow works end-to-end |
 | External data integrations | Planned core long-term capability; not implemented in the current build | Delivered in roadmap Phases 8–10 after local model/data gates, with source-specific ADR and verified permissions |
-| News/event features | Research candidate | Incremental value demonstrated on temporal holdout |
+| Verified news/event/context feeds | Planned core long-term capability; not connected | Source and permitted use reviewed; incremental value demonstrated on temporal holdout |
 | Tests and CI | Not implemented | Relevant static checks and automated tests run in CI |
 | Production monitoring | Not implemented | Freshness, error rates, drift and calibration are monitored |
 
