@@ -22,10 +22,12 @@ Existing estimates can also be hard to interpret when they do not clearly explai
 ## Product direction
 
 Build a reliable, transparent prediction workflow in stages:
-- Start with manual entry so the product and domain contracts can be implemented without depending on an unverified live integration.
+- Start with a manual-entry product that runs locally and uses reviewed local data/model artifacts.
+- Keep third-party runtime APIs, live status polling, hosted inference and live news/event feeds out of the current build.
+- Allow research agents to discover and prepare candidate datasets, but approve each source only after provenance, licence/terms, privacy, labels and quality have been reviewed.
 - Make predictions only from an evaluated model or a documented baseline with demonstrated coverage.
-- Add live tracking through an authorized data provider when permissions, usage terms and retention behavior are confirmed.
 - Evaluate predictions against verified outcomes and publish limitations alongside performance results.
+- Treat external integrations as future work requiring a new ADR and a concrete, evidence-backed product need.
 
 ## Intended users
 
@@ -53,7 +55,7 @@ Success is not defined by how many percentages the interface displays. It is def
 - group-level estimates are evaluated separately from individual estimates;
 - users can distinguish observed status from predicted outcome;
 - uncertainty and gaps are visible;
-- and live data access complies with the relevant provider terms.
+- and all locally used data has documented provenance and permitted-use status.
 
 Numeric success thresholds must be specified after data coverage is understood and before the locked test set is evaluated.
 
