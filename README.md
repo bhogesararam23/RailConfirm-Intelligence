@@ -38,26 +38,17 @@ RailConfirm is being developed as both a research project and a web application.
 
 ## Documentation
 
-- [Project status and scope](docs/PROJECT_STATUS.md)
-- [Research plan](docs/research/RESEARCH_PLAN.md)
-- [Data acquisition and source policy](docs/data/DATA_ACQUISITION.md)
-- [Data contract](docs/data/DATA_CONTRACT.md)
-- [Prediction targets](docs/model/PREDICTION_TARGETS.md)
-- [Evaluation protocol](docs/research/EVALUATION_PROTOCOL.md)
-- [Architecture overview](docs/architecture/OVERVIEW.md)
-- [Security and privacy](docs/SECURITY_AND_PRIVACY.md)
-- [Agent operating guide](AGENTS.md)
-- [Contributor guide](CONTRIBUTING.md)
-- [Architecture Decision Records](docs/adr/README.md)
-- [Changelog](CHANGELOG.md)
-- [Development/session log](docs/DEVELOPMENT_LOG.md)
-- [Project canvas and priorities](docs/CANVAS.md)
-- [Definition of done](docs/DEFINITION_OF_DONE.md)
-- [Model card template](docs/model/MODEL_CARD_TEMPLATE.md)
-- [Status glossary](docs/model/STATUS_GLOSSARY.md)
-- [API contract](docs/architecture/API_CONTRACT.md)
-- [Experiment template](docs/EXPERIMENT_TEMPLATE.md)
-- [Third-party data policy](THIRD_PARTY_DATA.md)
+Start with the [documentation map](docs/README.md) for the recommended reading order.
+
+**Product:** [Product brief](docs/product/PRODUCT_BRIEF.md) · [Requirements](docs/product/PRODUCT_REQUIREMENTS.md) · [User journeys](docs/product/USER_JOURNEYS.md) · [MVP acceptance criteria](docs/product/MVP_ACCEPTANCE.md)
+
+**Technical:** [System design](docs/technical/SYSTEM_DESIGN.md) · [Domain model](docs/technical/DOMAIN_MODEL.md) · [Storage model](docs/technical/STORAGE_MODEL.md) · [Inference and group probabilities](docs/technical/INFERENCE_AND_GROUP_PROBABILITIES.md) · [Ingestion and tracking](docs/technical/INGESTION_AND_TRACKING.md)
+
+**Build and operations:** [Implementation plan](docs/technical/IMPLEMENTATION_PLAN.md) · [Testing strategy](docs/technical/TESTING_STRATEGY.md) · [Frontend guide](docs/technical/FRONTEND_GUIDE.md) · [Observability](docs/technical/OBSERVABILITY.md) · [Deployment runbook](docs/technical/DEPLOYMENT_RUNBOOK.md) · [Agent handoff](docs/AGENT_HANDOFF.md)
+
+**Research and governance:** [Project status](docs/PROJECT_STATUS.md) · [Research plan](docs/research/RESEARCH_PLAN.md) · [Data acquisition](docs/data/DATA_ACQUISITION.md) · [Data contract](docs/data/DATA_CONTRACT.md) · [Prediction targets](docs/model/PREDICTION_TARGETS.md) · [Evaluation protocol](docs/research/EVALUATION_PROTOCOL.md) · [Security and privacy](docs/SECURITY_AND_PRIVACY.md) · [Architecture Decision Records](docs/adr/README.md)
+
+Also see [AGENTS.md](AGENTS.md), [CONTRIBUTING.md](CONTRIBUTING.md), [CHANGELOG.md](CHANGELOG.md), [development log](docs/DEVELOPMENT_LOG.md), and [third-party data policy](THIRD_PARTY_DATA.md).
 
 ## License
 
