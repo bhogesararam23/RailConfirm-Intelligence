@@ -18,6 +18,7 @@ Raw dataset files stay outside Git; manifests are the publishable half.
 from __future__ import annotations
 
 import hashlib
+import os
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any
@@ -517,13 +518,23 @@ def verify_manifest(
 
 
 def manifest_output_path(name: str, directory: Path | None = None) -> Path:
-    """Resolve a safe write target under the manifests directory."""
+    """Resolve a safe write target directly inside the manifests directory.
+
+    The name is a bare filename on purpose: a separator means something different
+    on each platform (``..\\x.yaml`` traverses on Windows and is an ordinary
+    filename on Linux), so rejecting separators rather than pattern-matching one
+    flavour of path keeps the guard identical everywhere it runs.
+    """
     base = Path(directory) if directory is not None else DEFAULT_MANIFEST_DIR
+    cleaned = str(name).strip()
+    _require(cleaned.endswith(".yaml"), f"Manifest file name must end in .yaml, got {name!r}.")
     _require(
-        str(name).strip().endswith(".yaml"),
-        f"Manifest file name must end in .yaml, got {name!r}.",
+        not any(sep in cleaned for sep in ("/", "\\", os.sep, os.altsep or "")),
+        f"Manifest name {name!r} must be a bare filename without path separators; "
+        "the directory is chosen with --output.",
     )
-    candidate = (base / name).resolve()
+    _require(".." not in cleaned, f"Manifest name {name!r} must not contain '..'.")
+    candidate = (base / cleaned).resolve()
     root = base.resolve()
     _require(
         candidate.is_relative_to(root),

@@ -60,11 +60,21 @@ def test_yaml_is_byte_identical_across_calls():
 
 
 def test_no_wall_clock_in_the_output():
-    """The old manifest stamped datetime.now(), so two runs never matched."""
-    text = manifest().to_yaml()
-    today = __import__("datetime").date.today().isoformat()
-    assert today not in text
-    assert "created_at" not in text
+    """The old manifest stamped datetime.now(), so two runs never matched.
+
+    Checked structurally rather than against today's date, so the assertion cannot
+    pass or fail depending on when the suite runs.
+    """
+    def keys(node: object) -> set[str]:
+        if isinstance(node, dict):
+            return set(node) | {key for child in node.values() for key in keys(child)}
+        if isinstance(node, list):
+            return {key for child in node for key in keys(child)}
+        return set()
+
+    produced = keys(yaml.safe_load(manifest().to_yaml()))
+    assert not {"created_at", "generated_at", "generated_on", "timestamp"} & produced
+    assert "retrieved_on" in produced, "receipt date is the caller's, and must be present"
 
 
 def test_round_trip_through_yaml():
@@ -270,6 +280,12 @@ def test_verify_passes_for_an_unchanged_file(synthetic_dataset_path: Path, tmp_p
 
 
 def test_verify_detects_content_drift(synthetic_dataset_path: Path, tmp_path: Path):
+    """A changed file must fail even though the manifest still parses.
+
+    The edit is a real data row rather than a trailing newline: a line-ending
+    difference is a platform artefact, and a test that depends on one passes or
+    fails according to the operating system rather than the code.
+    """
     produced = generate_manifest(
         synthetic_dataset_path,
         dataset_id="synthetic-fixture",
@@ -279,10 +295,13 @@ def test_verify_detects_content_drift(synthetic_dataset_path: Path, tmp_path: Pa
     path = write_manifest(produced, tmp_path / "m.yaml")
 
     edited = tmp_path / "edited.csv"
-    edited.write_text(synthetic_dataset_path.read_text(encoding="utf-8").rstrip("\n") + "\n", encoding="utf-8")
+    edited.write_bytes(
+        synthetic_dataset_path.read_bytes() + b"12303,2026-10-06,SL,GN,GNWL/3,CNF,2026-09-28\n"
+    )
     result = verify_manifest(path, edited)
     assert not result.ok
     assert any("content changed" in finding for finding in result.findings)
+    assert any("row_count records 6" in finding for finding in result.findings)
 
 
 def test_verify_detects_row_count_drift_without_a_hash_change(tmp_path: Path):
