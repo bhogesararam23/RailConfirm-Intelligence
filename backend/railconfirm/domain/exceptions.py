@@ -26,8 +26,12 @@ class TemporalIntegrityError(RailConfirmError, ValueError):
     """
 
 
-class DatasetValidationError(RailConfirmError):
-    """Raised when a dataset fails schema or integrity validation."""
+class DatasetValidationError(RailConfirmError, ValueError):
+    """Raised when a dataset fails schema or integrity validation.
+
+    Also a ``ValueError`` so an API or CLI boundary can treat it as bad input
+    without importing the domain hierarchy.
+    """
 
 
 class FrequencyTableValidationError(DatasetValidationError, ValueError):

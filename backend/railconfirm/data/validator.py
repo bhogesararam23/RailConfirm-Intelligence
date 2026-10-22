@@ -15,14 +15,12 @@ Rules follow docs/data/DATASET_INTAKE_CHECKLIST.md and docs/data/DATA_CONTRACT.m
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
 import pandas as pd
 
-from railconfirm.data.loader import load_dataset_file
 from railconfirm.domain.status import NormalizedStatus, parse_status
 
 # The implemented row contract. Each row is one passenger's reservation observed
@@ -619,19 +617,3 @@ def _add_observations(df: pd.DataFrame, report: DatasetValidationReport) -> None
                 "never as evidence of real-world accuracy."
             )
 
-
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python -m railconfirm.data.validator <dataset_path>")
-        sys.exit(2)
-
-    path = sys.argv[1]
-    try:
-        frame = load_dataset_file(path)
-    except (FileNotFoundError, ValueError) as exc:
-        print(f"Cannot read dataset: {exc}")
-        sys.exit(1)
-
-    result = validate_dataset(frame, source_name=str(path))
-    print(result.summary())
-    sys.exit(0 if result.technically_eligible else 1)

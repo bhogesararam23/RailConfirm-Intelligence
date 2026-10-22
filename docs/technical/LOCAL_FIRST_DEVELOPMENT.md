@@ -14,7 +14,7 @@ The application may expose its own backend API between its frontend and backend.
 
 - Agent-assisted source discovery and manual dataset preparation where terms allow it.
 - User-provided files, once provenance, rights, privacy and schema are reviewed.
-- Local CSV/JSON/Parquet or other justified research formats.
+- Local CSV or JSON research files. `backend/railconfirm/data/loader.py` accepts only those two extensions and refuses `.pkl`, `.xlsx` and `.parquet`: a pickle file executes code on load, and an unreviewed binary format would let a dataset arrive in a shape nobody inspected. A new format is added with a reader, tests and a note here.
 - Downloaded data files only when their source and intended use are documented and permitted.
 - Local model training, evaluation and inference.
 - A local database or file-backed storage for the initial development path, selected with an ADR when implemented.

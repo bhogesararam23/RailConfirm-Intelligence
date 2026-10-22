@@ -60,6 +60,41 @@ Record one of:
 - **Quarantined:** rights/privacy/label questions must be resolved.
 - **Rejected:** the data cannot be used for the proposed purpose.
 
+These map onto the manifest vocabulary in `docs/data/DATASET_MANIFEST_TEMPLATE.yaml`
+(`status` and `decision.decision`: `candidate | approved | restricted | quarantined |
+rejected`, plus `under_review`). "Approved for metadata only" is recorded as
+`restricted` with the permitted purpose written into `decision.rationale` — there is
+no separate `metadata_only` state, and inventing one would put the manifest out of
+step with the template. `approved` requires `reviewed_by`, `reviewed_on` and a
+rationale; the manifest model refuses to serialise the claim without them.
+
+## What the tooling checks, and what it cannot
+
+From `backend/`:
+
+```bash
+python -m railconfirm.data validate path/to/dataset.csv
+python -m railconfirm.data manifest path/to/dataset.csv --dataset-id … --title … --retrieved-on YYYY-MM-DD
+python -m railconfirm.data verify data/manifests/<id>.yaml path/to/dataset.csv
+```
+
+| Checklist item | Machine-checked? |
+|---|---|
+| Row/record count, date range, status and outcome distributions | Yes — `validate` reports counts and ranges |
+| Raw status strings preserved while normalizing | Yes — parse keeps `raw`, and unknown codes are rejected rather than coerced |
+| Missing, duplicate, contradictory and censored records quantified | Yes — `null_counts`, `duplicate_rows`, `contradictory_label_groups`, `censored_label_rows`, per-reason rejection counts |
+| Timestamp semantics and ordering | Partly — ISO calendar dates and `observation_date <= journey_date` are enforced; sub-daily observation time is not in the row contract yet |
+| Features reconstructed from as-of information | Yes for the implemented split — `extract_features` refuses label columns and `chronological_split` allocates whole dates |
+| Booking snapshots in one partition | Yes when `booking_group_id` is present; without it the validator warns that group integrity cannot be checked |
+| File checksum, size, row-count consistency | Yes — `verify` rehashes and **recounts** instead of trusting the manifest |
+| Intake reproducibility | Yes — manifest output is deterministic; the same inputs give the same digest |
+| Licence, permitted use, attribution, commercial rights | **No.** Recorded in the manifest and source register, decided by a person |
+| Whether unexpected identifiers exist beyond the PNR-shaped scan | **No.** The repository hygiene scan is accident prevention, not a privacy review |
+| Collection and selection bias | **No.** Must be written up by the reviewer |
+
+A passing `validate` means the file is technically eligible to be attempted; it does
+not mean approved, and no exit code encodes approval.
+
 ## Required intake report
 
 Save a report containing:

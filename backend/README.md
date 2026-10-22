@@ -245,15 +245,37 @@ Unknown codes are never silently mapped to WL. Add a code only after authoritati
 
 ## Data pipeline
 
-See `docs/data/DATASET_INTAKE_CHECKLIST.md` for the full intake process. Raw data files must not be committed to the repository.
+See `docs/data/DATASET_INTAKE_CHECKLIST.md` for the full intake process and
+`docs/data/DATA_CONTRACT.md` for the row contract. Raw data files must not be
+committed to the repository; manifests under `data/manifests/` may be.
 
 ```bash
-# from backend/, validate a local candidate dataset file
-python -m railconfirm.data.validator path/to/dataset.csv   # exits non-zero when unusable
+# from backend/ — validate a candidate dataset file
+python -m railconfirm.data validate path/to/dataset.csv
+python -m railconfirm.data validate --json path/to/dataset.csv   # machine-readable report
 
-# generate a provenance manifest (path is positional, omit to print to stdout)
-python -m railconfirm.data.manifest path/to/dataset.csv path/to/manifest.yaml
+# generate a provenance manifest (retrieved_on is required: a manifest must not be
+# dated by the clock, or two runs cannot be compared)
+python -m railconfirm.data manifest path/to/dataset.csv \
+  --dataset-id my-set --title "My candidate set" --retrieved-on 2026-10-18
+
+# verify a manifest, optionally re-checking the dataset file it describes
+python -m railconfirm.data verify data/manifests/my-set.yaml path/to/dataset.csv
 ```
+
+Exit codes: `0` success, `1` a check failed or the input is unusable, `2` usage error.
+`validate` exits `1` when a file is **not technically eligible** — that is not the
+same as being disapproved, and no exit code can approve a dataset.
+
+The three verdicts a report gives are distinct: `structurally valid` (schema
+complete, at least one interpretable row), `technically eligible` (clears the
+documented intake minimums), and approval, which this tool never determines.
+
+Manifest YAML follows `docs/data/DATASET_MANIFEST_TEMPLATE.yaml`, and a test
+asserts every template section and key is present in generated output. Writing a
+manifest that claims `status: approved` without a named reviewer, a date and a
+rationale is rejected by the model, as is `licence_review_status: approved` while
+`allowed_uses.model_training` is still `unknown`.
 
 ## Limitations
 
