@@ -1,21 +1,24 @@
 """POST /v1/predictions/manual endpoint.
 
-Validates the incoming request, normalizes statuses, dispatches to the
-inference engine, and returns a structured response.
+Validates the incoming request, normalizes statuses, dispatches to the inference
+engine, and returns a structured response.
 
-If no model is available the engine returns a structured abstention —
-never a fabricated probability. The endpoint always returns HTTP 200 with
-a PredictionResponse, even for abstentions.
+If no validated model or approved data is available the engine returns a
+structured abstention — never a fabricated probability. A valid request that the
+available evidence cannot support is reported through the abstention contract,
+not as a 200 with an invented number and not as an HTTP error.
 """
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import UTC, datetime
-from typing import TypedDict
+from typing import Annotated, TypedDict
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from railconfirm.api.dependencies import get_engine
 from railconfirm.api.v1.schemas import (
     GroupOutcomeResponse,
     PassengerOutcomeResponse,
@@ -24,8 +27,9 @@ from railconfirm.api.v1.schemas import (
 )
 from railconfirm.domain.journey import make_journey
 from railconfirm.domain.passenger import StatusObservation, make_observation
-from railconfirm.domain.prediction import PredictionTarget
 from railconfirm.inference.engine import InferenceEngine
+
+logger = logging.getLogger(__name__)
 
 
 class PassengerInferenceInput(TypedDict):
@@ -37,7 +41,6 @@ class PassengerInferenceInput(TypedDict):
 
 
 router = APIRouter()
-_engine = InferenceEngine()
 
 
 @router.post(
@@ -46,12 +49,16 @@ _engine = InferenceEngine()
     summary="Manual prediction",
     description=(
         "Submit journey context and per-passenger statuses for a final-chart "
-        "confirmation probability estimate. Returns a structured abstention "
-        "when no trained model is available."
+        "confirmation probability estimate. Returns a structured abstention with "
+        "the specific blocking reason when no validated model or approved data is "
+        "available."
     ),
     tags=["predictions"],
 )
-async def predict_manual(request: PredictionRequest) -> PredictionResponse:
+async def predict_manual(
+    request: PredictionRequest,
+    engine: Annotated[InferenceEngine, Depends(get_engine)],
+) -> PredictionResponse:
     """Handle a manual prediction request end-to-end."""
     # ── Build domain journey ───────────────────────────────────────────────────
     journey = make_journey(
@@ -91,11 +98,20 @@ async def predict_manual(request: PredictionRequest) -> PredictionResponse:
         )
 
     # ── Dispatch to inference engine ───────────────────────────────────────────
-    prediction = _engine.predict(
+    prediction = engine.predict(
         journey=journey,
         passenger_inputs=passenger_inputs,
         prediction_at=request.prediction_at,
-        target=PredictionTarget.FINAL_CHART_CNF,
+        target=request.target,
+    )
+    resolution = engine.registry.resolve(request.target)
+    logger.info(
+        "prediction served: id=%s target=%s coverage=%s registry=%s passengers=%d",
+        prediction.prediction_id,
+        request.target.value,
+        prediction.evidence_coverage,
+        resolution.status.value,
+        len(passenger_inputs),
     )
 
     # ── Build per-passenger response objects ───────────────────────────────────
@@ -151,15 +167,17 @@ async def predict_manual(request: PredictionRequest) -> PredictionResponse:
 
     return PredictionResponse(
         prediction_id=prediction.prediction_id,
+        target=prediction.target.value,
         target_definition=(
             "Probability of each final-chart outcome for each passenger "
             "(CNF = confirmed berth, RAC = Reservation Against Cancellation, "
             "WL = waitlisted, CANCELLED = cancelled, OTHER = other outcome). "
             "These are mutually exclusive and exhaustive over the supported population."
         ),
-        prediction_at=prediction.prediction_at or request.prediction_at,
+        prediction_at=prediction.prediction_at,
         created_at=prediction.created_at,
         model_version=prediction.model_version,
+        registry_status=resolution.status.value,
         feature_schema_version=prediction.feature_schema_version,
         evidence_coverage=prediction.evidence_coverage,
         is_supported=any(p.is_supported for p in passenger_responses),

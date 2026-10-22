@@ -58,6 +58,10 @@ pytest tests/ -v --cov=railconfirm --cov-report=term-missing
 
 Submit a journey and passenger status list for prediction.
 
+Timestamps must carry a UTC offset, and an observation cannot be dated in the
+future: the example below predicts a November journey as of a past October
+timestamp so it can be pasted and still work.
+
 **Request:**
 ```json
 {
@@ -69,56 +73,88 @@ Submit a journey and passenger status list for prediction.
     "class_code": "SL",
     "quota_code": "GN"
   },
-  "prediction_at": "2026-11-10T08:00:00Z",
+  "prediction_at": "2026-10-21T08:00:00Z",
   "passengers": [
     {
       "original_status": "GNWL/45",
       "current_status": "GNWL/12",
-      "current_status_observed_at": "2026-11-10T07:30:00Z"
+      "current_status_observed_at": "2026-10-21T07:30:00Z"
     }
   ]
 }
 ```
 
-**Response (no model available):**
+**Response (nothing promoted — the current state):**
 ```json
 {
-  "prediction_id": "...",
-  "target_definition": "final_chart_cnf",
-  "prediction_at": "2026-11-10T08:00:00Z",
+  "prediction_id": "…",
+  "target": "final_chart_cnf",
+  "target_definition": "Probability of each final-chart outcome for each passenger …",
+  "prediction_at": "2026-10-21T08:00:00Z",
+  "created_at": "2026-10-23T04:10:22.119289Z",
   "model_version": "no_model_v0",
+  "registry_status": "no_active_version",
+  "feature_schema_version": "1.0.0",
   "evidence_coverage": "insufficient",
   "is_supported": false,
+  "passenger_count": 1,
   "passenger_outcomes": [
     {
-      "passenger_id": "...",
-      "is_supported": false,
-      "abstention_reason": "no_trained_model",
+      "passenger_id": "…",
+      "original_status": "GNWL/45",
+      "original_status_normalized": "WL",
+      "current_status": "GNWL/12",
+      "current_status_normalized": "WL",
       "p_cnf": null,
       "p_rac": null,
       "p_wl": null,
       "p_cancelled": null,
-      "p_other": null
+      "p_other": null,
+      "is_supported": false,
+      "abstention_reason": "no_trained_model",
+      "basis": null,
+      "parse_warnings": []
     }
   ],
+  "group_outcome": {
+    "p_all_cnf": null,
+    "p_all_cnf_or_rac": null,
+    "p_at_least_one_wl": null,
+    "method": "insufficient_data",
+    "assumptions": "Group outcome is unavailable because at least one passenger outcome is an abstention.",
+    "is_supported": false,
+    "abstention_reason": "no_trained_model"
+  },
   "limitations": [
-    "No trained model is available. An approved historical dataset must pass the intake checklist before a model can be trained and validated."
-  ]
+    "RailConfirm is an independent research tool and not an official IRCTC service.",
+    "No promoted model artifact is active for this target. Registry state: no_active_version — No model version is configured as active; the registry serves no artifact."
+  ],
+  "warnings": [],
+  "outcome_classes": "CNF, RAC, WL, CANCELLED, OTHER — mutually exclusive and exhaustive over the eligible population. Probabilities sum to 1.0 per passenger."
 }
 ```
 
+The full field list, request constraints and error envelope are in `docs/architecture/API_CONTRACT.md`.
+
 ### `GET /v1/health`
 
-Returns API health and the configured version identifiers. `model_available` is
-not reported: the registry resolves promotion state per request, and
-`model_version` equal to `no_model_v0` is the unavailable state.
+Returns API health, the configured version identifiers, whether a validated and
+promoted artifact could serve a prediction, and the limits in force.
 
 ```json
 {
   "status": "ok",
   "model_version": "no_model_v0",
   "data_version": "none",
-  "app_version": "0.1.0"
+  "app_version": "0.1.0",
+  "model_available": false,
+  "registry_status": "no_active_version",
+  "limits": {
+    "max_passengers_per_request": 6,
+    "min_sample_threshold": 30,
+    "max_artifact_bytes": 4194304,
+    "max_request_bytes": 65536
+  }
 }
 ```
 

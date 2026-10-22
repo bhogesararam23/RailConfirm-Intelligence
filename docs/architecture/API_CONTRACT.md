@@ -1,65 +1,171 @@
 # API contract
 
-Status: initial interface proposal; no API implementation is implied.
+Status: describes the implemented `/v1` surface of `backend/railconfirm/api/`. Fields listed here exist in `api/v1/schemas.py` and are covered by `backend/tests/api/`. A route or field is added to this document only together with its implementation and tests.
 
 ## General requirements
 
 - Version the public API under `/v1`.
-- Validate all incoming fields.
+- Validate all incoming fields at the boundary; the domain re-validates independently.
 - Do not accept passenger names as required prediction inputs.
 - Preserve manual inputs separately from provider observations.
 - Every returned estimate must include its target definition, prediction timestamp, model version, evidence status and limits.
-- Return a structured unsupported/abstain result instead of a fabricated probability.
+- Return a structured unsupported/abstain result instead of a fabricated probability. A valid request the available evidence cannot support is an abstention inside a `200` response, not an invented number and not an HTTP error.
 - Never return raw provider credentials or unnecessary provider payloads.
 
-## Manual prediction request
+## Runtime boundaries
 
-Proposed route: `POST /v1/predictions/manual`
+- CORS allows only the origins in `RAILCONFIRM_CORS_ALLOWED_ORIGINS`; `*` is refused at configuration time. Credentials are not permitted cross-origin.
+- Request bodies are refused above `RAILCONFIRM_MAX_REQUEST_BYTES` with `413`.
+- Every response carries `X-Request-ID`; a supplied printable id is echoed so a client and the access log can be correlated. Access logs record method, path, status and duration only — never a body, status string or passenger input.
+- The unauthenticated local development server is not a production security boundary. Binding beyond loopback is a documented, deliberate act; see `docs/SECURITY_AND_PRIVACY.md`.
 
-Conceptual request shape:
+## Routes
+
+| Route | Purpose |
+|---|---|
+| `GET /v1/health` | Liveness plus model availability and the limits in force |
+| `POST /v1/predictions/manual` | Manual journey and passenger input, per-passenger and group outcomes |
+
+## `POST /v1/predictions/manual`
+
+Request:
 
 ```json
 {
   "journey": {
-    "train_number": "string",
-    "journey_date": "YYYY-MM-DD",
-    "boarding_station": "string",
-    "destination_station": "string",
-    "class_code": "string",
-    "quota_code": "string"
+    "train_number": "12301",
+    "journey_date": "2026-11-15",
+    "boarding_station": "NDLS",
+    "destination_station": "HWH",
+    "class_code": "SL",
+    "quota_code": "GN"
   },
-  "prediction_at": "ISO-8601 timestamp",
+  "prediction_at": "2026-10-21T08:00:00Z",
+  "target": "final_chart_cnf",
   "passengers": [
     {
-      "original_status": "source status string",
-      "current_status": "source status string",
-      "current_status_observed_at": "ISO-8601 timestamp"
+      "original_status": "GNWL/45",
+      "current_status": "GNWL/12",
+      "current_status_observed_at": "2026-10-21T07:30:00Z"
     }
   ]
 }
 ```
 
-This is a design example, not a live API or a valid railway-status assertion. Exact enum values and constraints belong in the implemented schema.
+Constraints enforced:
 
-## Response concepts
+- `train_number`: 4–6 digits.
+- `boarding_station`, `destination_station`: 2–10 uppercase letters/digits, first character a letter, and the two must differ.
+- `journey_date`: ISO-8601 calendar date. A datetime is rejected; the journey date carries no time by definition.
+- `prediction_at`: required, ISO-8601 **with a UTC offset**, and earlier than `journey_date`. A naive timestamp is refused rather than assumed to be local or UTC.
+- `target`: optional, `final_chart_cnf` (default) or `final_chart_cnf_or_rac`. The two are different questions and an artifact fitted for one cannot answer the other.
+- `passengers`: 1–6 entries. More than six is rejected because the group baseline degrades and the answer stops being readable.
+- `original_status`, `current_status`: non-empty after trimming, at most 120 characters.
+- `current_status_observed_at`: optional, but when present it must carry an offset and must not be later than `prediction_at`. Evidence newer than the prediction timestamp would leak the outcome into the estimate.
 
-A supported prediction response should include:
-- request/prediction ID that is not a raw PNR;
-- `target_definition`;
-- `prediction_at`;
-- model and schema version;
-- per-passenger mutually exclusive outcome probabilities;
-- group event probabilities when supported;
-- evidence freshness and coverage state;
-- the evidence cohort and sample size behind each per-passenger estimate (`basis`), with a broad-cohort fallback labelled as such;
-- uncertainty/abstention status using the reason vocabulary in `docs/technical/INFERENCE_AND_GROUP_PROBABILITIES.md`;
-- limitations.
+Response (`200`, shown in the current abstaining state):
 
-The API must state whether probabilities include an explicit OTHER/UNKNOWN outcome or are conditional on a restricted eligible outcome set.
+```json
+{
+  "prediction_id": "6b1d1c2e-…",
+  "target": "final_chart_cnf",
+  "target_definition": "Probability of each final-chart outcome for each passenger …",
+  "prediction_at": "2026-10-21T08:00:00Z",
+  "created_at": "2026-10-23T04:10:22.119289Z",
+  "model_version": "no_model_v0",
+  "registry_status": "no_active_version",
+  "feature_schema_version": "1.0.0",
+  "evidence_coverage": "insufficient",
+  "is_supported": false,
+  "passenger_count": 1,
+  "passenger_outcomes": [
+    {
+      "passenger_id": "8f4a…",
+      "original_status": "GNWL/45",
+      "original_status_normalized": "WL",
+      "current_status": "GNWL/12",
+      "current_status_normalized": "WL",
+      "p_cnf": null,
+      "p_rac": null,
+      "p_wl": null,
+      "p_cancelled": null,
+      "p_other": null,
+      "is_supported": false,
+      "abstention_reason": "no_trained_model",
+      "basis": null,
+      "parse_warnings": []
+    }
+  ],
+  "group_outcome": {
+    "p_all_cnf": null,
+    "p_all_cnf_or_rac": null,
+    "p_at_least_one_wl": null,
+    "method": "insufficient_data",
+    "assumptions": "Group outcome is unavailable because at least one passenger outcome is an abstention.",
+    "is_supported": false,
+    "abstention_reason": "no_trained_model"
+  },
+  "limitations": ["…"],
+  "warnings": ["…"],
+  "outcome_classes": "CNF, RAC, WL, CANCELLED, OTHER — mutually exclusive and exhaustive over the eligible population. Probabilities sum to 1.0 per passenger."
+}
+```
+
+Reading the response:
+
+- `evidence_coverage` is `sufficient` when every passenger has an estimate, `partial` when some do, and `insufficient` when none do. Top-level `is_supported` means *at least one* passenger has an estimate; a mixed group is `partial`, not `sufficient`.
+- Per-passenger probabilities are all `null` exactly when `is_supported` is `false`, and all non-`null` and summing to 1.0 when it is `true`. A client must not coerce a `null` probability into `0`.
+- `basis` names the evidence cohort and its sample size, and says whether a broad-cohort fallback was used. A fallback is a weaker claim than a cohort match.
+- `group_outcome.method` is `single_passenger`, `independence_baseline`, or `insufficient_data`. The independence baseline assumes passenger outcomes are statistically independent, which is not true of passengers sharing a booking; the assumption is carried in `assumptions` and must stay visible in any UI that renders the numbers.
+- `registry_status` reports the model registry resolution: `no_active_version`, `artifact_missing`, `artifact_invalid`, `not_promoted`, `data_not_approved`, `ready`.
+
+## `GET /v1/health`
+
+```json
+{
+  "status": "ok",
+  "model_version": "no_model_v0",
+  "data_version": "none",
+  "app_version": "0.1.0",
+  "model_available": false,
+  "registry_status": "no_active_version",
+  "limits": {
+    "max_passengers_per_request": 6,
+    "min_sample_threshold": 30,
+    "max_artifact_bytes": 4194304,
+    "max_request_bytes": 65536
+  }
+}
+```
+
+`model_available` is true only when a promoted artifact passed validation for the default target. `min_sample_threshold` is the threshold of the estimator that would actually serve the next prediction, which is the promoted artifact's own value when one is ready.
 
 ## Errors
 
-Use consistent error responses for invalid input, unknown status, unsupported category, no trained model, insufficient evidence, provider failure, rate limits and server errors. Do not turn upstream failure into a zero probability.
+All handled errors use one envelope:
+
+```json
+{
+  "error": "Request validation failed.",
+  "details": [
+    { "code": "VALIDATION_ERROR", "message": "prediction_at=2026-10-21T08:00:00 has no timezone offset. Supply an offset-aware ISO-8601 timestamp.", "field": "prediction_at" }
+  ],
+  "request_id": "a829d293…"
+}
+```
+
+| Status | `code` | Cause |
+|---|---|---|
+| `400` | `invalid_input` | Malformed `Content-Length` header |
+| `413` | `REQUEST_TOO_LARGE` | Body above the configured byte limit |
+| `422` | `VALIDATION_ERROR` | Request body failed schema validation; `field` is the dotted path relative to the body |
+| `422` | `INVALID_PREDICTION_AT` | Timestamps cannot support a prediction: naive, on/after the journey date, or evidence newer than `prediction_at` |
+| `422` | `invalid_input` | Journey constraint violation |
+| `500` | `INTERNAL_ERROR` | Unhandled failure. The exception text stays server-side; the response carries only the request id |
+
+Unknown statuses, unsupported categories, an unavailable model and insufficient evidence are **not** HTTP errors: they are `200` responses carrying an abstention, so a client can present the limitation instead of guessing from a failure.
+
+Abstention reason values: `unknown_status`, `unsupported_status`, `unsupported_class`, `unsupported_quota`, `no_trained_model`, `no_approved_data`, `model_artifact_invalid`, `insufficient_sample`, `invalid_input`. Their meanings and separations are documented in `docs/technical/INFERENCE_AND_GROUP_PROBABILITIES.md`.
 
 ## Future tracking and context routes
 
@@ -68,3 +174,7 @@ Potential routes such as `POST /v1/tracking` and `GET /v1/tracking/{tracking_id}
 ## Compatibility
 
 Version changes that alter probability semantics, outcome classes, data retention or request fields require specification updates, tests and an ADR when the change is material.
+
+Recent contract changes:
+
+- `target`, `registry_status` and per-passenger `basis` added; `prediction_at` and `current_status_observed_at` now require a UTC offset; `passengers` capped at 6; `evidence_coverage` can be `partial`; errors moved to the single envelope above. ADR-0009.

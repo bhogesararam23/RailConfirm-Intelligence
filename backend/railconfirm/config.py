@@ -43,9 +43,24 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
     debug: bool = False
 
+    # Root log level. Access logs carry request metadata only — never request
+    # bodies, statuses or identifiers.
+    log_level: str = "INFO"
+
     # ── Server ─────────────────────────────────────────────────────────────────
     host: str = "127.0.0.1"
     port: int = 8000
+
+    # Origins permitted to call the API from a browser. The development frontend
+    # is served on localhost:3000; nothing else is trusted unless configured, so
+    # a stray third-party page cannot read predictions from a user's session.
+    cors_allowed_origins: list[str] = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+
+    # Largest request body accepted, in bytes. Bounds memory use before parsing.
+    max_request_bytes: int = 65_536
 
     # ── Paths ──────────────────────────────────────────────────────────────────
     # Approved local research datasets. This is a Git-ignored path: passing a
@@ -76,12 +91,35 @@ class Settings(BaseSettings):
     def _anchor_directories(cls, value: Path) -> Path:
         return anchor_path(value)
 
-    @field_validator("max_artifact_bytes", mode="after")
+    @field_validator("log_level", mode="after")
+    @classmethod
+    def _validate_log_level(cls, value: str) -> str:
+        level = value.strip().upper()
+        if level not in {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"}:
+            raise ValueError(
+                f"RAILCONFIRM_LOG_LEVEL must be one of CRITICAL, ERROR, WARNING, "
+                f"INFO, DEBUG; got {value!r}."
+            )
+        return level
+
+    @field_validator("max_artifact_bytes", "max_request_bytes", mode="after")
     @classmethod
     def _require_positive_limit(cls, value: int) -> int:
         if value < 1:
-            raise ValueError("max_artifact_bytes must be at least 1.")
+            raise ValueError("byte limits must be at least 1.")
         return value
+
+    @field_validator("cors_allowed_origins", mode="after")
+    @classmethod
+    def _reject_wildcard_origin(cls, value: list[str]) -> list[str]:
+        # "*" combined with credentials is the classic CORS misconfiguration, and
+        # an unbounded origin list makes the local-first privacy claim false.
+        if any(origin.strip() in ("", "*") for origin in value):
+            raise ValueError(
+                "RAILCONFIRM_CORS_ALLOWED_ORIGINS must list explicit origins; "
+                "'*' and empty entries are not accepted."
+            )
+        return [origin.strip().rstrip("/") for origin in value]
 
 
 # Singleton instance — import this throughout the application.

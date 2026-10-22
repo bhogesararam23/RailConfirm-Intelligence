@@ -18,6 +18,30 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from railconfirm.domain.exceptions import TemporalIntegrityError
+from railconfirm.domain.prediction import PredictionTarget
+from railconfirm.domain.validation import (
+    ensure_aware,
+    validate_station_code,
+    validate_train_number,
+)
+
+# Booking groups larger than this are not supported by the manual flow: the
+# independence baseline degrades and the response becomes unreadable, so the
+# limit is stated rather than implied by the frontend.
+MAX_PASSENGERS_PER_REQUEST = 6
+
+_STATUS_MAX_LENGTH = 120
+
+
+def _require_aware(value: datetime | None, field_name: str):
+    """Translate a domain temporal error into a field-level validation error."""
+    try:
+        return ensure_aware(value, field_name)
+    except TemporalIntegrityError as exc:
+        raise ValueError(str(exc)) from exc
+
+
 # ── Request schemas ────────────────────────────────────────────────────────────
 
 
@@ -35,37 +59,40 @@ class JourneyRequest(BaseModel):
     )
     boarding_station: str = Field(
         ...,
-        description="Boarding station code (uppercase).",
-        min_length=1,
+        description="Boarding station code (2–10 uppercase letters or digits).",
+        min_length=2,
         max_length=10,
+        examples=["NDLS"],
     )
     destination_station: str = Field(
         ...,
-        description="Destination station code (uppercase).",
-        min_length=1,
+        description="Destination station code (2–10 uppercase letters or digits).",
+        min_length=2,
         max_length=10,
+        examples=["HWH"],
     )
     class_code: str = Field(
         ...,
         description="Travel class code (e.g. '2A', 'SL', '3A').",
+        min_length=1,
+        max_length=4,
     )
     quota_code: str = Field(
         ...,
         description="Reservation quota code (e.g. 'GN', 'TQ').",
+        min_length=1,
+        max_length=4,
     )
 
     @field_validator("train_number")
     @classmethod
-    def validate_train_number(cls, v: str) -> str:
-        import re
-        if not re.match(r"^\d{4,6}$", v.strip()):
-            raise ValueError("train_number must be 4–6 digits.")
-        return v.strip()
+    def validate_train_number_field(cls, v: str) -> str:
+        return validate_train_number(v)
 
     @field_validator("boarding_station", "destination_station")
     @classmethod
-    def uppercase_station(cls, v: str) -> str:
-        return v.strip().upper()
+    def validate_station_field(cls, v: str) -> str:
+        return validate_station_code(v, "station code")
 
     @field_validator("class_code", "quota_code")
     @classmethod
@@ -90,6 +117,8 @@ class PassengerRequest(BaseModel):
             "Status string at time of original booking. "
             "Preserved verbatim alongside current_status."
         ),
+        min_length=1,
+        max_length=_STATUS_MAX_LENGTH,
     )
     current_status: str = Field(
         ...,
@@ -97,11 +126,37 @@ class PassengerRequest(BaseModel):
             "Most recently observed status string. "
             "May equal original_status if unchanged."
         ),
+        min_length=1,
+        max_length=_STATUS_MAX_LENGTH,
     )
     current_status_observed_at: datetime | None = Field(
         default=None,
-        description="ISO-8601 timestamp when current_status was observed. Null if unknown.",
+        description=(
+            "ISO-8601 timestamp with a UTC offset when current_status was observed. "
+            "Null if unknown; a naive timestamp is rejected because it cannot be "
+            "compared against the prediction cutoff."
+        ),
+        examples=["2026-10-21T07:30:00Z"],
     )
+
+    @field_validator("current_status_observed_at")
+    @classmethod
+    def require_observed_offset(cls, v: datetime | None) -> datetime | None:
+        return _require_aware(v, "current_status_observed_at")
+
+    @field_validator("original_status", "current_status")
+    @classmethod
+    def reject_blank_status(cls, v: str) -> str:
+        """Whitespace-only statuses are missing input, not an unknown code.
+
+        Letting them through would produce an UNKNOWN-status abstention that reads
+        to the user as "this status is not supported" rather than "you left this
+        field empty".
+        """
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("status must not be blank.")
+        return stripped
 
 
 class PredictionRequest(BaseModel):
@@ -113,13 +168,33 @@ class PredictionRequest(BaseModel):
     )
     prediction_at: datetime = Field(
         ...,
-        description="ISO-8601 timestamp at which the prediction is requested.",
+        description=(
+            "ISO-8601 timestamp with a UTC offset at which the prediction is made. "
+            "Must precede the journey date, and no supplied observation may be newer "
+            "than it."
+        ),
+        examples=["2026-10-21T08:00:00Z"],
+    )
+    target: PredictionTarget = Field(
+        default=PredictionTarget.FINAL_CHART_CNF,
+        description=(
+            "Outcome being estimated. A final-chart confirmation estimate and a "
+            "final-chart confirmation-or-RAC estimate are different questions."
+        ),
     )
     passengers: list[PassengerRequest] = Field(
         ...,
-        description="List of passengers in the booking group (at least 1).",
+        description=(
+            f"Passengers in the booking group (1–{MAX_PASSENGERS_PER_REQUEST})."
+        ),
         min_length=1,
+        max_length=MAX_PASSENGERS_PER_REQUEST,
     )
+
+    @field_validator("prediction_at")
+    @classmethod
+    def require_prediction_offset(cls, v: datetime) -> datetime:
+        return _require_aware(v, "prediction_at")
 
 
 # ── Response schemas ───────────────────────────────────────────────────────────
@@ -158,7 +233,12 @@ class PassengerOutcomeResponse(BaseModel):
     )
     abstention_reason: str | None = Field(
         default=None,
-        description="Stable reason code if abstaining; null if supported.",
+        description=(
+            "Stable reason code if abstaining; null if supported. One of: "
+            "unknown_status, unsupported_status, unsupported_class, unsupported_quota, "
+            "no_trained_model, no_approved_data, model_artifact_invalid, "
+            "insufficient_sample, invalid_input."
+        ),
     )
     basis: str | None = Field(
         default=None,
@@ -193,11 +273,14 @@ class PredictionResponse(BaseModel):
     """
 
     prediction_id: str = Field(description="Unique identifier for this prediction record.")
+    target: str = Field(
+        description="Prediction target this answer addresses, e.g. 'final_chart_cnf'.",
+    )
     target_definition: str = Field(
         description="Human-readable name of the prediction target.",
     )
     prediction_at: datetime = Field(
-        description="The timestamp supplied in the request at which prediction was made.",
+        description="Offset-aware timestamp at which the prediction was made.",
     )
     created_at: datetime = Field(
         description="Server time when this prediction record was created.",
@@ -205,9 +288,18 @@ class PredictionResponse(BaseModel):
     model_version: str = Field(
         description="Model artifact version used (or 'no_model_v0' when abstaining).",
     )
+    registry_status: str = Field(
+        description=(
+            "Model registry resolution state for this request: no_active_version, "
+            "artifact_missing, artifact_invalid, not_promoted, data_not_approved, ready."
+        ),
+    )
     feature_schema_version: str
     evidence_coverage: str = Field(
-        description="Assessment of evidence quality: 'sufficient', 'partial', 'insufficient'.",
+        description=(
+            "Evidence coverage: 'sufficient' when every passenger has an estimate, "
+            "'partial' when some do, 'insufficient' when none do."
+        ),
     )
     is_supported: bool = Field(
         default=False,
@@ -260,3 +352,13 @@ class HealthResponse(BaseModel):
     model_version: str
     data_version: str
     app_version: str
+    model_available: bool = Field(
+        description="True only when a promoted artifact passed validation for this target."
+    )
+    registry_status: str = Field(
+        description="Model registry resolution state, e.g. no_active_version."
+    )
+    limits: dict[str, int | str] = Field(
+        default_factory=dict,
+        description="Operational limits in force, for troubleshooting.",
+    )
