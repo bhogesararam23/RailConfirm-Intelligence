@@ -10,10 +10,16 @@ with new classes or quotas introduced by Indian Railways.
 
 from __future__ import annotations
 
-import re
 import warnings
 from dataclasses import dataclass
 from datetime import date
+
+from railconfirm.domain.exceptions import JourneyValidationError
+from railconfirm.domain.validation import (
+    validate_journey_date,
+    validate_station_code,
+    validate_train_number,
+)
 
 # ── Supported code registries ──────────────────────────────────────────────────
 
@@ -43,10 +49,6 @@ SUPPORTED_QUOTA_CODES: dict[str, str] = {
     "YU": "Youth",
     "DU": "Duty",
 }
-
-# Train numbers: 4–6 digits (Indian Railways uses 5-digit; 4 and 6 allowed for
-# legacy/special trains — validate conservatively).
-_TRAIN_NUMBER_PATTERN = re.compile(r"^\d{4,6}$")
 
 
 # ── Domain type ────────────────────────────────────────────────────────────────
@@ -80,32 +82,17 @@ class Journey:
         self._validate()
 
     def _validate(self) -> None:
-        """Raise ValueError for hard constraint violations; warn for soft ones."""
-        # Train number
-        if not _TRAIN_NUMBER_PATTERN.match(str(self.train_number)):
-            raise ValueError(
-                f"train_number must be 4–6 digits, got: {self.train_number!r}"
-            )
+        """Raise for hard constraint violations; warn for soft ones."""
+        validate_train_number(self.train_number)
 
-        # Station codes must differ
-        b = str(self.boarding_station).strip().upper()
-        d = str(self.destination_station).strip().upper()
-        if not b:
-            raise ValueError("boarding_station must not be empty.")
-        if not d:
-            raise ValueError("destination_station must not be empty.")
+        b = validate_station_code(self.boarding_station, "boarding_station")
+        d = validate_station_code(self.destination_station, "destination_station")
         if b == d:
-            raise ValueError(
-                f"boarding_station and destination_station must differ, "
-                f"got: {b!r} for both."
+            raise JourneyValidationError(
+                f"boarding_station and destination_station must differ, got {b!r} for both."
             )
 
-        # journey_date must be a date instance
-        if not isinstance(self.journey_date, date):
-            raise TypeError(
-                f"journey_date must be a datetime.date instance, "
-                f"got {type(self.journey_date).__name__}."
-            )
+        validate_journey_date(self.journey_date)
 
         # Soft validation — warn but accept unknown codes for forward compat
         if self.class_code not in SUPPORTED_CLASS_CODES:

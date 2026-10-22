@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 
 from railconfirm.domain.journey import Journey
 from railconfirm.domain.status import ParsedStatus, parse_status
+from railconfirm.domain.validation import validate_observation_time
 
 # ── StatusObservation ──────────────────────────────────────────────────────────
 
@@ -61,6 +62,7 @@ class StatusObservation:
             )
         if self.ingested_at is None:
             raise ValueError("ingested_at must not be None.")
+        validate_observation_time(self.observed_at, self.ingested_at)
 
 
 def make_observation(

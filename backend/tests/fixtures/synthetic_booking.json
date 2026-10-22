@@ -2,6 +2,7 @@
   "is_synthetic": true,
   "use": "testing_only",
   "disclaimer": "SYNTHETIC DATA FOR TESTING ONLY - NOT REAL RAILWAY OBSERVATIONS",
+  "note": "Timestamps are fixed in the past so that observed_at stays behind ingestion time as tests run later; the journey date stays in the future so the request is still a forecast.",
   "journey": {
     "train_number": "12301",
     "journey_date": "2026-11-15",
@@ -10,17 +11,17 @@
     "class_code": "SL",
     "quota_code": "GN"
   },
-  "prediction_at": "2026-11-10T08:00:00Z",
+  "prediction_at": "2026-10-21T08:00:00Z",
   "passengers": [
     {
       "original_status": "GNWL/45",
       "current_status": "GNWL/12",
-      "current_status_observed_at": "2026-11-10T07:30:00Z"
+      "current_status_observed_at": "2026-10-21T07:30:00Z"
     },
     {
       "original_status": "GNWL/46",
       "current_status": "RAC 4",
-      "current_status_observed_at": "2026-11-10T07:30:00Z"
+      "current_status_observed_at": "2026-10-21T07:30:00Z"
     }
   ]
 }

@@ -25,6 +25,7 @@ from railconfirm.domain.prediction import (
     make_abstention_outcome,
 )
 from railconfirm.domain.status import NormalizedStatus
+from railconfirm.domain.validation import validate_prediction_timing
 from railconfirm.inference.baseline import HistoricalFrequencyBaseline
 from railconfirm.inference.group import compute_group_outcomes
 from railconfirm.inference.registry import ModelRegistry
@@ -45,7 +46,7 @@ class InferenceEngine:
         self,
         journey: Journey,
         passenger_inputs: Sequence[Mapping[str, Any]],
-        prediction_at: datetime | None = None,
+        prediction_at: datetime,
         target: PredictionTarget = PredictionTarget.FINAL_CHART_CNF,
     ) -> PredictionRecord:
         """Run prediction pipeline for a journey and set of passenger inputs.
@@ -57,9 +58,16 @@ class InferenceEngine:
         passenger_inputs:
             List of dicts containing 'passenger_id', 'original_obs', 'current_obs'.
         prediction_at:
-            Effective timestamp of the prediction request.
+            Offset-aware effective timestamp of the prediction request. Required:
+            an estimate with no as-of time cannot say which evidence it used.
         target:
             PredictionTarget, default FINAL_CHART_CNF.
+
+        Raises
+        ------
+        TemporalIntegrityError
+            If the prediction timestamp is naive, is on or after the journey date,
+            or precedes evidence supplied with the request.
 
         Returns
         -------
@@ -67,7 +75,16 @@ class InferenceEngine:
             Immutable result containing per-passenger outcomes and group outcome.
         """
         now = datetime.now(UTC)
-        effective_prediction_at = prediction_at or now
+        effective_prediction_at = prediction_at
+
+        validate_prediction_timing(
+            journey_date=journey.journey_date,
+            prediction_at=effective_prediction_at,
+            observation_times=[
+                (str(p_inp["passenger_id"]), p_inp["current_obs"].observed_at)
+                for p_inp in passenger_inputs
+            ],
+        )
 
         # Resolve what may legitimately serve this request. A configured-but-broken
         # artifact is reported as such instead of masquerading as "no model yet".
@@ -120,6 +137,12 @@ class InferenceEngine:
                     class_code=journey.class_code,
                     quota_code=journey.quota_code,
                 )
+                if outcome.abstention_reason is AbstentionReason.UNSUPPORTED_STATUS:
+                    warnings.append(
+                        f"Passenger {p_id[:8]}: status '{curr_obs.raw_status}' "
+                        f"({parsed.normalized.value}) is outside the population this "
+                        "target estimates."
+                    )
             else:
                 # No evidence base is available at all. Report the specific gate
                 # that is closed rather than a generic "no model" message.
@@ -133,11 +156,24 @@ class InferenceEngine:
         # Compute group outcome
         group_outcome = compute_group_outcomes(passenger_outcomes)
 
-        evidence_coverage = (
-            "sufficient"
-            if all(po.is_supported() for po in passenger_outcomes)
-            else "insufficient"
-        )
+        supported_count = sum(1 for po in passenger_outcomes if po.is_supported())
+        if not passenger_outcomes or supported_count == 0:
+            evidence_coverage = "insufficient"
+        elif supported_count == len(passenger_outcomes):
+            evidence_coverage = "sufficient"
+        else:
+            evidence_coverage = "partial"
+
+        if not passenger_outcomes:
+            warnings.append(
+                "No passengers were supplied, so there is nothing to estimate."
+            )
+        elif evidence_coverage == "partial":
+            warnings.append(
+                f"{supported_count} of {len(passenger_outcomes)} passengers have an "
+                "estimate; the remainder abstained and the group outcome is "
+                "unavailable."
+            )
 
         return PredictionRecord(
             prediction_id=str(uuid.uuid4()),

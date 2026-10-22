@@ -1,7 +1,10 @@
 """Unit tests for prediction records, probabilities, and abstention types."""
 
+from datetime import UTC, datetime
+
 import pytest
 
+from railconfirm.domain.exceptions import TemporalIntegrityError
 from railconfirm.domain.prediction import (
     AbstentionReason,
     PassengerOutcome,
@@ -9,6 +12,8 @@ from railconfirm.domain.prediction import (
     PredictionTarget,
     make_abstention_outcome,
 )
+
+PREDICTION_AT = datetime(2026, 11, 10, 8, 0, tzinfo=UTC)
 
 
 def test_supported_passenger_outcome_valid():
@@ -53,9 +58,48 @@ def test_prediction_record():
     p1 = make_abstention_outcome("p-1", AbstentionReason.NO_TRAINED_MODEL)
     record = PredictionRecord(
         target=PredictionTarget.FINAL_CHART_CNF,
+        prediction_at=PREDICTION_AT,
         passenger_outcomes=[p1],
         evidence_coverage="insufficient",
     )
     assert record.is_fully_supported is False
     assert record.any_abstaining is True
     assert record.target == PredictionTarget.FINAL_CHART_CNF
+
+
+def test_prediction_record_requires_an_as_of_time():
+    """No default: an estimate without a prediction timestamp cannot say what it knew."""
+    with pytest.raises(TypeError):
+        PredictionRecord(target=PredictionTarget.FINAL_CHART_CNF)
+
+
+def test_prediction_record_rejects_naive_timestamps():
+    with pytest.raises(TemporalIntegrityError, match="no timezone offset"):
+        PredictionRecord(
+            target=PredictionTarget.FINAL_CHART_CNF,
+            prediction_at=datetime(2026, 11, 10, 8, 0),  # noqa: DTZ001 - deliberately naive
+        )
+
+
+def test_record_with_no_passengers_is_not_fully_supported():
+    """Regression: ``all()`` over an empty list made an empty request look sufficient."""
+    record = PredictionRecord(
+        target=PredictionTarget.FINAL_CHART_CNF,
+        prediction_at=PREDICTION_AT,
+        passenger_outcomes=[],
+    )
+    assert record.is_fully_supported is False
+
+
+def test_abstaining_outcome_cannot_claim_an_evidence_basis():
+    with pytest.raises(ValueError, match="must not claim an evidence basis"):
+        PassengerOutcome(
+            passenger_id="p-1",
+            p_cnf=None,
+            p_rac=None,
+            p_wl=None,
+            p_cancelled=None,
+            p_other=None,
+            abstention_reason=AbstentionReason.NO_APPROVED_DATA,
+            basis="cohort=SL/GN/WL n=105",
+        )

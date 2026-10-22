@@ -16,6 +16,16 @@ class JourneyValidationError(RailConfirmError, ValueError):
     """Raised when a Journey fails hard constraint validation."""
 
 
+class TemporalIntegrityError(RailConfirmError, ValueError):
+    """Raised when timestamps cannot support the claim being made.
+
+    Covers a naive timestamp (nothing to compare against), a prediction made at
+    or after the event it predicts, and evidence dated after the prediction
+    timestamp. Both bases are inherited so an API boundary can treat it as a
+    422 input problem while callers can still catch the domain type.
+    """
+
+
 class DatasetValidationError(RailConfirmError):
     """Raised when a dataset fails schema or integrity validation."""
 

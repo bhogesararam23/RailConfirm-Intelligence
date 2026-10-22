@@ -22,6 +22,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 
+from railconfirm.domain.validation import ensure_aware
+
 # ── Enumerations ───────────────────────────────────────────────────────────────
 
 
@@ -216,9 +218,12 @@ class PredictionRecord:
     * Limitations and warnings for the caller.
     """
 
+    target: PredictionTarget
+    prediction_at: datetime
+    """Offset-aware as-of time of the request. Everything about this record is
+    claimed relative to it, so a naive value would make the claim unverifiable."""
+
     prediction_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    target: PredictionTarget = PredictionTarget.FINAL_CHART_CNF
-    prediction_at: datetime | None = None   # Time of prediction request
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     model_version: str = "no_model_v0"
     feature_schema_version: str = "1.0.0"
@@ -228,10 +233,16 @@ class PredictionRecord:
     limitations: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
+    def __post_init__(self) -> None:
+        ensure_aware(self.prediction_at, "prediction_at")
+        ensure_aware(self.created_at, "created_at")
+
     @property
     def is_fully_supported(self) -> bool:
         """Return True if all passengers have supported (non-abstaining) outcomes."""
-        return all(o.is_supported() for o in self.passenger_outcomes)
+        return bool(self.passenger_outcomes) and all(
+            o.is_supported() for o in self.passenger_outcomes
+        )
 
     @property
     def any_abstaining(self) -> bool:
