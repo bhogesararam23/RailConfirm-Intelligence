@@ -51,7 +51,8 @@ A supported prediction response should include:
 - per-passenger mutually exclusive outcome probabilities;
 - group event probabilities when supported;
 - evidence freshness and coverage state;
-- uncertainty/abstention status;
+- the evidence cohort and sample size behind each per-passenger estimate (`basis`), with a broad-cohort fallback labelled as such;
+- uncertainty/abstention status using the reason vocabulary in `docs/technical/INFERENCE_AND_GROUP_PROBABILITIES.md`;
 - limitations.
 
 The API must state whether probabilities include an explicit OTHER/UNKNOWN outcome or are conditional on a restricted eligible outcome set.

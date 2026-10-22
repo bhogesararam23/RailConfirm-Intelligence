@@ -45,6 +45,16 @@ class NormalizedStatus(str, Enum):
     CENSORED = "CENSORED"  # Outcome not reliably observed
 
 
+# Categories that still sit inside the reservation queue and therefore have a
+# final-chart outcome to estimate. A cancelled booking is no longer competing for
+# berths; a censored record has no reliably observed outcome; OTHER is, by
+# definition, outside the target. Estimators must refuse the latter rather than
+# treat them as ordinary queue members.
+TARGET_ELIGIBLE_STATUSES: frozenset[NormalizedStatus] = frozenset(
+    {NormalizedStatus.CNF, NormalizedStatus.RAC, NormalizedStatus.WL}
+)
+
+
 class WaitlistCategory(str, Enum):
     """Known waitlist quota/category codes.
 

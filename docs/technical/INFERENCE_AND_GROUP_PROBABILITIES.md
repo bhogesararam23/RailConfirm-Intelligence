@@ -58,17 +58,24 @@ Knowing each passenger's chance of CNF does not uniquely determine the probabili
 
 ## Abstention reasons
 
-Use a stable internal reason taxonomy, for example:
-- `NO_MODEL_AVAILABLE`
-- `CATEGORY_UNSUPPORTED`
-- `INSUFFICIENT_EVIDENCE`
-- `STATUS_UNKNOWN`
-- `INPUT_TIME_UNCLEAR`
-- `DATA_TOO_STALE`
-- `FEATURE_SCHEMA_MISMATCH`
-- `PREDICTION_VALIDATION_FAILED`
+`AbstentionReason` in `backend/railconfirm/domain/prediction.py` is the public, versioned vocabulary. The codes below are the ones the implementation actually emits; a reason is added only with a producer, a test and a frontend message.
 
-The public message should explain the limitation in normal language without exposing internal infrastructure or sensitive data.
+| Code | Emitted when | Distinct from |
+|---|---|---|
+| `unknown_status` | The raw status string has no verified mapping. | `unsupported_status` — the code was recognised as not-a-status. |
+| `unsupported_status` | The status is known but sits outside the target population (cancelled, censored, other). | `unknown_status` — here the meaning is known and the request is out of scope. |
+| `unsupported_class` | No model or approved cohort covers the journey class. | `insufficient_sample` |
+| `unsupported_quota` | No model or approved cohort covers the quota. | `insufficient_sample` |
+| `no_trained_model` | No trained model artifact is active in the registry. | `no_approved_data` |
+| `no_approved_data` | No dataset approved for estimation is available, so there is no evidence base at all. This is the current repository state. | `no_trained_model` — a model can exist without approved data and approved data can exist without a model. |
+| `insufficient_sample` | A cohort exists but holds fewer records than the configured minimum. | `no_approved_data` |
+| `invalid_input` | The request cannot be represented as a valid domain object. | API-layer validation errors |
+
+`no_trained_model` and `no_approved_data` are deliberately separate because they call for different work: training a model versus clearing a dataset through `docs/data/DATASET_INTAKE_CHECKLIST.md`. Collapsing them would hide which gate is actually open.
+
+Codes once proposed for this document (`DATA_TOO_STALE`, `FEATURE_SCHEMA_MISMATCH`, `INPUT_TIME_UNCLEAR`, `PREDICTION_VALIDATION_FAILED`) have no producer and are not part of the contract. Add them with implementation, not ahead of it.
+
+Every supported per-passenger outcome also records `basis`: the cohort key and its sample size, labelled as an exact status match or a broad-cohort fallback. A fallback estimate is a weaker claim than a cohort-specific one and a reader cannot tell them apart from the numbers alone.
 
 ## Response metadata
 

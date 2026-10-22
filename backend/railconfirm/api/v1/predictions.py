@@ -128,6 +128,7 @@ async def predict_manual(request: PredictionRequest) -> PredictionResponse:
                     if outcome.abstention_reason
                     else None
                 ),
+                basis=outcome.basis,
                 parse_warnings=warnings_list,
             )
         )

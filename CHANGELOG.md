@@ -8,6 +8,11 @@ The format is inspired by Keep a Changelog; dates use ISO 8601.
 
 ### Fixed
 - **Status mapping integrity (`backend/railconfirm/domain/status.py`, mapping v1.1.0):** `CK` and `CKWL` were mapped to the waitlist category on an unverified guess. They now resolve to `UNKNOWN` with a review note, so an unverified family cannot be trained on as ordinary waitlist data. A position token that is present but invalid (`WL/0`, `RAC 0`) is now reported in `parse_note` instead of being dropped silently. See `docs/model/STATUS_GLOSSARY.md`.
+- **Baseline estimator evidence gate (`backend/railconfirm/inference/baseline.py`):** a frequency table could produce a confident distribution from nonsense. An unrecognised outcome key (`{"CONFIRMED": 100}`) silently returned a flat 0.2/0.2/0.2 estimate; negative counts and NaN raised an unhandled error mid-request; string and fractional counts were accepted or crashed; and a table fitted with lowercase cohort keys never matched, so it abstained while appearing loaded. Tables are now validated and canonicalised at load, malformed input raises `FrequencyTableValidationError` before any state changes, and a cohort that cannot support an estimate abstains instead of inventing one.
+
+### Added
+- **Estimator provenance:** a frequency table can only be installed with `FrequencyTableProvenance` (dataset id, SHA-256, source reference, approval status, synthetic flag, fitting window). Estimates require an explicitly approved, non-synthetic dataset; a passing quality check is not treated as a licensing decision. New `no_approved_data` abstention reason separates "no evidence base exists" from "no trained model is active" (`docs/technical/INFERENCE_AND_GROUP_PROBABILITIES.md`).
+- **Evidence basis on every estimate:** `PassengerOutcome.basis` records the matched cohort and its sample size, and states whether it was an exact status match or a broad-cohort fallback. Exposed as `basis` on the per-passenger API response.
 
 ## [0.1.0] - 2026-10-21
 

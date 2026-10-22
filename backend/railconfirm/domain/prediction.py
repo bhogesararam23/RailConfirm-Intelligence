@@ -49,6 +49,14 @@ class AbstentionReason(str, Enum):
     NO_TRAINED_MODEL = "no_trained_model"
     """No approved, trained model artifact is available for this request."""
 
+    NO_APPROVED_DATA = "no_approved_data"
+    """No dataset approved for this use is available, so no evidence base exists.
+
+    Distinct from ``NO_TRAINED_MODEL``: a trained model may exist in principle,
+    but estimation without an approved record set is not defensible. This is the
+    state of the repository until a dataset clears docs/data/DATASET_INTAKE_CHECKLIST.md.
+    """
+
     UNSUPPORTED_STATUS = "unsupported_status"
     """The passenger status falls outside the supported inference domain."""
 
@@ -96,6 +104,12 @@ class PassengerOutcome:
     p_cancelled: float | None
     p_other: float | None
     abstention_reason: AbstentionReason | None
+    basis: str | None = None
+    """Which evidence cohort produced the estimate, or None when abstaining.
+
+    Recorded because a broad-cohort fallback is a weaker claim than an exact
+    cohort match, and a reader cannot tell them apart from the numbers alone.
+    """
 
     def __post_init__(self) -> None:
         self._validate()
@@ -125,6 +139,10 @@ class PassengerOutcome:
                     raise ValueError(
                         "Abstaining PassengerOutcome must have all probabilities as None."
                     )
+            if self.basis is not None:
+                raise ValueError(
+                    "Abstaining PassengerOutcome must not claim an evidence basis."
+                )
 
     def is_supported(self) -> bool:
         """Return True if this is a supported (non-abstaining) outcome."""

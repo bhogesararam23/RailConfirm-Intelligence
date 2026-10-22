@@ -160,6 +160,14 @@ class PassengerOutcomeResponse(BaseModel):
         default=None,
         description="Stable reason code if abstaining; null if supported.",
     )
+    basis: str | None = Field(
+        default=None,
+        description=(
+            "Evidence cohort that produced the estimate, including its sample "
+            "size, or null when abstaining. A broad-cohort fallback is weaker "
+            "than an exact cohort match and is labelled as such."
+        ),
+    )
     parse_warnings: list[str] = Field(
         default_factory=list,
         description="Any warnings from status parsing.",
