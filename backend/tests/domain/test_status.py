@@ -9,8 +9,10 @@ from railconfirm.domain.status import (
 )
 
 
-def test_mapping_version_present():
-    assert MAPPING_VERSION == "1.0.0"
+def test_parsed_status_records_mapping_version():
+    """Every parse result must be traceable to the mapping that produced it."""
+    for raw in ["CNF", "RAC 3", "GNWL/15", "CAN", "???"]:
+        assert parse_status(raw).mapping_version == MAPPING_VERSION
 
 
 def test_parse_cnf():
@@ -95,3 +97,51 @@ def test_parse_invalid_positions():
     res_rac_zero = parse_status("RAC 0")
     assert res_rac_zero.normalized == NormalizedStatus.RAC
     assert res_rac_zero.position is None
+
+
+def test_discarded_position_is_reported_not_silent():
+    """A position token that exists but is invalid must be visible to reviewers."""
+    for raw in ["WL/0", "GNWL/0", "RAC 0", "RAC/0"]:
+        res = parse_status(raw)
+        assert res.position is None
+        assert res.parse_note is not None, f"{raw} discarded a position without a note"
+        assert "position" in res.parse_note.lower()
+
+    # An absent token is not a warning: nothing was thrown away.
+    assert parse_status("GNWL").parse_note is None
+
+
+def test_verifiable_codes_have_no_parse_note():
+    for raw in ["CNF", "RAC 3", "GNWL/15", "CAN", "CENSORED"]:
+        assert parse_status(raw).parse_note is None
+
+
+def test_ck_and_ckwl_are_not_mapped_to_waitlist():
+    """Regression: 1.0.0 guessed CK -> WL/CKWL with no source.
+
+    An unverified family must surface as UNKNOWN so it is reviewed rather than
+    silently trained on as ordinary waitlist data.
+    """
+    for raw in ["CK", "ck", "CKWL", "CKWL/5", "CK 12"]:
+        res = parse_status(raw)
+        assert res.normalized == NormalizedStatus.UNKNOWN, (
+            f"{raw!r} normalized to {res.normalized}; unverified families must "
+            "stay UNKNOWN."
+        )
+        assert res.wl_category is None
+        assert res.position is None
+        assert "not verified" in res.parse_note
+
+
+def test_wl_category_only_accompanies_waitlist():
+    for raw in ["CNF", "RAC 2", "CAN", "CENSORED", "???"]:
+        res = parse_status(raw)
+        assert res.wl_category is None
+    for raw in ["GNWL/3", "WL", "RLWL/7"]:
+        assert parse_status(raw).wl_category is not None
+
+
+def test_raw_string_is_preserved_verbatim_including_whitespace_and_case():
+    for raw in [" gnwl/15 ", "Rac 2", "cnf"]:
+        res = parse_status(raw)
+        assert res.raw == raw

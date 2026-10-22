@@ -5,7 +5,7 @@ to a reviewed domain representation. Unknown codes are preserved and
 surfaced for review — never silently mapped to WL or another category.
 
 Reference: Indian Railways passenger enquiry terminology, verified 2026-10-21.
-Mapping version: 1.0.0
+Mapping version: 1.1.0
 """
 
 from __future__ import annotations
@@ -15,9 +15,15 @@ from dataclasses import dataclass
 from enum import Enum
 
 # ── Versioning ─────────────────────────────────────────────────────────────────
-MAPPING_VERSION = "1.0.0"
+MAPPING_VERSION = "1.1.0"
 """Increment this whenever the mapping logic changes so historical data can be
-reproduced and audited against the version that produced it."""
+reproduced and audited against the version that produced it.
+
+1.1.0: `CK` is no longer mapped to WL/CKWL. The mapping was recorded here without
+an authoritative source, and a code that has not been verified must produce
+UNKNOWN rather than the nearest familiar category. Invalid numeric positions now
+carry a parse note instead of being dropped silently.
+"""
 
 
 # ── Enumerations ───────────────────────────────────────────────────────────────
@@ -42,8 +48,10 @@ class NormalizedStatus(str, Enum):
 class WaitlistCategory(str, Enum):
     """Known waitlist quota/category codes.
 
-    This list is not exhaustive. New categories should be added only after
-    authoritative verification of their semantics.
+    Only the families listed in docs/model/STATUS_GLOSSARY.md as observed codes
+    appear here. A family is admitted after its semantics are verified against a
+    reference; this list is not exhaustive and new families must be added with a
+    recorded source and date.
 
     Source: Indian Railways booking/enquiry terminology (verified 2026-10-21).
     """
@@ -54,7 +62,6 @@ class WaitlistCategory(str, Enum):
     TQWL = "TQWL"    # Tatkal Quota Waitlist
     RQWL = "RQWL"    # Road-side Quota Waitlist
     DPWL = "DPWL"    # Duty Pass Waitlist
-    CKWL = "CKWL"    # (possibly Concessional/Ticket Quota — needs verification)
     GENERAL = "WL"   # Generic / unspecified waitlist
 
 
@@ -92,13 +99,12 @@ _WL_CATEGORY_MAP: dict[str, WaitlistCategory] = {
     "TQWL": WaitlistCategory.TQWL,
     "RQWL": WaitlistCategory.RQWL,
     "DPWL": WaitlistCategory.DPWL,
-    "CKWL": WaitlistCategory.CKWL,
     "WL": WaitlistCategory.GENERAL,
 }
 
 # Patterns for WL codes like "GNWL/15", "GNWL15", "WL/15", "WL15".
 _WL_PATTERN = re.compile(
-    r"^(?P<cat>GNWL|RLWL|PQWL|TQWL|RQWL|DPWL|CKWL|WL)"
+    r"^(?P<cat>GNWL|RLWL|PQWL|TQWL|RQWL|DPWL|WL)"
     r"[/ ]?"
     r"(?P<pos>\d+)?$",
     re.IGNORECASE,
@@ -110,21 +116,36 @@ _RAC_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# CK is sometimes seen (possibly same as CKWL) — treat as WL with a note.
-_CK_PATTERN = re.compile(r"^CK$", re.IGNORECASE)
+# Codes that appear in real enquiry output but whose semantics this project has
+# not verified against a reference. They resolve to UNKNOWN with a review note;
+# the note is deliberately distinct from the generic "unrecognized code" note so
+# a reviewer can tell a known-but-unverified family apart from noise.
+_UNVERIFIED_CODE_PATTERN = re.compile(
+    r"^(?P<cat>CK|CKWL)[/ ]?(?P<pos>\d+)?$",
+    re.IGNORECASE,
+)
 
 
-def _parse_position(pos_str: str | None) -> int | None:
-    """Return validated integer position or None."""
+def _parse_position(pos_str: str | None) -> tuple[int | None, str | None]:
+    """Return ``(position, note)`` for a captured position token.
+
+    A missing token yields ``(None, None)`` — no queue position is invented. A
+    token that is present but not a valid positive position yields ``(None,
+    note)`` so the caller can see that information was discarded rather than
+    simply absent.
+    """
     if pos_str is None:
-        return None
+        return None, None
     try:
         val = int(pos_str)
-        if val <= 0:
-            return None  # Negative/zero positions are invalid; do not store
-        return val
-    except (ValueError, TypeError):
-        return None
+    except (ValueError, TypeError):  # pragma: no cover - regex already restricts digits
+        return None, f"Position token {pos_str!r} is not an integer and was discarded."
+    if val <= 0:
+        return None, (
+            f"Position token {pos_str!r} is not a positive queue position "
+            "and was discarded."
+        )
+    return val, None
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
@@ -214,24 +235,29 @@ def parse_status(raw: str | None) -> ParsedStatus:
     # ── RAC ───────────────────────────────────────────────────────────────────
     rac_match = _RAC_PATTERN.match(upper)
     if rac_match:
-        pos = _parse_position(rac_match.group("pos"))
+        pos, pos_note = _parse_position(rac_match.group("pos"))
         return ParsedStatus(
             raw=raw,
             normalized=NormalizedStatus.RAC,
             wl_category=None,
             position=pos,
+            parse_note=pos_note,
         )
 
-    # ── CK (possible short form — needs verification) ─────────────────────────
-    if _CK_PATTERN.match(upper):
+    # ── Known-in-the-wild but unmapped families → UNKNOWN ─────────────────────
+    unverified_match = _UNVERIFIED_CODE_PATTERN.match(upper)
+    if unverified_match:
+        code = unverified_match.group("cat").upper()
         return ParsedStatus(
             raw=raw,
-            normalized=NormalizedStatus.WL,
-            wl_category=WaitlistCategory.CKWL,
+            normalized=NormalizedStatus.UNKNOWN,
+            wl_category=None,
             position=None,
             parse_note=(
-                "Code 'CK' tentatively mapped to WL/CKWL; "
-                "semantics require authoritative verification."
+                f"Status family {code!r} is seen in enquiry output but its semantics "
+                "are not verified against a reference. It is reported UNKNOWN rather "
+                "than mapped to WL; verify and record a source before adding it to "
+                "the mapping."
             ),
         )
 
@@ -239,20 +265,14 @@ def parse_status(raw: str | None) -> ParsedStatus:
     wl_match = _WL_PATTERN.match(upper)
     if wl_match:
         cat_str = wl_match.group("cat").upper()
-        category = _WL_CATEGORY_MAP.get(cat_str, WaitlistCategory.GENERAL)
-        pos = _parse_position(wl_match.group("pos"))
-        note = None
-        if cat_str == "CKWL":
-            note = (
-                "CKWL semantics require authoritative verification "
-                "before use in model training."
-            )
+        category = _WL_CATEGORY_MAP[cat_str]
+        pos, pos_note = _parse_position(wl_match.group("pos"))
         return ParsedStatus(
             raw=raw,
             normalized=NormalizedStatus.WL,
             wl_category=category,
             position=pos,
-            parse_note=note,
+            parse_note=pos_note,
         )
 
     # ── UNKNOWN — all other codes ─────────────────────────────────────────────

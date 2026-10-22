@@ -4,6 +4,11 @@ Notable changes to RailConfirm Intelligence are recorded here.
 
 The format is inspired by Keep a Changelog; dates use ISO 8601.
 
+## [Unreleased]
+
+### Fixed
+- **Status mapping integrity (`backend/railconfirm/domain/status.py`, mapping v1.1.0):** `CK` and `CKWL` were mapped to the waitlist category on an unverified guess. They now resolve to `UNKNOWN` with a review note, so an unverified family cannot be trained on as ordinary waitlist data. A position token that is present but invalid (`WL/0`, `RAC 0`) is now reported in `parse_note` instead of being dropped silently. See `docs/model/STATUS_GLOSSARY.md`.
+
 ## [0.1.0] - 2026-10-21
 
 ### Added

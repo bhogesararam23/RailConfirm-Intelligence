@@ -18,6 +18,23 @@ This is a working domain glossary, not a complete or authoritative list of every
 
 Examples include GNWL, RLWL, PQWL, TQWL, RQWL and DPWL. This list is not exhaustive and should not be interpreted as a complete supported-code list. Code semantics, availability by quota and final outcome mapping need authoritative verification.
 
+## Codes deliberately not mapped
+
+| Raw code | Behaviour | Reason |
+|---|---|---|
+| `CK`, `CKWL` | `UNKNOWN` with a review note, never `WL` | Recorded here historically as "possibly Concessional/Ticket Quota — needs verification" and, for `CK`, tentatively mapped to `WL/CKWL`. No reference was ever located, so the mapping was a guess about the nearest familiar category. Status mapping version 1.1.0 removed the guess; these codes now surface for review instead of being trained on as ordinary waitlist rows. |
+
+Re-admitting a family requires an authoritative source, the date checked, valid and invalid examples, unit tests, and a mapping version bump.
+
+## Mapping version history
+
+| Version | Change | Date |
+|---|---|---|
+| 1.0.0 | Initial mapping: CNF, RAC, GNWL/RLWL/PQWL/TQWL/RQWL/DPWL, generic WL, CAN, CENSORED; `CK`/`CKWL` tentatively mapped to waitlist. | 2026-10-21 |
+| 1.1.0 | `CK` and `CKWL` demoted to `UNKNOWN` pending verification (no source supported the waitlist mapping). A position token that is present but invalid now records a parse note rather than being dropped silently. | 2026-10-23 |
+
+The version is stamped on every parsed status so historical rows can be reproduced against the mapping that produced them.
+
 ## Mapping requirements
 
 For each raw status:
