@@ -19,6 +19,18 @@ For each training example, reconstruct the exact information available at `predi
 
 Record split dates and eligibility rules before model selection. If the time span permits, use rolling-origin evaluation across multiple cutoffs.
 
+### Implemented split behaviour
+
+`backend/railconfirm/data/preprocessing.py` currently provides the single-cutoff case; rolling-origin evaluation is not implemented and must be added before any result is called temporally robust.
+
+- `chronological_split` allocates **whole dates**, not rows, so records sharing a journey date cannot straddle a boundary, and the result is independent of input row order. Dates are parsed strictly as ISO `YYYY-MM-DD`: an ambiguous value such as `01/02/2026` is refused rather than resolved by locale, because a wrong resolution silently reorders which records are "future".
+- A split that cannot give all three partitions at least one date and `min_rows_per_partition` rows, or that cannot respect `gap_days`, returns `eligible=False` with reasons **and no partitions at all**. Returning every row as `train` with an empty test frame — which is what the first implementation did for fewer than four distinct dates, and at exactly three dates — lets a later step fit, score and report a metric on data that was never held back.
+- When `booking_group_id` is present, a booking appearing on dates that fall in more than one partition blocks the split rather than splitting one outcome across training and evaluation.
+- `extract_features` reads only as-of information and refuses a frame that still carries an outcome column; the caller must pass `strip_labels(df)` first. Queue positions are nullable (`pd.NA`), never fabricated as zero, and `lead_days` is null for a missing or post-departure observation instead of clamped to `0`.
+- `FEATURE_SCHEMA_VERSION` and `FEATURE_COLUMNS` are the shared definition that training and inference must agree on. Changing feature meaning or nullability requires a version bump so a stored artifact can be rejected rather than misread.
+
+Every split result carries `PartitionSummary` counts — rows, distinct dates, distinct bookings and boundaries — which are what an evaluation report must publish alongside its metrics.
+
 ## Baselines and candidates
 
 1. Historical-frequency baseline with smoothing and a documented fallback for sparse strata.
