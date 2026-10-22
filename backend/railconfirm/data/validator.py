@@ -101,7 +101,7 @@ def validate_dataset(df: pd.DataFrame) -> DatasetValidationReport:
     valid_count = 0
     rejected_count = 0
 
-    for idx, row in df.iterrows():
+    for _, row in df.iterrows():
         # Check required fields not empty / NaN
         has_null = False
         for c in REQUIRED_COLUMNS:

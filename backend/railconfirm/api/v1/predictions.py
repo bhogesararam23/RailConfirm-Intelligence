@@ -116,7 +116,9 @@ async def predict_manual(
 
     # ── Build per-passenger response objects ───────────────────────────────────
     passenger_responses: list[PassengerOutcomeResponse] = []
-    for inp, outcome in zip(passenger_inputs, prediction.passenger_outcomes):
+    for inp, outcome in zip(
+        passenger_inputs, prediction.passenger_outcomes, strict=True
+    ):
         orig_parsed = inp["original_obs"].parsed
         curr_parsed = inp["current_obs"].parsed
 

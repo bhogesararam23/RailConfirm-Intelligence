@@ -8,7 +8,14 @@ on:
   workflow_dispatch:
 
 # No external runtime APIs, no private datasets, no model weights required.
-# All checks must pass without credentials or network access to third-party services.
+# Every job must pass without credentials or network access to third-party services.
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   backend-checks:
@@ -30,6 +37,9 @@ jobs:
       - name: Install uv
         run: pip install uv
 
+      # Tool behaviour is declared in pyproject.toml (Ruff rule set, Mypy config),
+      # and dev dependency ranges are constrained there, so CI and a developer
+      # running the same commit see the same results.
       - name: Create virtual environment and install dependencies
         run: |
           uv venv .venv
@@ -44,12 +54,12 @@ jobs:
       - name: Type-check with mypy
         run: |
           source .venv/bin/activate
-          mypy railconfirm/ --ignore-missing-imports
+          mypy
 
       - name: Run tests with coverage
         run: |
           source .venv/bin/activate
-          pytest tests/ -v --tb=short --cov=railconfirm --cov-report=term-missing
+          pytest tests/ -v --tb=short --cov=railconfirm --cov-report=term-missing --cov-fail-under=90
         # These tests must not require external APIs or private datasets.
         # Synthetic fixtures are clearly labelled in tests/fixtures/.
 
@@ -83,54 +93,25 @@ jobs:
       - name: Build
         run: npm run build
         env:
-          # No real API endpoint during CI build — frontend must build without live backend
+          # No real API endpoint during CI build — the frontend must build without a live backend
           NEXT_PUBLIC_API_URL: http://localhost:8000
 
-  docs-checks:
-    name: Documentation and Security Checks
+  repository-hygiene:
+    name: Documentation, privacy and link checks
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check for required documentation files
-        run: |
-          required_files=(
-            "README.md"
-            "CHANGELOG.md"
-            "AGENTS.md"
-            "docs/ROADMAP.md"
-            "docs/PROJECT_STATUS.md"
-            "docs/AGENT_HANDOFF.md"
-            "docs/DEVELOPMENT_LOG.md"
-            "docs/technical/IMPLEMENTATION_PLAN.md"
-            "docs/technical/LOCAL_FIRST_DEVELOPMENT.md"
-            "docs/data/DATASET_INTAKE_CHECKLIST.md"
-            "docs/data/SOURCE_REGISTER.md"
-            "docs/adr/README.md"
-          )
-          missing=0
-          for f in "${required_files[@]}"; do
-            if [ ! -f "$f" ]; then
-              echo "MISSING: $f"
-              missing=1
-            fi
-          done
-          if [ $missing -ne 0 ]; then
-            echo "Required documentation files are missing."
-            exit 1
-          fi
-          echo "All required documentation files present."
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-      - name: Check no secrets or private data committed
+      - name: Run repository hygiene checks
+        run: python scripts/check_repository_hygiene.py
+
+      - name: Verify the workflow file is syntactically valid YAML
         run: |
-          # Simple scan for patterns that should never be committed
-          if grep -r "pnr" --include="*.py" --include="*.ts" --include="*.json" -l 2>/dev/null | grep -v "test\|spec\|fixture\|__pycache__\|node_modules" | head -5; then
-            echo "Warning: PNR references found in non-test files — review for sensitive data"
-          fi
-          # Check no .env files committed (other than .env.example)
-          if find . -name ".env" -not -name ".env.example" -not -path "./.git/*" | grep -q .; then
-            echo "ERROR: .env file found — must not be committed"
-            exit 1
-          fi
-          echo "Secret/privacy scan passed."
+          pip install --quiet PyYAML==6.0.2
+          python -c "import yaml; yaml.safe_load(open('.github/workflows/ci.yml')); print('ci.yml parses')"

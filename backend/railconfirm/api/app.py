@@ -63,7 +63,7 @@ class RequestIdentityMiddleware(BaseHTTPMiddleware):
     """Attach an identifier to each request so a log line and an error response
     can be correlated without logging any request content."""
 
-    async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
+    async def dispatch(self, request: Request, call_next):
         incoming = request.headers.get(REQUEST_ID_HEADER, "")
         request.state.request_id = (
             incoming[:64] if incoming and incoming.isascii() and incoming.isprintable()
@@ -81,7 +81,7 @@ class RequestAccessLogMiddleware(BaseHTTPMiddleware):
     inputs: a status string is booking information.
     """
 
-    async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
+    async def dispatch(self, request: Request, call_next):
         started = time.perf_counter()
         try:
             response = await call_next(request)
@@ -123,7 +123,7 @@ class MaxBodySizeMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self.max_bytes = max_bytes
 
-    async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
+    async def dispatch(self, request: Request, call_next):
         header = request.headers.get("content-length")
         if header is not None:
             try:

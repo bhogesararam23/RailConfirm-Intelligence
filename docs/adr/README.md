@@ -53,3 +53,4 @@ How will the decision be tested or revisited? Record evidence, not assumptions.
 | [ADR-0007](ADR-0007-local-first-no-external-runtime-apis.md) | Local-first MVP without third-party runtime APIs in Phases 0–7 | Accepted |
 | [ADR-0008](ADR-0008-live-data-integrations-as-long-term-core-capability.md) | Authorized live integrations as a core long-term product capability in Phases 8–10 | Accepted; clarifies future scope while retaining ADR-0007's current-build boundary |
 | [ADR-0009](ADR-0009-artifact-trust-boundaries-and-unverified-status-codes.md) | JSON model artifacts with two-gate promotion, split abstention reasons, validated frequency tables, unverified status codes kept unknown | Accepted |
+| [ADR-0010](ADR-0010-declared-check-configurations-and-repository-hygiene-gate.md) | Lint and type-check rule sets declared in the repository, constrained tool ranges, and a hygiene gate that can actually fail | Accepted |
