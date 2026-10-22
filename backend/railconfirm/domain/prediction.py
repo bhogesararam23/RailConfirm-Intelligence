@@ -57,6 +57,13 @@ class AbstentionReason(str, Enum):
     state of the repository until a dataset clears docs/data/DATASET_INTAKE_CHECKLIST.md.
     """
 
+    MODEL_ARTIFACT_INVALID = "model_artifact_invalid"
+    """A model artifact is configured but failed validation and is not being used.
+
+    Reported instead of falling back silently, so a broken or mismatched artifact
+    stays visible rather than looking like "no model exists yet".
+    """
+
     UNSUPPORTED_STATUS = "unsupported_status"
     """The passenger status falls outside the supported inference domain."""
 

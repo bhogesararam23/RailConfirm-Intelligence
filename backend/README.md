@@ -109,14 +109,16 @@ Submit a journey and passenger status list for prediction.
 
 ### `GET /v1/health`
 
-Returns API health and model availability.
+Returns API health and the configured version identifiers. `model_available` is
+not reported: the registry resolves promotion state per request, and
+`model_version` equal to `no_model_v0` is the unavailable state.
 
 ```json
 {
   "status": "ok",
   "model_version": "no_model_v0",
   "data_version": "none",
-  "model_available": false
+  "app_version": "0.1.0"
 }
 ```
 
@@ -142,52 +144,79 @@ backend/
         schemas.py        — Request/response Pydantic models
     inference/
       engine.py           — Abstention-first dispatch
-      baseline.py         — Historical frequency baseline (requires approved data)
+      artifacts.py        — JSON model artifact format and validation
+      baseline.py         — Historical frequency baseline (requires approved provenance)
       group.py            — Group outcome computation
-      registry.py         — Model artifact registry
+      registry.py         — Model artifact resolution and promotion gate
     data/
       loader.py           — CSV/JSON local dataset loader
       validator.py        — Dataset schema validation
       manifest.py         — Dataset manifest handling
-      preprocessing.py    — As-of-time feature construction
+      preprocessing.py    — As-of-time feature construction and chronological splits
   tests/
-    domain/               — Status, journey, passenger, prediction, group tests
+    domain/               — Status, journey, passenger, prediction tests
+    inference/            — Baseline, group, registry and engine tests
     api/                  — Prediction and health endpoint tests
-    data/                 — Loader and validator tests
+    data/                 — Loader, validator and preprocessing tests
+    support/              — Shared synthetic artifact fixtures
     fixtures/             — Clearly labelled SYNTHETIC test fixtures only
 ```
 
 ## Configuration
 
-All configuration uses environment variables. Copy `.env.example` to `.env` for local development (`.env` is gitignored).
+All configuration uses environment variables with the `RAILCONFIRM_` prefix. Copy `.env.example` (repository root) to `.env` for local development; `.env` is gitignored. Every variable is optional — the defaults keep the application local-first and abstaining.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `RAILCONFIRM_MODEL_DIR` | `./models` | Directory for model artifact files |
-| `RAILCONFIRM_DATA_DIR` | `./data` | Directory for approved local datasets |
-| `RAILCONFIRM_LOG_LEVEL` | `INFO` | Logging level |
-| `RAILCONFIRM_CORS_ORIGINS` | `http://localhost:3000` | Allowed CORS origins (comma-separated) |
+| `RAILCONFIRM_HOST` | `127.0.0.1` | Uvicorn bind address for the development server |
+| `RAILCONFIRM_PORT` | `8000` | Uvicorn bind port |
+| `RAILCONFIRM_DEBUG` | `false` | Debug flag |
+| `RAILCONFIRM_DATA_DIR` | `data/processed` | Git-ignored directory for approved local datasets |
+| `RAILCONFIRM_MODELS_DIR` | `models` | Directory holding `models/<version>.json` artifacts |
+| `RAILCONFIRM_ACTIVE_MODEL_VERSION` | `no_model_v0` | The one promoted artifact version; `no_model_v0` serves nothing |
+| `RAILCONFIRM_MIN_SAMPLE_THRESHOLD` | `30` | Smallest cohort the baseline will report an estimate for |
+| `RAILCONFIRM_MAX_ARTIFACT_BYTES` | `4194304` | Largest artifact the registry will read |
+| `RAILCONFIRM_DATA_VERSION` | `none` | Dataset version reported by `/v1/health` |
+
+Relative paths are resolved against the repository root, not the current working directory, so the same artifact is loaded whichever way the server is started.
 
 **Never commit secrets, API keys, or PNR data.** The application works without any credentials.
 
+## Model artifacts
+
+The registry serves exactly one artifact: `models/<RAILCONFIRM_ACTIVE_MODEL_VERSION>.json`. Loading is restricted to JSON — no pickle, no object reconstruction — and the artifact must declare a format identifier, its target, its feature-schema and status-mapping versions, the outcome class order, the dataset id and SHA-256, an explicit approval status and a promotion value of `approved_for_local_use`.
+
+A file appearing in `models/` does not activate it. Resolution reports which gate is closed:
+
+| Status | Meaning | Abstention reason |
+|---|---|---|
+| `no_active_version` | Nothing is promoted | `no_trained_model` |
+| `artifact_missing` | Configured version has no file | `no_trained_model` |
+| `artifact_invalid` | File exists but failed validation | `model_artifact_invalid` |
+| `not_promoted` | Metadata does not declare approval for use | `no_trained_model` |
+| `data_not_approved` | Fitted from unapproved or synthetic data | `no_approved_data` |
+| `ready` | Serves estimates for the requested target | — |
+
 ## Status mapping
 
-Status codes are parsed by `railconfirm.domain.status.parse_status()` using mapping version `1.0.0`.
+Status codes are parsed by `railconfirm.domain.status.parse_status()` using mapping version `1.1.0`, and the version is stamped on every parsed record.
 
 Known codes: `CNF`, `RAC`, `RAC/N`, `GNWL/N`, `RLWL/N`, `PQWL/N`, `TQWL/N`, `RQWL/N`, `DPWL/N`, `WL/N`, `CAN`, `CANCELLED`, `CENSORED`.
 
-Unknown codes are returned as `UNKNOWN` — never silently mapped to WL. Add new codes only after authoritative verification.
+`CK` and `CKWL` resolve to `UNKNOWN`. Mapping 1.0.0 mapped them to the waitlist category on an unverified guess; see `docs/model/STATUS_GLOSSARY.md`.
+
+Unknown codes are never silently mapped to WL. Add a code only after authoritative verification, with a recorded source, examples, tests, and a mapping version bump.
 
 ## Data pipeline
 
 See `docs/data/DATASET_INTAKE_CHECKLIST.md` for the full intake process. Raw data files must not be committed to the repository.
 
 ```bash
-# Validate a local dataset file (once one is approved)
-python -m railconfirm.data.validator path/to/dataset.csv
+# from backend/, validate a local candidate dataset file
+python -m railconfirm.data.validator path/to/dataset.csv   # exits non-zero when unusable
 
-# Generate dataset manifest
-python -m railconfirm.data.manifest path/to/dataset.csv --output data/manifests/
+# generate a provenance manifest (path is positional, omit to print to stdout)
+python -m railconfirm.data.manifest path/to/dataset.csv path/to/manifest.yaml
 ```
 
 ## Limitations

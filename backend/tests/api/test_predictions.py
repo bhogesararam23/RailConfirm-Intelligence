@@ -20,21 +20,22 @@ def test_predict_manual_synthetic_booking(client: TestClient, synthetic_booking_
     assert data["evidence_coverage"] == "insufficient"
     assert len(data["passenger_outcomes"]) == 2
 
-    # No dataset has cleared the intake checklist, so the blocking reason is the
-    # missing evidence base rather than a missing trained model.
+    # Nothing is promoted in the registry, so the blocking gate is reported as a
+    # missing trained model and the registry status is spelled out in limitations.
     for outcome in data["passenger_outcomes"]:
         assert outcome["is_supported"] is False
-        assert outcome["abstention_reason"] == "no_approved_data"
+        assert outcome["abstention_reason"] == "no_trained_model"
         assert outcome["p_cnf"] is None
         assert outcome["basis"] is None
 
     # Group outcome must also abstain
     assert data["group_outcome"]["is_supported"] is False
-    assert data["group_outcome"]["abstention_reason"] == "no_approved_data"
+    assert data["group_outcome"]["abstention_reason"] == "no_trained_model"
 
-    # Limitations must clearly state no model is available
+    # Limitations must clearly state no model is available and why
     assert len(data["limitations"]) > 0
-    assert any("no trained" in text.lower() for text in data["limitations"])
+    assert any("no model version is configured" in text.lower() for text in data["limitations"])
+    assert any("no_active_version" in text for text in data["limitations"])
 
 
 def test_predict_manual_invalid_stations(client: TestClient):
