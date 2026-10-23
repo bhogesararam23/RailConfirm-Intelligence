@@ -1,46 +1,53 @@
 # Frontend interaction guide
 
-Status: behavior and UX contract for implementation.
+Status: behaviour and UX contract, with an implementation note on what `frontend/src/` does today.
 
 ## Page map
 
-Initial routes can remain simple:
-- / — explanation and manual prediction entry.
-- /prediction/[id] — saved/versioned prediction report using a random internal ID.
-- /tracking/[trackingId] — future route; keep unavailable until authorized tracking is enabled.
-- /about/methodology — target, data and uncertainty explanation.
-- /about/data — source and data-use boundaries.
+Implemented:
+
+- `/` — manual prediction entry and the report for that request.
+- `/about/methodology` — target, data and uncertainty explanation.
+- `/about/data` — source and data-use boundaries.
+
+Not implemented, deliberately:
+
+- `/prediction/[id]` — a saved, versioned report needs persistence, and nothing is
+  stored in the current build. Until a prediction outlives its request, a route that
+  looked it up would be decoration, so the report lives on `/` and disappears on reset.
+- `/tracking/[trackingId]` — belongs to roadmap Phases 8–10; must stay unavailable
+  until authorized tracking exists.
 
 Do not put PNRs or raw private source identifiers in browser paths or query strings.
 
 ## Input experience
 
-- Group journey fields separately from passenger rows.
-- Explain original status versus latest observed status.
-- Ask for an observation time where known; let the user mark it unknown rather than inventing one.
-- Keep raw status visible when normalization is uncertain.
-- Do not ask for a passenger name.
-- Allow adding/removing passengers and state group count clearly.
-- Use explicit examples tagged illustrative where examples are required.
-- Client validation improves usability but the server must validate again.
+- Group journey fields separately from passenger rows. **Implemented.**
+- Explain original status versus latest observed status. **Implemented.**
+- Ask for an observation time where known; let the user mark it unknown rather than inventing one. **Implemented** — the unknown checkbox is the default, because a fabricated timestamp is worse than a missing one.
+- Keep raw status visible when normalization is uncertain. **Implemented** — the badge shows the normalized category and the raw string together, and server parse notes surface as warnings.
+- Do not ask for a passenger name. **Implemented.**
+- Allow adding/removing passengers and state the group count clearly. **Implemented** — at the limit the control stays visible and disabled with the reason, rather than vanishing.
+- Use explicit examples tagged illustrative where examples are required. **Implemented** — the prefilled journey is labelled as an example.
+- Client validation improves usability but the server must validate again. **Implemented** — `lib/validation.ts` mirrors the server rules and server 422 field paths are mapped back onto the inputs.
+- A prediction moment and target are part of the request, so the form asks for both rather than assuming them. The observation and prediction timestamps are sent with the browser's UTC offset; the backend rejects naive timestamps.
 
 ## Result experience
 
-The page should distinguish:
-1. observed ticket status;
-2. model-estimated final outcome;
-3. group-level derived events;
-4. data freshness and limitations.
+The page distinguishes observed status, per-passenger estimate, group events, and
+data/limitation context. Rendering rules that are enforced by tests:
 
-Each number requires a clear label, probability interpretation, prediction timestamp and model/evidence status. Do not show a generic confidence score as if it were a calibrated outcome probability.
-
-Recommended report order:
-- supported / abstained state;
-- target moment and latest input timestamp;
-- passenger outcomes;
-- group outcomes, if supported;
-- main relevant inputs and explanation caveat;
-- model version, evidence coverage and limitations.
+- A null probability renders as an em dash, never as `0.0%`.
+- All five outcome classes appear in the distribution, so the legend matches the
+  server's declared outcome space.
+- The evidence cohort and its sample size are shown, and a broad-cohort fallback is
+  labelled as one.
+- Group numbers stay next to their independence assumption, and the three group
+  events are stated not to sum to 100%.
+- An unrecognised abstention reason says the interface is out of date instead of
+  borrowing another reason's text.
+- Provenance — target, as-of time, model version, registry state, feature schema —
+  is shown even when everything abstains, because that is when it matters most.
 
 ## Visual language
 
@@ -66,16 +73,23 @@ Avoid:
 - Confirmed when the model predicts a probability
 - Live when the source timestamp is unknown or stale
 - AI says as a substitute for showing evidence context
+- "No data leaves your environment" as an unqualified claim. The truthful statement
+  depends on where the configured backend is: the page says requests go to this
+  machine when the URL is loopback, and says they leave the device when it is not.
 
 ## Accessibility
 
 - Use semantic headings and form controls.
-- Associate labels with controls.
-- Keep keyboard navigation in logical order.
-- Announce validation and state changes to assistive technology.
+- Associate labels with controls; link field errors with `aria-describedby` and mark
+  the control `aria-invalid`.
+- Keep keyboard navigation in logical order, with a skip link to the main region.
+- Announce validation and state changes to assistive technology — one live region per
+  message, not a nested stack that repeats the same text.
+- Do not use `role="status"` on static content: it is a live announcement, and a
+  status label that never changes should not interrupt a screen reader on re-render.
 - Do not rely on hover as the only way to access information.
 - Use textual labels in addition to colors and icons.
 
 ## Analytics
 
-If product analytics are added, track only events needed to improve the user experience. Do not include PNRs, passenger names, exact route/ticket data or raw user input in analytics payloads by default. Record analytics and retention implications in the security/privacy review.
+No analytics are configured, and none should be added without a privacy review. If they are added later, track only events needed to improve the experience, and never include PNRs, passenger names, exact route or ticket data, or raw input. Record the retention implications in the security and privacy review.

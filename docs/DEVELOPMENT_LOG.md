@@ -341,3 +341,82 @@ appears anywhere in the repository.
 3. Dataset intake: find and review a real candidate; nothing has been approved.
 4. Training, evaluation and calibration pipelines: not implemented.
 5. Persistence and prediction history: not implemented; nothing is stored today.
+
+## 2026-10-23 — Frontend rebuilt against the real API contract
+
+### Scope
+
+The Milestone A audit found the frontend could not work end-to-end and reported
+defects that rendering tests alone had never caught. This session rebuilt it against
+the shipped backend contract and added the test layer that was missing.
+
+### What was wrong, and how it was confirmed
+
+The audit read `frontend/src/lib/types.ts` against
+`backend/railconfirm/api/v1/schemas.py` and found a declared `observed_status`
+object the backend never sends. The consequence was not cosmetic: the branch that
+would have displayed the passenger's ticket status was unreachable, so the page
+showed an estimate or an abstention without ever showing what was observed. The
+error type expected `{error, code, detail}` where the server sends
+`{error, details[], request_id}`, so a 422 produced one banner and no field was
+marked. `unsupported_quota` had no message entry and silently borrowed the "no
+trained model" text. `p_cancelled` was never rendered, so the stacked bar could not
+sum to 100% while its legend presented itself as the complete distribution.
+`((x || 0) * 100).toFixed(1)` rendered a deliberately absent probability as `0.0%`.
+No request had a timeout. `datetime-local` produced naive timestamps the backend now
+rejects.
+
+### Changes
+
+- `lib/types.ts` mirrors the backend schemas field for field, including `target`,
+  `registry_status`, `basis`, `passenger_count`, `outcome_classes` and the full
+  abstention reason union.
+- `lib/api.ts` attaches an `AbortController` timeout, classifies failures into
+  `validation` / `http` / `network` / `timeout`, parses the documented error envelope
+  into per-field messages, and reports the request id. A transport failure no longer
+  claims the backend is down: a blocked CORS preflight is indistinguishable from the
+  page, so the message names both possibilities.
+- `lib/validation.ts` mirrors the server rules, adds `hasUtcOffset` and
+  `toOffsetIso` so browser-local input is sent with a real offset, drops the invented
+  "limited to 2 years" rule the server does not implement, and maps server dotted
+  field paths back onto form keys.
+- Rendering: null-safe `formatProbability` (an em dash, never a fabricated zero), all
+  five outcome classes in the bar and legend, evidence cohort with sample size and
+  fallback labelling, group assumption always visible, provenance block shown even
+  when everything abstains.
+- Accessibility: `role="status"` removed from static badges, one announcement per
+  spinner, `aria-invalid`/`aria-describedby` on inputs, rows keyed by stable ids, the
+  add-passenger control kept visible and disabled at the limit with its reason, a skip
+  link and a labelled nav.
+- Privacy copy conditioned on the configured origin: the page names the address it
+  posts to and only claims "on this machine" for a loopback URL.
+- Vitest + Testing Library + jsdom configured; `npm test` added to the CI frontend job.
+
+### Checks run and results
+
+- `npm test` → **81 passed** across 4 files (validation, statusUtils, api, contract rendering).
+- `npm run type-check` → 0 errors. `npm run lint` → no warnings or errors.
+- `npm run build` → compiled, 6/6 static pages generated.
+- **Browser verification against both running servers** (`uvicorn` on `127.0.0.1:8000`,
+  `next dev` on `:3123`, backend CORS configured for that origin):
+  - abstaining state: `OPTIONS` preflight 200, `POST /v1/predictions/manual` 200, page
+    rendered "No estimate for this booking", reason code `no_trained_model`, both
+    observed statuses visible with their raw strings, provenance block showing
+    `no_model_v0` / `no_active_version` / `1.0.0`, and the registry limitation text.
+  - supported state: with a temporary synthetic artifact promoted via
+    `RAILCONFIRM_ACTIVE_MODEL_VERSION`, the same flow rendered 64.5% CNF, 19.1% RAC,
+    10.0% WL, 5.5% CANCELLED, 0.9% OTHER, the legend summing to 100%, the basis line
+    "Cohort SL / GN / WL — 105 historical records — exact status match", model version
+    `smoke_v0`, registry `ready`, and the artifact's own limitations including the
+    synthetic warning. The temporary artifact lived outside the repository and was
+    deleted; nothing claiming approved real data was left behind.
+- Two grammar defects were found only by looking at the rendered page
+  ("1 of 1 passengers have", "Group outcomes (1 passengers)") and are now fixed and
+  covered by tests.
+
+### Remaining work
+
+- No end-to-end browser test runs in CI; the flow above was verified by hand.
+- The contract tests compare against fixtures copied from the backend schemas rather
+  than against a running server, so a coordinated change to both sides can still pass.
+- `/prediction/[id]` stays unimplemented until persistence exists.

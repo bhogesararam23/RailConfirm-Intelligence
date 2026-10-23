@@ -29,8 +29,8 @@ Each row states which of these it is: **verified with real data**, **implemented
 | Temporal evaluation and metrics | **Planned, not implemented.** The splitter exists; nothing computes Brier, log loss or calibration | Chronological holdout evaluation with published split boundaries |
 | Calibration | **Planned, not implemented** | Calibration fitted on validation period, measured on locked test data |
 | Persistence, prediction history | **Planned, not implemented.** Nothing is stored; `docs/technical/STORAGE_MODEL.md` describes a design that does not exist yet | A privacy-safe local store with retention rules |
-| Manual-entry web flow | Implemented but **not verified end-to-end in a browser.** Its TypeScript types were written against an imagined response shape, so observed statuses are never displayed and abstention reasons can be mislabelled | A frontend whose types match the backend, exercised through the real API |
-| Frontend tests | **Planned, not implemented.** No test framework is configured | Contract and state tests running in CI |
+| Manual-entry web flow | Implemented, tested (81 frontend tests) and **verified end-to-end in a browser against both running servers** — abstaining and supported paths, CORS preflight, provenance and evidence rendering | A public deployment and real predictions to display |
+| Frontend tests | Implemented (Vitest + Testing Library): null-safety, abstention wording, error envelope, validation parity, contract rendering | Live cross-stack contract check against a running backend |
 | Tests and CI | Implemented and verified green on `main` (384 backend tests, 96% branch coverage, CI jobs observed passing on pushed commits) | Continuous |
 | External live integrations (Phases 8–10) | Planned core long-term capability; not implemented in the current build | Provider-specific ADR plus authorized access (ADR-0008) |
 | Production monitoring and deployment | Planned | A real deployment exists |

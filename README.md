@@ -4,7 +4,7 @@ An evidence-driven Indian Railways ticket confirmation probability predictor for
 
 RailConfirm is developed as both an open research project and a web application. The goal is not to produce a percentage that looks arbitrarily precise; the goal is to estimate meaningful probabilities, evaluate them against real outcomes, and be transparent about where the model does and does not have sufficient evidence.
 
-> **Current status:** A local-first application core exists and is tested — FastAPI backend, Next.js frontend, domain contracts, dataset intake pipeline and a validated model registry (384 backend tests, 96% branch coverage, CI green). **No prediction is produced yet and nothing has been validated against real railway data,** because no candidate dataset has cleared the intake checklist and no artifact is promoted. The system therefore returns a structured abstention (`no_trained_model`, `registry_status: no_active_version`) to every request, which is the intended behaviour rather than a placeholder. The frontend's types were written against an imagined response shape and are the main known gap; see `docs/PROJECT_STATUS.md`. External live data integrations remain planned core capabilities in roadmap Phases 8–10 (ADR-0008).
+> **Current status:** A local-first application core exists and is tested — FastAPI backend, Next.js frontend, domain contracts, dataset intake pipeline and a validated model registry (384 backend tests, 96% branch coverage, CI green). **No prediction is produced yet and nothing has been validated against real railway data,** because no candidate dataset has cleared the intake checklist and no artifact is promoted. The system therefore returns a structured abstention (`no_trained_model`, `registry_status: no_active_version`) to every request, which is the intended behaviour rather than a placeholder. The frontend is now written against the shipped contract, with 81 tests and a browser-verified end-to-end run of both the abstaining and supported paths; see `docs/PROJECT_STATUS.md`. External live data integrations remain planned core capabilities in roadmap Phases 8–10 (ADR-0008).
 
 ## Quickstart (Local Development)
 
@@ -85,7 +85,7 @@ python scripts/check_repository_hygiene.py                  # docs links, secret
   - Validator separating structural validity, technical eligibility and approval, with per-reason row accounting.
   - Deterministic SHA-256 manifests that follow `DATASET_MANIFEST_TEMPLATE.yaml`, plus verification that re-hashes and recounts the dataset.
   - Chronological splitting that reports an inability to evaluate rather than returning an empty test set.
-- **Web Interface (`frontend/`):** journey details, dynamic passenger rows (1–6), textual status indicators, evidence disclaimers. **Not yet matched to the API contract** — see the status note above.
+- **Web Interface (`frontend/`):** journey and target entry, dynamic passenger rows (1–6), observed and estimated status shown separately, null-safe probability rendering with all five outcome classes, evidence cohort and sample size, per-reason abstention text, provenance block, skip link and labelled controls.
 
 ## Principles
 
