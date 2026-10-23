@@ -67,9 +67,22 @@ Milestone A (audit and harden the implemented foundation) and the frontend rebui
 - **Approval cannot be manufactured by a script:** `status: approved` requires `decision.decision: approved` with `reviewed_by`, `reviewed_on` and a rationale, plus an approved licence review permitting model training; `licence_review_status: approved` is refused while training use is `unknown`; `privacy.contains_raw_pnr: permitted` is refused outright. The status vocabulary is closed, so `approved_for_training`, `metadata_only` and `synthetic_test_only` no longer parse.
 
 - `EligibilityThresholds` makes the intake minimums explicit and configurable; `SplitResult` publishes per-partition row counts, distinct dates, distinct bookings and boundaries; `FEATURE_SCHEMA_VERSION`/`FEATURE_COLUMNS` are now the shared feature definition training and inference must agree on.
+
+- **Baseline training pipeline (`backend/railconfirm/training/`, ADR-0011):** `dataset.py` is the only way training obtains data — the manifest must verify against the file it describes (hash, size, recounted rows), a named reviewer must have recorded an `approved` decision with a rationale, `licence_review_status` must be approved **and** `allowed_uses.model_training` must be `permitted`, and rows declaring `is_synthetic` are refused unless the caller opts in for pipeline testing, which marks the resulting artifact unservable. `fitter.py` counts cohorts from the training partition only, refuses an ineligible split, validates the fitted table through the same `normalize_frequency_table` gate inference uses, records the training window and exclusion counts, and always writes `promotion: "candidate"` — fitting activates nothing.
+
+- **Probability evaluation (`training/metrics.py`):** multiclass Brier and log loss for held-out rows, each compared with a prevalence baseline computed from the **training** period, plus `brier_skill`, coverage, abstention counts, per-class reliability bands with counts, and per-segment scores that carry their row counts and a `low_sample` flag. Abstained rows are excluded from the scores instead of being counted as wrong. Scoring uses the same `HistoricalFrequencyBaseline` object inference serves from, so a metric cannot describe a code path the product does not run.
+
+- **The target's own event is scored, not just the distribution (`TARGET_EVENTS`):** `final_chart_cnf` scores the confirmed mass against a 0/1 label and `final_chart_cnf_or_rac` scores confirmed-plus-RAC, each with its own binary Brier, log loss, prevalence baseline, skill and reliability bands. The report prints a verdict for both and adds an explicit line when they disagree about beating the base rate — which they do on the synthetic fixture (distribution 0.501038 against a 0.500000 baseline, CNF event 0.232664 against 0.250000), so quoting one number would have hidden the other result.
+
+- **Reproducible evaluation reports (`training/report.py`):** deterministic JSON — `--generated-on` is required and nothing reads the clock — publishing split boundaries, rows used and excluded per reason, the feature list with its availability statement, the dataset hash and approval state, metric definitions, segment counts and a limitations block that states when no calibration was fitted. Conclusions are derived from the measured verdicts rather than hand-written, `METRIC_KEYS` is derived from the scorecard's own fields, and a test fails if a published number lacks a definition or a definition describes nothing published.
+
+- **Training command line:** `python -m railconfirm.training fit|evaluate` with `--target` restricted to targets that have a defined event, target agreement checked against the artifact's declared target, and `Refused: …` on exit 1 for blocked data, ineligible splits and rejected artifacts instead of a traceback.
+
+- **`FrequencyTableProvenance.evaluation_only`:** a memory-only flag that lets synthetic cohorts be scored so the metrics code is actually exercised. It is not a field of `ModelArtifactMetadata`, so no stored artifact can carry it, and it does not override the approval requirement — tests assert both.
+
 ### Changed
 
-- Backend tests grew from 43 to 382 and branch coverage from 84% statements to 96% (statements and branches); CI now fails below 90%.
+- Backend tests grew from 43 to 461 and branch coverage from 84% statements to 95.78% (statements and branches); CI now fails below 90%. 74 of them cover the training, evaluation and reporting pipeline.
 
 - `.github/workflows/ci.yml` requests `permissions: contents: read`, cancels superseded runs on the same ref, and enforces `--cov-fail-under=90`.
 

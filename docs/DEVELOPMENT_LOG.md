@@ -420,3 +420,94 @@ rejects.
 - The contract tests compare against fixtures copied from the backend schemas rather
   than against a running server, so a coordinated change to both sides can still pass.
 - `/prediction/[id]` stays unimplemented until persistence exists.
+
+## 2026-10-23 — Baseline training and target-event evaluation implemented
+
+### Scope
+
+Milestones D and E of the engineering directive: turn the documented evaluation protocol
+into code that fits the historical-frequency baseline and scores held-out periods, without
+letting a synthetic result become a user-visible probability. Decided in ADR-0011.
+
+New: `backend/railconfirm/training/{__init__,__main__,dataset,fitter,metrics,report}.py`,
+`backend/tests/training/` (74 tests), `backend/tests/support/datasets.py`,
+`docs/adr/ADR-0011-…-target-event-evaluation.md`.
+Changed: `inference/baseline.py` (`evaluation_only` provenance flag), and the status page,
+evaluation protocol, backend README, changelog and ADR index.
+
+### What was built
+
+- **Fitting gate (`training/dataset.py`).** `load_approved_dataset` verifies the manifest
+  against the file (re-hash and recount), requires an `approved` decision with a named
+  reviewer, date and rationale, requires `licence_review_status: approved` **and**
+  `allowed_uses.model_training: permitted`, and refuses rows that declare `is_synthetic`
+  unless `allow_synthetic_for_testing` is passed. That opt-in copies the synthetic flag into
+  the artifact, which the registry then refuses to serve, so the whole fit → evaluate →
+  registry path is exercisable today with no route to a fabricated estimate.
+- **Fit (`training/fitter.py`).** Cohorts counted from the training partition only, split
+  must be eligible, the table validated through the same `normalize_frequency_table` gate
+  inference uses, exclusions counted per reason, and `promotion: "candidate"` always.
+- **Score (`training/metrics.py`).** Multiclass Brier and log loss against a
+  training-period prevalence baseline, with skill, coverage, abstentions, per-class
+  reliability bands, and segment scores carrying counts and `low_sample` flags. The
+  estimator is the inference object, so the metric describes the code path that serves.
+- **Target events (`TARGET_EVENTS`).** The product's headline number is the probability of
+  an event, so each partition is also scored as that event: CNF for `final_chart_cnf`,
+  CNF+RAC for `final_chart_cnf_or_rac`, with binary Brier, log loss, prevalence baseline,
+  skill and reliability bands. `evaluate --target` replaced a hardcoded
+  `final_chart_cnf`, and `--target` accepts only targets that have an event definition.
+- **Report (`training/report.py`).** Deterministic JSON, `--generated-on` mandatory,
+  conclusions derived from the measured verdicts, and `METRIC_KEYS` derived from the
+  scorecard's own fields so a published number cannot lack a definition.
+
+### The interesting result
+
+On the synthetic fixture the distribution verdict and the event verdict disagree:
+
+```
+Validation: Brier 0.501038 vs baseline 0.500000 · skill -0.002076 · coverage 100.0% (40/40 rows)
+            event 0.232664 vs baseline 0.250000 · skill 0.069343
+```
+
+The five-class score loses to the base rate while the CNF event narrowly beats it, because
+smoothing spreads mass onto classes that never occur. Reporting only one of those numbers
+would have flattered the configuration, so the report now prints both and adds: *"the
+distribution and the target event disagree about beating the base rate, so neither number
+alone describes this model."* Nothing here is evidence about railways — the fixture is
+synthetic — but it is evidence that the reporting catches this class of mistake.
+
+### Checks run and results
+
+- `python -m pytest tests/ -q --cov=railconfirm --cov-fail-under=90` → **461 passed**, total
+  branch-inclusive coverage **95.78%** (training package: `metrics.py` 99%, `report.py` 97%,
+  `__main__.py` 92%, `dataset.py` 95%, `fitter.py` 92%).
+- `python -m ruff check railconfirm/ tests/` → all checks passed. `python -m mypy` → no
+  issues in 35 source files.
+- `python scripts/check_repository_hygiene.py` → passed.
+- Real CLI runs in a temporary directory outside the repository
+  (`python -m railconfirm.training fit … --report …`, then `evaluate …`): fit used 160 of
+  160 training rows into 4 cohorts, wrote the candidate artifact, and printed the report
+  above. `evaluate --target final_chart_cnf_or_rac` on a `final_chart_cnf` artifact exits 1
+  with `Refused: Artifact is fitted for target 'final_chart_cnf_or_rac', not
+  'final_chart_cnf'. …`.
+- The fit → serve boundary was verified against the real registry using the fitted file:
+  as written it resolves `not_promoted` / `no_trained_model`; after an operator edits
+  `promotion` it resolves `data_not_approved` / `no_approved_data` because `is_synthetic` is
+  still true; only falsifying `is_synthetic` to false makes it `ready`. That last step is
+  forgery rather than a mistake, and it is why the artifact carries the dataset id and
+  SHA-256 — recorded as a consequence in ADR-0011.
+- Two defects my own code had before this session's tests: `_evaluate` hardcoded the target
+  so a merged-target artifact could never be scored, and `main()` did not catch
+  `ModelArtifactError`, so a rejected artifact would have raised a traceback instead of
+  exiting 1. Both fixed and covered.
+- Frontend checks were not re-run: no frontend file changed in this session.
+
+### Remaining work
+
+1. Intake a real candidate dataset (the only scientific blocker; everything below needs it).
+2. Rolling-origin evaluation across multiple cutoffs — the protocol describes it, the code
+   does a single cutoff.
+3. Calibration fitting and its measurement (`calibrated` is always false; the report says so).
+4. Dependence-aware group outcomes (ADR-0003) — the engine still uses the labelled
+   independence baseline.
+5. Persistence and prediction history (Milestone G), then `/prediction/[id]` in the frontend.

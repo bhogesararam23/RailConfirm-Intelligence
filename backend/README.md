@@ -277,6 +277,44 @@ manifest that claims `status: approved` without a named reviewer, a date and a
 rationale is rejected by the model, as is `licence_review_status: approved` while
 `allowed_uses.model_training` is still `unknown`.
 
+## Training and evaluation
+
+`python -m railconfirm.training` fits the historical-frequency baseline and scores it on
+a later period (ADR-0011). It reads a dataset only through the approval gate: the
+manifest must verify against the file, a named reviewer must have recorded an `approved`
+decision, the licence review must permit `model_training`, and rows that declare
+`is_synthetic` are refused.
+
+```bash
+# from backend/ — fit a candidate artifact and write a reproducible report
+python -m railconfirm.training fit data/processed/dataset.csv data/manifests/set.yaml \
+  --version baseline_v1 --out models/baseline_v1.json \
+  --report reports/baseline_v1.json --generated-on 2026-10-23 \
+  --min-sample-threshold 30 --laplace-alpha 1.0
+
+# score an existing artifact on held-out partitions
+python -m railconfirm.training evaluate data/processed/dataset.csv data/manifests/set.yaml \
+  --artifact models/baseline_v1.json --target final_chart_cnf
+```
+
+A successful `fit` writes `promotion: "candidate"`, so nothing starts serving; activation
+still needs `RAILCONFIRM_ACTIVE_MODEL_VERSION` and the artifact's own approval field
+(ADR-0009). Exit codes match the data commands: `0` success, `1` refused or unusable
+input, `2` usage error.
+
+- Every partition is scored twice — as a five-class distribution and as the target's own
+  event (`final_chart_cnf` is CNF; `final_chart_cnf_or_rac` is CNF or RAC) — against a
+  prevalence baseline computed from the **training** period only. When the two verdicts
+  disagree, the report says so instead of quoting the better one.
+- Rows the estimator abstains on are excluded from the scores and counted separately.
+- `--generated-on` is required for a report: output stamped by the clock cannot be
+  reproduced byte-for-byte.
+- `--allow-synthetic-for-testing` exists so the pipeline can be exercised. It marks the
+  artifact synthetic, which the registry refuses to serve, so a fixture can never become
+  a user-visible probability.
+- Rolling-origin evaluation and calibration fitting are not implemented. The report
+  states that no calibration was fitted whenever the artifact says so.
+
 ## Limitations
 
 - No trained prediction model is currently available. All inference requests return structured abstention.

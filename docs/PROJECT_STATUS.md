@@ -1,6 +1,6 @@
 # Project status and scope
 
-Last reviewed: 2026-10-23 (after the Milestone A foundation audit)
+Last reviewed: 2026-10-23 (after the foundation audit, the frontend rebuild and the training/evaluation pipeline)
 
 ## Status
 
@@ -25,9 +25,9 @@ Each row states which of these it is: **verified with real data**, **implemented
 | Group outcomes | Implemented and tested as an **independence baseline only**. It is not a validated model of correlated reservation outcomes | Joint/dependence-aware estimation once booking-level labels exist |
 | Dataset intake pipeline (`loader`, `validator`, `manifest`, CLI) | Implemented and tested | A real candidate file put through it |
 | Historical outcome dataset | **Blocked — none approved.** No candidate has passed the intake checklist | Provenance, licence, labels, privacy and quality reviewed by a named person |
-| Training pipeline | **Planned, not implemented.** No training module exists | Reproducible fit on approved training-period records only |
-| Temporal evaluation and metrics | **Planned, not implemented.** The splitter exists; nothing computes Brier, log loss or calibration | Chronological holdout evaluation with published split boundaries |
-| Calibration | **Planned, not implemented** | Calibration fitted on validation period, measured on locked test data |
+| Training pipeline | Implemented and tested against synthetic fixtures: eligibility gate, chronological split, cohort fitting, candidate artifact writing. **Never run on real data — there is none.** | A reproducible fit on an approved dataset |
+| Temporal evaluation and metrics | Implemented and tested against synthetic fixtures (ADR-0011): multiclass Brier, log loss, prevalence-baseline comparison with skill, **target-event scoring for both documented targets**, reliability bands, coverage/abstention accounting, per-segment counts with low-sample flags, deterministic JSON report. Rolling-origin evaluation is **not** implemented. | A scored run on approved real data |
+| Calibration | **Planned, not implemented.** Reports state explicitly that no calibration was fitted. | Calibration fitted on the validation period and measured on a locked test period |
 | Persistence, prediction history | **Planned, not implemented.** Nothing is stored; `docs/technical/STORAGE_MODEL.md` describes a design that does not exist yet | A privacy-safe local store with retention rules |
 | Manual-entry web flow | Implemented, tested (81 frontend tests) and **verified end-to-end in a browser against both running servers** — abstaining and supported paths, CORS preflight, provenance and evidence rendering | A public deployment and real predictions to display |
 | Frontend tests | Implemented (Vitest + Testing Library): null-safety, abstention wording, error envelope, validation parity, contract rendering | Live cross-stack contract check against a running backend |
@@ -41,10 +41,11 @@ Each row states which of these it is: **verified with real data**, **implemented
 - Passenger-level and group-level outcome schemas (`CNF`, `RAC`, `WL`, `CANCELLED`, `OTHER`).
 - Local dataset intake: CSV/JSON loading with explicit safety checks, row-contract validation with per-reason accounting, deterministic manifests and manifest verification.
 - Chronological splitting that reports inability to evaluate rather than faking one.
+- Baseline training and temporal evaluation (`backend/railconfirm/training/`, ADR-0011): an approval-gated dataset load, cohort fitting on the training partition only, candidate artifact writing, Brier/log-loss scoring against a prevalence baseline, the target's own event scored alongside the distribution, and a deterministic report that defines every number it publishes.
 - FastAPI backend with structured abstention, a documented error envelope, CORS, request bounds and privacy-aware access logging.
 - JSON model artifacts with validated metadata and explicit promotion.
 - Clearly labelled synthetic fixtures for deterministic tests (`backend/tests/fixtures/`).
-- A Next.js frontend that compiles, type-checks and lints.
+- A Next.js frontend written against the shipped API contract, with 81 tests.
 
 ## What the system does today
 

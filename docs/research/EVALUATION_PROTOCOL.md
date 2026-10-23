@@ -31,6 +31,19 @@ Record split dates and eligibility rules before model selection. If the time spa
 
 Every split result carries `PartitionSummary` counts — rows, distinct dates, distinct bookings and boundaries — which are what an evaluation report must publish alongside its metrics.
 
+### Implemented scoring
+
+`backend/railconfirm/training/` now performs the fitting and scoring this protocol describes, for the single-cutoff case:
+
+- **Gate before fitting.** `load_approved_dataset` verifies the manifest against the file (hash, size, recounted rows), requires an `approved` decision with a named reviewer and rationale, requires the licence review to permit `model_training`, and refuses rows that declare `is_synthetic` unless the caller opts in for pipeline testing.
+- **Fit.** Cohorts are counted from the training partition only; the artifact is written with `promotion: "candidate"`, so fitting never activates anything, and it records the dataset SHA-256, the target, the feature-schema and status-mapping versions and its own limitations.
+- **Score.** Multiclass Brier and log loss against a training-period prevalence baseline, with `brier_skill`, coverage and abstention counts reported separately. Abstained rows are excluded from the scores rather than counted as errors — a refused prediction is not a wrong probability. The target's own event is scored alongside the distribution: `final_chart_cnf` puts the confirmed mass against a 0/1 label, `final_chart_cnf_or_rac` sums the confirmed and RAC mass. Both partitions therefore publish a distribution verdict and an event verdict, and when the two disagree about beating the base rate the report says so instead of quoting the flattering one. On the synthetic fixture they do disagree: the distribution loses to the base rate (Brier 0.501038 vs 0.500000) while the CNF event narrowly beats it (0.232664 vs 0.250000).
+- **Report.** Deterministic JSON: same inputs and same `--generated-on` produce the same bytes. It publishes split boundaries, rows used and excluded per reason, the feature list with its availability statement, metric definitions, segment counts with low-sample flags, and a limitations block that states when no calibration was fitted. Every published scorecard field has a definition in the report, and a test fails if a metric is added without one.
+
+Fitting or scoring an artifact for a target it was not fitted for is refused rather than tolerated: `evaluate --target` is checked against the artifact's declared target, and `--target` accepts only the targets `TARGET_EVENTS` defines.
+
+Not implemented: rolling-origin evaluation across multiple cutoffs, calibration fitting, and any dependence-aware group model. No number produced by this code has come from approved real data.
+
 ## Baselines and candidates
 
 1. Historical-frequency baseline with smoothing and a documented fallback for sparse strata.

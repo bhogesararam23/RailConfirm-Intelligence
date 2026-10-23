@@ -68,6 +68,24 @@ cd ..
 python scripts/check_repository_hygiene.py                  # docs links, secrets, PNR-shaped data
 ```
 
+### 4. Fitting and evaluation
+
+```bash
+cd backend
+python -m railconfirm.training fit data/processed/dataset.csv data/manifests/set.yaml \
+  --version baseline_v1 --out ../models/baseline_v1.json \
+  --report ../reports/baseline_v1.json --generated-on 2026-10-23
+python -m railconfirm.training evaluate data/processed/dataset.csv data/manifests/set.yaml \
+  --artifact ../models/baseline_v1.json --target final_chart_cnf
+cd ..
+```
+
+Fitting reads only datasets whose manifest verifies against the file and whose approval
+record permits model training, and it always writes a `candidate` artifact — serving still
+needs an explicit promotion (ADR-0009, ADR-0011). Reports are byte-reproducible and score
+the target's own event as well as the full outcome distribution. No dataset in this
+repository is approved, so no fit has ever run on real data.
+
 ## Core Features Implemented
 
 - **Domain Model & Normalization (`backend/railconfirm/domain/`):**
@@ -80,6 +98,7 @@ python scripts/check_repository_hygiene.py                  # docs links, secret
   - Historical frequency baseline with Laplace smoothing, validated cohort tables and required provenance. It is not wired to any real dataset.
   - Multi-passenger group outcomes computed under an explicitly labelled independence assumption — a baseline, not a validated dependence model.
 - **Model Registry (`backend/railconfirm/inference/registry.py`):** JSON artifacts with metadata validation and two-gate promotion; a file appearing in `models/` activates nothing (ADR-0009).
+- **Training and Evaluation (`backend/railconfirm/training/`, ADR-0011):** approval-gated dataset loading, cohort fitting on the training partition only, multiclass Brier/log loss plus the target event's own score against a training-period prevalence baseline, abstention and low-sample accounting, and deterministic JSON reports that define every number they publish. Tested on synthetic fixtures; never run on approved real data, because none exists.
 - **Local Dataset Intake Pipeline (`backend/railconfirm/data/`):**
   - Loader with explicit CSV/JSON structure checks and a size bound.
   - Validator separating structural validity, technical eligibility and approval, with per-reason row accounting.

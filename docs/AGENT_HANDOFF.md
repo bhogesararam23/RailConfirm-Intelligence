@@ -14,9 +14,9 @@ Do not assume any of the following exist, because none do: an accuracy figure, a
 
 | Exists and is tested | Exists but is unverified against real data | Does not exist |
 |---|---|---|
-| Domain contracts, status mapping v1.1.0, temporal integrity rules, abstention reasons, API contract and error envelope, dataset loader/validator/manifest/verification, chronological splitting, artifact registry and promotion gate, CI | Historical-frequency baseline (never loaded with real data), group outcomes (independence baseline only), the frontend (types do not match the backend) | Training pipeline, evaluation metrics, calibration, persistence, prediction history, frontend tests, approved dataset, promoted artifact |
+| Domain contracts, status mapping v1.1.0, temporal integrity rules, abstention reasons, API contract and error envelope, dataset loader/validator/manifest/verification, chronological splitting, artifact registry and promotion gate, baseline fitting and target-event evaluation with deterministic reports, frontend written and tested against the shipped contract, CI | Historical-frequency baseline (never loaded with real data), the training and evaluation pipeline (never run on approved data), group outcomes (independence baseline only) | Calibration fitting, rolling-origin evaluation, dependence-aware group model, persistence, prediction history, approved dataset, promoted artifact |
 
-384 backend tests, 96% branch coverage, CI green on `main`.
+461 backend tests at 95.78% branch coverage, 74 of them on the training pipeline; 81 frontend tests. CI was green on `main` at the last recorded push — re-check rather than trust this line.
 
 ## Read first
 
@@ -26,7 +26,7 @@ Do not assume any of the following exist, because none do: an accuracy figure, a
 4. `docs/ROADMAP.md`
 5. `docs/architecture/API_CONTRACT.md` — matches the shipped surface
 6. `docs/data/DATA_CONTRACT.md` and `docs/data/DATASET_INTAKE_CHECKLIST.md`
-7. ADR index, especially ADR-0007 (local-first boundary), ADR-0008 (future integration phases), ADR-0009 (artifact trust boundaries) and ADR-0010 (declared check configurations)
+7. ADR index, especially ADR-0007 (local-first boundary), ADR-0008 (future integration phases), ADR-0009 (artifact trust boundaries), ADR-0010 (declared check configurations) and ADR-0011 (training gate and target-event scoring)
 8. `docs/research/EVALUATION_PROTOCOL.md` before writing any metric code
 
 ## Working here
@@ -38,9 +38,10 @@ pytest tests/ --cov=railconfirm --cov-fail-under=90
 ruff check railconfirm/ tests/
 mypy
 python -m railconfirm.data validate tests/fixtures/synthetic_dataset.csv   # exits 1: not eligible
+python -m railconfirm.training fit --help    # gated fitting; see ADR-0011
 cd ..
 python scripts/check_repository_hygiene.py
-cd frontend && npm ci && npm run type-check && npm run lint && npm run build
+cd frontend && npm ci && npm test && npm run type-check && npm run lint && npm run build
 ```
 
 Run the app locally: `uvicorn railconfirm.api.app:app --port 8000` from `backend/`, then
@@ -52,19 +53,22 @@ maintainer's machine, so pick a different frontend port and list that origin.
 
 In order, based on the actual repository:
 
-1. **Fix the frontend against the real API contract.** `frontend/src/lib/types.ts`
-   declares an `observed_status` object the backend never sends, so observed statuses
-   are never displayed. `(x || 0) * 100` renders a fabricated `0.0%` for a null
-   probability. `p_cancelled` is never rendered, so the probability bar cannot sum to
-   100%. The error shape does not match `{error, details[], request_id}`. Then add a
-   frontend test framework and contract tests.
-2. **Intake a real candidate dataset** — research, review licence and privacy, record
+1. **Intake a real candidate dataset** — research, review licence and privacy, record
    in `docs/data/SOURCE_REGISTER.md`, run `python -m railconfirm.data manifest`, and
-   have a named person record the decision. Nothing may be approved by a script.
-3. **Training and evaluation pipelines** (Milestones C and D) once step 2 yields an
-   approved dataset. The splitter, artifact format and promotion gate are ready; a
-   trainer must emit an artifact that declares its dataset SHA-256 and target.
-4. **Persistence** only when a real product behaviour needs it. Nothing is stored today.
+   have a named person record the decision. Nothing may be approved by a script. This
+   is the only scientific blocker: the trainer, the splitter, the artifact format and
+   the scorer all exist and are tested, but every number they produce today comes from
+   synthetic rows.
+2. **Fit and evaluate on that dataset** with `python -m railconfirm.training fit` /
+   `evaluate`, then decide promotion from the report instead of from the code.
+3. **Close the evaluation gaps** the protocol describes and the code does not:
+   rolling-origin evaluation across multiple cutoffs, and calibration fitted on the
+   validation period and measured on a locked test period. Reliability bands are a
+   description today; `calibrated` is always false and the report says so.
+4. **Dependence-aware group outcomes** (ADR-0003). The engine still multiplies under an
+   independence assumption and labels it; group-event metrics are not scored.
+5. **Persistence** only when a real product behaviour needs it. Nothing is stored today,
+   which is why `/prediction/[id]` is not implemented.
 
 ## Non-negotiable constraints
 

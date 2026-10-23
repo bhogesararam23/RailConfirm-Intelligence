@@ -74,14 +74,25 @@ class FrequencyTableProvenance:
     fitted_from: str | None = None
     fitted_to: str | None = None
     notes: str | None = None
+    evaluation_only: bool = False
+    """True when this table exists to exercise the pipeline, never to answer a user.
+
+    A synthetic cohort table can legitimately be scored against synthetic rows:
+    that is how the metrics code is checked. It can never produce a served
+    prediction, because a model artifact carries no such flag and the registry
+    rejects synthetic provenance outright.
+    """
 
     def approved_for_estimation(self) -> bool:
-        """Return True only for a real dataset explicitly approved for use.
+        """Return True when this table may produce estimates.
 
-        Synthetic fixtures can prove that the arithmetic works; they cannot
-        support a claim about railway behaviour, so they never satisfy this.
+        A real dataset explicitly approved for use qualifies. Synthetic rows
+        qualify only for an evaluation-only table, which exists solely to verify
+        the pipeline and is never reachable from the serving path.
         """
-        return self.approval_status == _APPROVED_STATUS and not self.is_synthetic
+        if self.approval_status != _APPROVED_STATUS:
+            return False
+        return not self.is_synthetic or self.evaluation_only
 
 
 FrequencyTable = Mapping[tuple[str, str, str], Mapping[str, int]]

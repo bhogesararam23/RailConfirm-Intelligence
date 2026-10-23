@@ -122,6 +122,47 @@ def test_unapproved_or_synthetic_provenance_never_produces_estimates(provenance_
     assert outcome.abstention_reason == AbstentionReason.NO_APPROVED_DATA
 
 
+def test_evaluation_only_flag_is_not_a_license_override():
+    """The offline-scoring escape hatch applies to synthetic data only.
+
+    An unapproved real dataset must stay blocked even with evaluation_only set, so
+    the flag cannot be used to talk past the approval gate.
+    """
+    baseline = loaded_baseline(
+        {("SL", "GN", "WL"): SL_WL_COUNTS},
+        provenance=approved_provenance(
+            approval_status="quarantined", is_synthetic=False, evaluation_only=True
+        ),
+    )
+    assert estimate(baseline).abstention_reason == AbstentionReason.NO_APPROVED_DATA
+
+
+def test_evaluation_only_permits_scoring_a_synthetic_table():
+    baseline = loaded_baseline(
+        {("SL", "GN", "WL"): SL_WL_COUNTS},
+        provenance=approved_provenance(
+            approval_status="approved", is_synthetic=True, evaluation_only=True
+        ),
+    )
+    assert estimate(baseline).is_supported()
+
+
+def test_model_artifact_metadata_cannot_carry_the_evaluation_flag():
+    """The serving path builds provenance from artifact metadata, which has no
+    evaluation_only field — so a stored artifact can never opt into it."""
+    from dataclasses import fields
+
+    from railconfirm.inference.artifacts import ModelArtifactMetadata
+
+    metadata_names = {field.name for field in fields(ModelArtifactMetadata)}
+    assert "evaluation_only" not in metadata_names
+
+    from railconfirm.inference.baseline import FrequencyTableProvenance
+
+    provenance_names = {field.name for field in fields(FrequencyTableProvenance)}
+    assert "evaluation_only" in provenance_names
+
+
 # ── Estimate paths ─────────────────────────────────────────────────────────────
 
 

@@ -1,0 +1,282 @@
+"""Training and evaluation command line.
+
+    python -m railconfirm.training fit      --dataset … --manifest … --out models/candidate_v1.json
+    python -m railconfirm.training evaluate --dataset … --manifest … --artifact …
+
+Exit codes: 0 success, 1 refused or failed, 2 usage error.
+
+A successful ``fit`` writes an artifact with ``promotion = "candidate"``. It does not
+serve anything: activation needs a human to set ``RAILCONFIRM_ACTIVE_MODEL_VERSION``
+and to change the artifact's own promotion field, and the registry refuses either
+without the other.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+from railconfirm.data.preprocessing import chronological_split
+from railconfirm.domain.exceptions import (
+    DatasetValidationError,
+    FrequencyTableValidationError,
+    ModelArtifactError,
+)
+from railconfirm.inference.artifacts import load_artifact
+from railconfirm.training.dataset import load_approved_dataset
+from railconfirm.training.fitter import (
+    fit_baseline,
+    fit_cohorts,
+    prevalence_distribution,
+    write_fitted_artifact,
+)
+from railconfirm.training.metrics import (
+    TARGET_EVENTS,
+    build_estimator,
+    evaluation_provenance,
+    score_partition,
+)
+from railconfirm.training.report import build_report, write_report
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="python -m railconfirm.training",
+        description="Reproducible baseline fitting and temporal evaluation.",
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    fit = subparsers.add_parser("fit", help="fit the baseline and write a candidate artifact")
+    _add_common(fit)
+    fit.add_argument("--version", required=True, help="artifact version identifier")
+    fit.add_argument(
+        "--target",
+        default="final_chart_cnf",
+        choices=sorted(TARGET_EVENTS),
+        help="target the artifact is fitted for; decides which event is scored",
+    )
+    fit.add_argument("--out", type=Path, required=True, help="artifact .json path")
+    fit.add_argument("--report", type=Path, default=None, help="write the evaluation report here")
+    fit.add_argument("--min-sample-threshold", type=int, default=30)
+    fit.add_argument("--laplace-alpha", type=float, default=1.0)
+    fit.add_argument("--notes", default=None)
+    fit.add_argument("--allow-synthetic-for-testing", action="store_true")
+
+    evaluate = subparsers.add_parser("evaluate", help="score an artifact on held-out partitions")
+    _add_common(evaluate)
+    evaluate.add_argument("--artifact", type=Path, required=True)
+    evaluate.add_argument(
+        "--target",
+        default="final_chart_cnf",
+        choices=sorted(TARGET_EVENTS),
+        help="target the artifact was fitted for; decides which event is scored",
+    )
+    evaluate.add_argument("--report", type=Path, default=None)
+    evaluate.add_argument("--allow-synthetic-for-testing", action="store_true")
+
+    return parser
+
+
+def _add_common(subparser: argparse.ArgumentParser) -> None:
+    subparser.add_argument("dataset", type=Path)
+    subparser.add_argument("manifest", type=Path)
+    subparser.add_argument("--train-frac", type=float, default=0.70)
+    subparser.add_argument("--val-frac", type=float, default=0.15)
+    subparser.add_argument(
+        "--gap-days",
+        type=int,
+        default=0,
+        help="minimum separation between the training period and the scored period",
+    )
+    subparser.add_argument(
+        "--generated-on",
+        default=None,
+        help="YYYY-MM-DD recorded in the report; required so output is reproducible",
+    )
+
+
+def _dataset(args: argparse.Namespace):
+    return load_approved_dataset(
+        args.dataset,
+        args.manifest,
+        allow_synthetic_for_testing=args.allow_synthetic_for_testing,
+    )
+
+
+def _split(args, frame):
+    return chronological_split(
+        frame,
+        train_frac=args.train_frac,
+        val_frac=args.val_frac,
+        gap_days=args.gap_days,
+    )
+
+
+def _fit(args: argparse.Namespace) -> int:
+    dataset = _dataset(args)
+    fitted = fit_baseline(
+        dataset,
+        version=args.version,
+        target=args.target,
+        train_frac=args.train_frac,
+        val_frac=args.val_frac,
+        gap_days=args.gap_days,
+        min_sample_threshold=args.min_sample_threshold,
+        laplace_alpha=args.laplace_alpha,
+        notes=args.notes,
+    )
+    written = write_fitted_artifact(fitted, args.out)
+    print(f"Wrote candidate artifact {written}")
+    print(f"Used {fitted.summary.rows_used} of {fitted.summary.rows_seen} training rows")
+    print(f"Cohorts: {len(fitted.cohorts)}")
+    print("Promotion is 'candidate': nothing is served until it is approved and activated.")
+
+    if args.report is not None:
+        provenance = evaluation_provenance(
+            dataset.dataset_id,
+            dataset.sha256,
+            fitted.metadata.source_reference,
+            fitted.metadata.data_approval_status,
+            is_synthetic=dataset.is_synthetic,
+            mapping_version=fitted.metadata.status_mapping_version,
+            fitted_from=fitted.metadata.trained_from,
+            fitted_to=fitted.metadata.trained_to,
+        )
+        estimator = build_estimator(
+            fitted.cohorts,
+            provenance,
+            min_sample_threshold=args.min_sample_threshold,
+            laplace_alpha=args.laplace_alpha,
+        )
+        validation = score_partition(
+            fitted.split.val,
+            estimator,
+            prevalence=fitted.prevalence,
+            partition="validation",
+            target=args.target,
+        )
+        test = score_partition(
+            fitted.split.test,
+            estimator,
+            prevalence=fitted.prevalence,
+            partition="test",
+            target=args.target,
+        )
+        report = build_report(
+            metadata=fitted.metadata,
+            dataset_id=dataset.dataset_id,
+            dataset_sha256=dataset.sha256,
+            dataset_rows=dataset.report.total_rows,
+            fit=fitted.summary,
+            split=fitted.split,
+            validation=validation,
+            test=test,
+            generated_on=_require_generated_on(args),
+        )
+        path = write_report(report, args.report)
+        print()
+        print(report.summary())
+        print(f"\nReport written to {path}")
+    return 0
+
+
+def _require_generated_on(args: argparse.Namespace) -> str:
+    if not args.generated_on:
+        raise DatasetValidationError(
+            "--generated-on YYYY-MM-DD is required for a report: a report stamped "
+            "with the clock cannot be reproduced byte-for-byte."
+        )
+    return args.generated_on
+
+
+def _evaluate(args: argparse.Namespace) -> int:
+    dataset = _dataset(args)
+    artifact = load_artifact(
+        args.artifact,
+        expected_version=args.artifact.stem,
+        expected_target=args.target,
+        max_bytes=4_194_304,
+    )
+    metadata = artifact.metadata
+    split = _split(args, dataset.frame)
+    if not split.eligible:
+        print("Cannot evaluate: the split is not eligible.", file=sys.stderr)
+        for reason in split.reasons:
+            print(f"  - {reason}", file=sys.stderr)
+        return 1
+
+    # Prevalence comes from the training partition, never from the scored one:
+    # a baseline fitted on the answer would flatter itself.
+    train_fit = fit_cohorts(split.train)
+    prevalence = prevalence_distribution(train_fit.label_distribution)
+
+    provenance = evaluation_provenance(
+        dataset.dataset_id,
+        dataset.sha256,
+        metadata.source_reference,
+        metadata.data_approval_status,
+        is_synthetic=dataset.is_synthetic,
+        mapping_version=metadata.status_mapping_version,
+        fitted_from=metadata.trained_from,
+        fitted_to=metadata.trained_to,
+    )
+    estimator = build_estimator(
+        artifact.cohorts,
+        provenance,
+        min_sample_threshold=metadata.min_sample_threshold,
+        laplace_alpha=metadata.laplace_alpha,
+    )
+
+    validation = score_partition(
+        split.val,
+        estimator,
+        prevalence=prevalence,
+        partition="validation",
+        target=args.target,
+    )
+    test = score_partition(
+        split.test, estimator, prevalence=prevalence, partition="test", target=args.target
+    )
+    print(
+        f"Artifact {metadata.version} · dataset {metadata.dataset_id} · "
+        f"target {args.target}\n"
+        f"  validation Brier {validation.brier} (baseline {validation.baseline_brier}), "
+        f"event Brier {validation.event_brier} (baseline {validation.event_baseline_brier})\n"
+        f"  test       Brier {test.brier} (baseline {test.baseline_brier}), "
+        f"event Brier {test.event_brier} (baseline {test.event_baseline_brier})"
+    )
+    if args.report is not None:
+        report = build_report(
+            metadata=metadata,
+            dataset_id=dataset.dataset_id,
+            dataset_sha256=dataset.sha256,
+            dataset_rows=dataset.report.total_rows,
+            fit=train_fit,
+            split=split,
+            validation=validation,
+            test=test,
+            generated_on=_require_generated_on(args),
+        )
+        path = write_report(report, args.report)
+        print()
+        print(report.summary())
+        print(f"\nReport written to {path}")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        return _fit(args) if args.command == "fit" else _evaluate(args)
+    except (
+        DatasetValidationError,
+        ModelArtifactError,
+        FrequencyTableValidationError,
+    ) as exc:
+        print(f"Refused: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
