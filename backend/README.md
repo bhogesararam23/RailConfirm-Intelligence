@@ -2,7 +2,7 @@
 
 Python backend implementing the domain model, prediction API, and local data pipeline.
 
-**Status:** Phase 1–2 implementation. No trained model is currently available; the inference engine returns structured abstention responses for all requests. This is expected behavior until an approved dataset passes the intake checklist.
+**Status:** Roadmap Phases 0–7 local-first core: domain contracts, dataset intake with an eligibility-enforced training gate, reproducible baseline fitting and temporal evaluation (single-split and rolling-origin), dependent group outcome distributions, optional logistic calibration, opt-in prediction history and a gated model registry. **No trained model is currently available to serve,** because no candidate dataset has cleared the intake checklist and nothing has been fitted on real railway data; the inference engine therefore returns structured abstention responses for all requests. This is expected behavior, not a placeholder.
 
 ## Prerequisites
 
@@ -184,7 +184,7 @@ backend/
   railconfirm/
     config.py             — Environment-variable configuration
     domain/
-      status.py           — Status normalization (versioned mapping v1.0.0)
+      status.py           — Status normalization (versioned mapping v1.1.0)
       journey.py          — Journey, class, and quota domain types
       passenger.py        — Passenger reservation and observation types
       prediction.py       — Prediction output, abstention, group semantics
@@ -198,24 +198,35 @@ backend/
         health.py         — GET /v1/health
         schemas.py        — Request/response Pydantic models
     storage/
-      predictions.py      — Opt-in SQLite history: retention, denied-key refusal
+      predictions.py      — Opt-in SQLite history: retention, denied-key refusal, list, delete
     inference/
       engine.py           — Abstention-first dispatch
       artifacts.py        — JSON model artifact format and validation
       baseline.py         — Historical frequency baseline (requires approved provenance)
-      group.py            — Group outcome computation
+      calibration.py      — Logistic correction applied identically in scoring and serving
+      group.py            — Poisson-binomial group distribution and queue-clearing bounds
       registry.py         — Model artifact resolution and promotion gate
     data/
       loader.py           — CSV/JSON local dataset loader
-      validator.py        — Dataset schema validation
+      validator.py        — Structural validity, eligibility and row filtering
       manifest.py         — Dataset manifest handling
-      preprocessing.py    — As-of-time feature construction and chronological splits
+      preprocessing.py    — As-of-time feature construction, chronological splits, origin windows
+    training/
+      dataset.py          — The gate: manifest-verified, approved, eligible, kept rows only
+      fitter.py           — Cohort fitting keyed by the as-of status
+      metrics.py          — Distribution and target-event scoring, group-event card
+      calibration.py      — Platt slope/intercept fitting with refusal conditions
+      origins.py          — Rolling-origin refit and per-cutoff scoring
+      report.py           — Byte-reproducible JSON evaluation reports
+      __main__.py         — `fit`, `evaluate` and `origins` commands
   tests/
     domain/               — Status, journey, passenger, prediction tests
-    inference/            — Baseline, group, registry and engine tests
-    api/                  — Prediction and health endpoint tests
-    data/                 — Loader, validator and preprocessing tests
-    support/              — Shared synthetic artifact fixtures
+    inference/            — Baseline, group, calibration, registry and engine tests
+    api/                  — Prediction, health and history endpoint tests
+    data/                 — Loader, validator, preprocessing and rolling-origin tests
+    storage/              — Opt-in history tests
+    training/             — Gate, fitter, metrics, calibration, cohort-parity and report tests
+    support/              — Shared synthetic artifact and dataset fixtures
     fixtures/             — Clearly labelled SYNTHETIC test fixtures only
 ```
 
@@ -244,7 +255,7 @@ Relative paths are resolved against the repository root, not the current working
 
 ## Model artifacts
 
-The registry serves exactly one artifact: `models/<RAILCONFIRM_ACTIVE_MODEL_VERSION>.json`. Loading is restricted to JSON — no pickle, no object reconstruction — and the artifact must declare a format identifier, its target, its feature-schema and status-mapping versions, the outcome class order, the dataset id and SHA-256, an explicit approval status and a promotion value of `approved_for_local_use`.
+The registry serves exactly one artifact: `models/<RAILCONFIRM_ACTIVE_MODEL_VERSION>.json`. Loading is restricted to JSON — no pickle, no object reconstruction — and the artifact must declare a format identifier, its target, its feature-schema and status-mapping versions, the outcome class order, the dataset id and SHA-256, an explicit approval status and a promotion value of `approved_for_local_use`. It must also declare which status rule its cohorts are keyed by (`cohort_semantics`, `asof_status_v1`) and which features the estimator actually reads (`features_used`); an artifact that declares either differently is refused at load rather than served under a mistaken assumption. A `calibrated: true` artifact must carry the calibration block that justifies the claim, and a block without the claim is refused too — half a fitted layer is not a layer (ADR-0017).
 
 A file appearing in `models/` does not activate it. Resolution reports which gate is closed:
 
@@ -329,6 +340,12 @@ python -m railconfirm.training evaluate data/processed/dataset.csv data/manifest
 python -m railconfirm.training origins data/processed/dataset.csv data/manifests/set.yaml \
   --min-train-dates 4 --horizon-dates 2 --step-dates 2 \
   --report reports/origins.json --generated-on 2026-10-23
+
+# fit the baseline and add a logistic calibration layer measured on the locked test
+python -m railconfirm.training fit data/processed/dataset.csv data/manifests/set.yaml \
+  --version baseline_v2 --out models/baseline_v2.json \
+  --report reports/baseline_v2.json --generated-on 2026-10-23 \
+  --calibrate --calibrate-min-rows 50
 ```
 
 A successful `fit` writes `promotion: "candidate"`, so nothing starts serving; activation
@@ -374,15 +391,38 @@ Eligibility thresholds were NOT met; fitted only because this is a labelled synt
   being averaged into a single flattering number. The method is
   `refit-per-origin, score-the-next-horizon`: it measures the fitting procedure over time,
   not one frozen artifact's decay.
-- Not implemented: calibration fitting, and scoring one *frozen* artifact against
-  successive horizons. The report states that no calibration was fitted whenever the
+- Calibration (`--calibrate`, ADR-0017) is a logistic rescaling of the target event's
+  log-odds — slope and intercept fitted by Newton–Raphson on the **validation** partition
+  only, never on the locked test and never on the training rows the cohort counts come from.
+  It needs at least `--calibrate-min-rows` (default 50) scored validation rows whose predicted
+  event probability lies strictly inside `(0, 1)` and whose labels are not one class. It
+  refuses rather than degrades: too few rows, a single label, one repeated predicted
+  probability, a prediction outside `[0, 1]` (a scoring bug), a singular Hessian from
+  perfectly separable evidence, non-convergence, or a negative slope.
+- The layer is embedded in the artifact only when it **strictly reduces validation event
+  Brier**. The locked test is scored both with and without it either way, and `fit` prints
+  `validation event Brier X -> Y; locked test A -> B (helped / did not help)`, so a
+  correction that helps in-sample and hurts out-of-sample is visible instead of buried.
+- `apply_calibration` rescales the target event's mass and redistributes the remainder
+  proportionally, so every distribution still sums to 1. Abstentions are returned untouched —
+  there is no probability to move, and rewriting the reason a row refused would hide it. The
+  evidence note gains the calibration identity, because a cohort label alone would no longer
+  describe the arithmetic that produced the number.
+- Reliability bands and every scorecard field are computed on the corrected probabilities, and
+  each scorecard records `calibration_applied`, so a reader cannot mistake a calibrated score
+  for the raw table's. Both report and artifact state that calibration was measured across the
+  population, not within a cohort subgroup.
+- Not implemented: scoring one *frozen* artifact against successive horizons (the `origins`
+  path refits the baseline at each cutoff and carries no calibration layer across them), and
+  subgroup calibration. The report states that no calibration was fitted whenever the
   artifact says so.
 
 ## Limitations
 
 - No trained prediction model is currently available. All inference requests return structured abstention.
 - No approved historical dataset has yet passed the intake checklist.
-- Group outcome estimates use an independence baseline (clearly labelled) as a placeholder until joint-model training is possible.
+- Group outcomes combine a Poisson-binomial distribution, which assumes passengers confirm independently of each other, with comonotonic queue-clearing bounds, which assume the opposite. Both are reported instead of one implied number, and neither has been evaluated against real multi-passenger bookings (ADR-0016).
+- Calibration exists as a mechanism fitted on labelled synthetic rows; no railway probability has ever been corrected with it, and the improvement it shows on those fixtures is a check that the arithmetic runs, not a result.
 - This local-first implementation has no third-party runtime API dependencies (ADR-0007).
 
 See `docs/PROJECT_STATUS.md` for the current implementation status.

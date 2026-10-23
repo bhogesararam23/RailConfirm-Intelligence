@@ -100,6 +100,19 @@ its result, so a table cannot be built from one column and queried from another.
 `cohort_key()` normalises the components at both ends; status categories are expected,
 not raw strings.
 
+### What a served probability has been through
+
+A frequency table is smoothed toward the base rate on purpose, which is honest about small samples and wrong about
+magnitude. When an artifact carries a calibration block (ADR-0017) the engine applies it
+before anything is reported: `apply_calibration` moves the target event's mass to its
+corrected value and rescales the rest proportionally, so no number is invented for a split
+that was never fitted. The same function is used by `score_partition`, which is why an
+evaluation number and a served number cannot drift into describing two different
+pipelines. The `basis` line gains `calibrated=platt_logistic_v1`, and the limitations carry
+the fitted partition, row count, period and both parameters, plus the statement that the
+within-event split is not separately calibrated. An abstention is never rescaled into a
+probability.
+
 The artifact carries the agreement in the open: `cohort_semantics` (`asof_status_v1`) and
 `features_used` (`class_code`, `quota_code`, `asof_normalized`). `load_artifact()` refuses
 any artifact whose declarations differ, so the mismatch is a deployment-visible rejection

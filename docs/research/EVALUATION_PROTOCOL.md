@@ -56,7 +56,7 @@ Reproduce it with `python -m railconfirm.training origins DATASET MANIFEST --min
 
 Fitting or scoring an artifact for a target it was not fitted for is refused rather than tolerated: `evaluate --target` is checked against the artifact's declared target, and `--target` accepts only the targets `TARGET_EVENTS` defines.
 
-Not implemented: calibration fitting, empirical copula/correlation group models fitted on real data (ADR-0016 implements Poisson-binomial convolution and sequential queue-clearing bounds, scored in `score_partition()`), and evaluation of one *frozen* artifact against successive horizons (the rolling-origin path refits at each cutoff). No number produced by this code has come from approved real data.
+Not implemented: empirical copula/correlation group models fitted on real data (ADR-0016 implements Poisson-binomial convolution and sequential queue-clearing bounds, scored in `score_partition()`), and evaluation of one *frozen* artifact against successive horizons (the rolling-origin path refits at each cutoff). No number produced by this code has come from approved real data.
 
 ## Baselines and candidates
 
@@ -95,6 +95,18 @@ Provide uncertainty intervals for metrics. Resampling should respect journey/boo
 ## Calibration
 
 Calibration may be fitted on validation data only. Evaluate the calibration layer on the locked test set. A stated 70% probability should correspond to an approximately 70% observed rate over a sufficiently large representative set, not merely a high ranking score.
+
+### Implemented calibration behaviour
+
+`python -m railconfirm.training fit --calibrate` (ADR-0017) fits `platt_logistic_v1` — logistic scaling of the target event's log-odds, two parameters from the validation rows in fixed order — and writes it into the artifact as a block naming the method, target, event classes, slope, intercept, fitted partition, row count and period.
+
+- The correction moves the **event mass only**. Classes inside the event keep their proportions, because nothing was fitted for them separately, and the artifact's limitations say so. A distribution already certain about the event is returned untouched.
+- It is embedded only if it strictly reduces the event Brier **on validation**; otherwise the run refuses and writes nothing. The report always states the locked-test movement as well, phrased whichever way it goes.
+- `score_partition(..., calibration=…)` and the inference engine call the same `apply_calibration`, so a measured score and a served number cannot come from different arithmetic. A served `basis` gains `calibrated=platt_logistic_v1`.
+- Fitting refuses evidence it cannot use: fewer than `--calibrate-min-rows` scored rows (default 50), one label only, no spread in the predicted probability, certainty rows dropping the usable count below the floor, or perfectly separable rows whose maximum-likelihood slope runs away.
+- Subgroup calibration is not measured. Reliability bands stay a description, and every calibrated report carries a limitation saying that per-class, per-quota and per-status calibration are untested.
+- `artifact_format` stays `/2`: the block is optional and its absence has exactly one meaning, so no previously accepted artifact changes meaning.
+- An artifact that carries the layer stops describing itself as "not a trained or calibrated model". The limitation list is what a reader sees on a served report, and a surviving base sentence would deny the line printed beneath it; the replacement still says the numbers are smoothed cohort counts, because a fitted slope does not make them a trained model.
 
 Calibration quality must also be examined by meaningful subgroups where sample sizes permit. Do not claim strong calibration in a subgroup without evidence.
 

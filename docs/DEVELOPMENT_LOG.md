@@ -1050,3 +1050,142 @@ Changed: `backend/railconfirm/api/v1/predictions.py`,
 `docs/PROJECT_STATUS.md`,
 `docs/AGENT_HANDOFF.md`.
 
+## 2026-10-24 — Logistic calibration that has to earn its place, and the sentence it contradicted
+
+### Scope
+Closed the calibration gap the handoff listed under "does not exist": a probability could be
+counted and smoothed but never corrected, and an artifact could claim `calibrated: true` with
+nothing behind the claim. Decided in ADR-0017. Synthetic fixtures only — no approved dataset
+exists, so nothing here is a railway result.
+
+### Reproduced before changing anything
+- A successful calibrated `fit` printed `Smoothed historical frequencies, not a trained or
+  calibrated model.` **and** `Probabilities are calibrated — platt_logistic_v1 ...` in the same
+  limitations block. Found by reading the live output, not by a test.
+- The calibration summary line used `→`. On this machine's Windows console a finished `fit` raised
+  `UnicodeEncodeError` **after** writing the artifact, and pytest never saw it because it captures
+  its own stream instead of the console the CLI writes to.
+
+### Implemented
+- `backend/railconfirm/inference/calibration.py` — `CalibrationSpec`, `logit`/`sigmoid` and
+  `apply_calibration`, which rescales the target event's mass and redistributes the remainder
+  proportionally so every distribution still sums to 1. Certainties and abstentions pass through
+  unchanged.
+- `backend/railconfirm/training/calibration.py` — `fit_platt` (Newton–Raphson on the validation
+  rows, 100 iterations, tolerance 1e-10) refusing too few rows, one label, no spread in the
+  predictions, certainties dropping the usable count below the floor, a prediction outside
+  `[0, 1]`, a singular Hessian from separable evidence, non-convergence and a negative slope; plus
+  `fit_and_measure`, which embeds only on a strict validation improvement and always reports the
+  locked-test movement.
+- `training/metrics.py` — `score_rows`/`score_partition` take `calibration=` and record
+  `calibration_applied`, so evaluation scores the arithmetic serving uses.
+- `training/fitter.py` — `with_calibration` attaches the spec and **replaces** the uncalibrated
+  limitation sentence with `CALIBRATED_LIMITATION`, which still says the numbers are cohort counts.
+- `inference/artifacts.py` — `metadata_from_mapping` refuses a bare `calibrated: true`, a block on
+  an uncalibrated artifact, a method or target disagreement, a negative or non-finite slope and a
+  partial block. `artifact_format` stays `/2`, because the block is optional and its absence has
+  exactly one meaning.
+- `inference/engine.py` — serves through the same `apply_calibration`; `basis` gains
+  `calibrated=platt_logistic_v1`, and the limitations branch follows the block that actually loaded.
+- `training/__main__.py` — `fit --calibrate [--calibrate-min-rows N]` prints
+  `validation event Brier X -> Y; locked test A -> B (helped / did not help)`; `evaluate` prints
+  `calibration applied (platt_logistic_v1)` or `uncalibrated`. ASCII arrows throughout.
+
+### Live runs (labelled synthetic fixtures written to the OS temp directory; nothing committed)
+
+```
+$ python -m railconfirm.training fit synthetic-balanced.csv synthetic-balanced-fixture.yaml \
+    --version cal_v1 --out cal_v1.json --report cal_v1-report.json \
+    --generated-on 2026-10-24 --calibrate --calibrate-min-rows 10 --allow-synthetic-for-testing
+Validation kept 240 of 240 rows (no rejections).
+Calibration: platt_logistic_v1 on final_chart_cnf (CNF) from 40 validation rows
+  (2026-04-09..2026-04-10): slope 3.124728, intercept 1.016226
+  validation event Brier 0.240085 -> 0.239898; locked test 0.23996 -> 0.239487 (helped)
+exit 0
+
+$ python -m railconfirm.training evaluate synthetic-balanced.csv \
+    synthetic-balanced-fixture.yaml --artifact cal_v1.json --target final_chart_cnf \
+    --allow-synthetic-for-testing
+Artifact cal_v1 · dataset synthetic-balanced-fixture · target final_chart_cnf ·
+  calibration applied (platt_logistic_v1)
+  validation Brier 0.481401 (baseline 0.48), event Brier 0.239898 (baseline 0.24)
+  test       Brier 0.480359 (baseline 0.48), event Brier 0.239487 (baseline 0.24)
+exit 0
+
+$ python -m railconfirm.training fit ... --calibrate --allow-synthetic-for-testing   # default floor
+Refused: Cannot fit calibration on 40 validation rows: at least 50 are needed before a
+slope and an intercept mean anything. Widen the validation period or leave the artifact
+uncalibrated.
+exit 1, and no artifact written
+
+$ python -m railconfirm.training fit <900-row fixture> ... --calibrate
+Refused: The fitted slope is negative (-13.829494): on the validation rows the event becomes
+less frequent as the predicted probability rises. That is noise being fitted, not a
+calibration layer, so no correction is written.
+exit 1
+```
+
+The two refusals carry the weight: the same code that embeds a correction on one window refuses a
+larger window whose validation labels happen to run against the slope. The improvement it did
+accept is 0.000187 on validation and 0.000473 on the locked test — a mechanism check on synthetic
+rows, not evidence about railways.
+
+Registry gates on the fitted file, called directly:
+
+```
+ModelRegistry(models_dir=…, active_version='cal_v1').resolve(FINAL_CHART_CNF)
+  -> not_promoted / no_trained_model      (promotion 'candidate')
+after editing promotion to 'approved_for_local_use':
+  -> data_not_approved / no_approved_data
+     "Artifact cal_v1 was fitted from dataset 'synthetic-balanced-fixture'
+      (approval='approved', synthetic=True); it may not serve estimates."
+```
+
+A synthetic calibrated artifact therefore stays unservable, and it is the synthetic-provenance
+check — not only the candidate flag — that stops it.
+
+Intake gate re-checked on the repository fixture:
+
+```
+$ python -m railconfirm.data validate tests/fixtures/synthetic_dataset.csv     # exit 1
+  - Only 6 rows, below the provisional minimum of 200.
+  - Only 6 usable rows, below the provisional minimum of 100.
+  - 6 distinct labelled reservations; at least 40 are needed to evaluate a
+    probability rather than count a table.
+```
+
+### Checks run and results
+- `python -m pytest tests/ -q --cov=railconfirm --cov-fail-under=90` → **728 passed** in 173.58s,
+  total coverage **96.32%** (exit 0).
+- `ruff check railconfirm/ tests/` → **All checks passed!**
+- `mypy` → **Success: no issues found in 41 source files**
+- `npm test -- --run` → **115 passed** across 6 test files (exit 0).
+- `npm run type-check` → clean; `npm run lint` → **No ESLint warnings or errors**.
+- `npm run build` → compiled successfully; `/`, `/about/data`, `/about/methodology`, `/history`
+  and `/prediction/[id]` all generated.
+- `python scripts/check_repository_hygiene.py` → **passed** (22 required files, 214 tracked files).
+- A serving probe earlier in this work ran `uvicorn` on port 8043 against a temporarily promoted
+  copy of the calibrated artifact and returned `p_cnf 0.391304348` where the raw table gives
+  `0.385416667`, with the basis naming `calibrated=platt_logistic_v1`. Scratch fixtures, the probe
+  artifact and its models directory were deleted; nothing was added under `data/` or `models/`.
+
+### Files
+New: `backend/railconfirm/inference/calibration.py`, `backend/railconfirm/training/calibration.py`,
+`backend/tests/inference/test_calibration.py` (28 tests),
+`backend/tests/training/test_calibration.py` (40 tests),
+`docs/adr/ADR-0017-logistic-calibration-fitted-on-validation-and-measured-on-the-locked-test.md`.
+Changed: `backend/railconfirm/domain/prediction.py`, `inference/artifacts.py`, `inference/engine.py`,
+`training/fitter.py`, `training/metrics.py`, `training/report.py`, `training/__main__.py`,
+`backend/tests/inference/test_engine_artifact.py`, `backend/tests/inference/test_registry.py`,
+`backend/tests/support/datasets.py`, `README.md`, `backend/README.md`, `CHANGELOG.md`,
+`docs/PROJECT_STATUS.md`, `docs/AGENT_HANDOFF.md`, `docs/adr/README.md`,
+`docs/architecture/API_CONTRACT.md`, `docs/research/EVALUATION_PROTOCOL.md`,
+`docs/technical/INFERENCE_AND_GROUP_PROBABILITIES.md`.
+
+### Unresolved
+- The dataset blocker is unchanged and was never a code problem: no candidate carries both a
+  reservation's booked status and its verified final-chart outcome under training permission, so
+  every number this pipeline produces still comes from synthetic rows.
+- Calibration is fitted on one window and is not carried across rolling origins; subgroup
+  calibration is not measured; and no frozen artifact has been scored against successive horizons.
+

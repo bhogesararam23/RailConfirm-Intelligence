@@ -4,7 +4,7 @@ An evidence-driven Indian Railways ticket confirmation probability predictor for
 
 RailConfirm is developed as both an open research project and a web application. The goal is not to produce a percentage that looks arbitrarily precise; the goal is to estimate meaningful probabilities, evaluate them against real outcomes, and be transparent about where the model does and does not have sufficient evidence.
 
-> **Current status:** A local-first application core exists and is tested — FastAPI backend, Next.js frontend, domain contracts, dataset intake pipeline and a validated model registry (384 backend tests, 96% branch coverage, CI green). **No prediction is produced yet and nothing has been validated against real railway data,** because no candidate dataset has cleared the intake checklist and no artifact is promoted. The system therefore returns a structured abstention (`no_trained_model`, `registry_status: no_active_version`) to every request, which is the intended behaviour rather than a placeholder. The frontend is now written against the shipped contract, with 81 tests and a browser-verified end-to-end run of both the abstaining and supported paths; see `docs/PROJECT_STATUS.md`. External live data integrations remain planned core capabilities in roadmap Phases 8–10 (ADR-0008).
+> **Current status:** A local-first application core exists and is tested — FastAPI backend, Next.js frontend, domain contracts, a dataset intake pipeline whose training gate enforces **technical eligibility** and passes on only validated rows, reproducible baseline fitting with target-event scoring and **rolling-origin evaluation across cutoffs**, dependent group outcome distributions with queue-clearing bounds, an opt-in logistic **calibration** layer measured on a locked test, a validated model registry, and opt-in prediction history (728 backend tests, 96.3% branch coverage, CI green). **No prediction is produced yet and nothing has been validated against real railway data,** because no candidate dataset has cleared the intake checklist and no artifact is promoted. The system therefore returns a structured abstention (`no_trained_model`, `registry_status: no_active_version`) to every request, which is the intended behaviour rather than a placeholder. The frontend is written against the shipped contract, with 115 tests, and both the abstaining and supported paths have been exercised against a locally running backend; see `docs/PROJECT_STATUS.md`. External live data integrations remain planned core capabilities in roadmap Phases 8–10 (ADR-0008).
 
 ## Quickstart (Local Development)
 
@@ -25,7 +25,7 @@ source .venv/bin/activate       # On Linux/macOS
 
 pip install -e ".[dev]"
 
-# Test suite (384 tests, no live API dependencies) with coverage floor
+# Test suite (728 tests, no live API dependencies) with coverage floor
 pytest tests/ --cov=railconfirm --cov-fail-under=90
 
 # Lint and type-check, both configured in pyproject.toml
@@ -75,16 +75,23 @@ cd backend
 python -m railconfirm.training fit data/processed/dataset.csv data/manifests/set.yaml \
   --version baseline_v1 --out ../models/baseline_v1.json \
   --report ../reports/baseline_v1.json --generated-on 2026-10-23
+python -m railconfirm.training fit data/processed/dataset.csv data/manifests/set.yaml \
+  --version baseline_v2 --out ../models/baseline_v2.json \
+  --report ../reports/baseline_v2.json --generated-on 2026-10-23 --calibrate
 python -m railconfirm.training evaluate data/processed/dataset.csv data/manifests/set.yaml \
   --artifact ../models/baseline_v1.json --target final_chart_cnf
+python -m railconfirm.training origins data/processed/dataset.csv data/manifests/set.yaml \
+  --report ../reports/origins.json --generated-on 2026-10-23  # refit per cutoff, score the horizon after it
 cd ..
 ```
 
 Fitting reads only datasets whose manifest verifies against the file and whose approval
 record permits model training, and it always writes a `candidate` artifact — serving still
 needs an explicit promotion (ADR-0009, ADR-0011). Reports are byte-reproducible and score
-the target's own event as well as the full outcome distribution. No dataset in this
-repository is approved, so no fit has ever run on real data.
+the target's own event as well as the full outcome distribution. `--calibrate` fits a
+logistic correction on the validation partition only, embeds it only when it strictly
+improves validation event Brier, and reports the locked-test effect whichever way it goes
+(ADR-0017). No dataset in this repository is approved, so no fit has ever run on real data.
 
 ## Core Features Implemented
 
@@ -96,9 +103,10 @@ repository is approved, so no fit has ever run on real data.
 - **Prediction Engine & Group Baselines (`backend/railconfirm/inference/`):**
   - Abstention-first engine with reason codes that name the closed gate (`no_trained_model`, `model_artifact_invalid`, `no_approved_data`, `unknown_status`, `unsupported_status`, `insufficient_sample`).
   - Historical frequency baseline with Laplace smoothing, validated cohort tables keyed by `(class, quota, as-of status)` and required provenance. It is not wired to any real dataset.
-  - Multi-passenger group outcomes computed under an explicitly labelled independence assumption — a baseline, not a validated dependence model.
-- **Model Registry (`backend/railconfirm/inference/registry.py`):** JSON artifacts (`/2`) with metadata validation and two-gate promotion; a file appearing in `models/` activates nothing, and an artifact whose declared cohort-status rule or consumed-feature list differs from what this build serves is refused at load (ADR-0009, ADR-0013).
-- **Training and Evaluation (`backend/railconfirm/training/`, ADR-0011, ADR-0013, ADR-0014):** a dataset gate that enforces technical eligibility and passes on only the rows validation kept, cohort fitting on the training partition keyed by the single as-of status rule that scoring and serving also use, multiclass Brier/log loss plus the target event's own score against a prevalence baseline drawn from each run's own training period, abstention and low-sample accounting, **rolling-origin evaluation that refits at every cutoff and refuses when the calendar cannot support two**, and deterministic JSON reports that define every number they publish and state which features the estimator actually reads. Tested on synthetic fixtures; never run on approved real data, because none exists.
+  - Multi-passenger group outcomes reported as two honest extremes rather than one implied number: a Poisson-binomial distribution over how many confirm (independent members) and comonotonic queue-clearing bounds (perfectly dependent members). Group-event Brier scores are in the evaluation report. Neither is validated on real multi-passenger data, and independence is never silently multiplied into a claim (ADR-0016).
+  - Optional logistic calibration layer applied to the target event's log-odds before a probability is served, using the same function the evaluator scores with, so the measured number and the served number come from one arithmetic path (ADR-0017).
+- **Model Registry (`backend/railconfirm/inference/registry.py`):** JSON artifacts (`/2`) with metadata validation and two-gate promotion; a file appearing in `models/` activates nothing, and an artifact whose declared cohort-status rule or consumed-feature list differs from what this build serves — or whose `calibrated` flag and calibration block disagree — is refused at load (ADR-0009, ADR-0013, ADR-0017).
+- **Training and Evaluation (`backend/railconfirm/training/`, ADR-0011, ADR-0013, ADR-0014, ADR-0017):** a dataset gate that enforces technical eligibility and passes on only the rows validation kept, cohort fitting on the training partition keyed by the single as-of status rule that scoring and serving also use, multiclass Brier/log loss plus the target event's own score against a prevalence baseline drawn from each run's own training period, abstention and low-sample accounting, **rolling-origin evaluation that refits at every cutoff and refuses when the calendar cannot support two**, an opt-in logistic calibration layer that is fitted on validation, embedded only when it strictly improves validation event Brier, and reported on the locked test either way, and deterministic JSON reports that define every number they publish and state which features the estimator actually reads. Tested on synthetic fixtures; never run on approved real data, because none exists.
 - **Local Dataset Intake Pipeline (`backend/railconfirm/data/`):**
   - Loader with explicit CSV/JSON structure checks and a size bound.
   - Validator separating structural validity, technical eligibility and approval, with per-reason row accounting.
