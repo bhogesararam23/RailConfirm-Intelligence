@@ -111,9 +111,23 @@ Required columns:
 | `final_chart_status` | Raw outcome label; must map to a verified category and must not be `CENSORED` |
 | `observation_date` | ISO `YYYY-MM-DD`, must not be later than `journey_date` |
 
-Optional columns, recognised when present and reported when absent because their absence limits what can be checked: `booking_group_id` (without it, group-level and dependence-aware evaluation is impossible), `passenger_record_id` (distinguishes passengers sharing a booking so their differing outcomes are not read as contradictions), `current_status`, `source_id`, `verification_method` (without it, label quality cannot be assessed), `censoring_reason`, `is_synthetic`.
+Optional columns, recognised when present and reported when absent because their absence limits what can be checked: `booking_group_id` (without it, group-level and dependence-aware evaluation is impossible), `passenger_record_id` (distinguishes passengers sharing a booking so their differing outcomes are not read as contradictions), `current_status` (the source's later look; it defines the as-of status, see below), `source_id`, `verification_method` (without it, label quality cannot be assessed), `censoring_reason`, `is_synthetic`.
 
 A value is missing if pandas reports it null **or** it is a placeholder token (`NA`, `N/A`, `nan`, `none`, `null`, `nil`, `-`, `--`, `<NA>`, `NaT`, empty). `str(pd.NA)` renders `"<NA>"`, which an earlier version of this validator treated as a populated field.
+
+### The as-of status
+
+`railconfirm.data.preprocessing.asof_statuses()` defines, in one place, the status a row
+describes: **`current_status` when the source recorded one, otherwise `initial_status`.**
+A blank `current_status` means no later look existed — it does not make the status
+unknown — while a value the status mapping cannot read stays `UNKNOWN` and abstains
+rather than quietly falling back.
+
+This single rule is what cohort tables are keyed by, what held-out rows are scored
+against, and what the served request supplies through its `StatusObservation`. The
+served path's "latest observation at or before the prediction timestamp" and this
+column's `current_status` are the same quantity in two carriers; if they ever disagree,
+the artifact is refused at load rather than reinterpreted (ADR-0013).
 
 ### Rejection reasons
 
@@ -134,6 +148,17 @@ Every excluded row is counted under one of: `missing_required_columns`, `missing
 The intake minimums in `EligibilityThresholds` are engineering guardrails, not scientific requirements: clearing them means there is enough material to *attempt* an evaluation. They must be re-justified against each prediction target before training, and `docs/research/EVALUATION_PROTOCOL.md` is where a target's real requirements are argued.
 
 A report is not a green light: one valid row out of five hundred is `structurally_valid` and emphatically not eligible, and `python -m railconfirm.data.validator <file>` exits non-zero unless the file is technically eligible.
+
+**The gate and the data are decided together.** `assess_dataset()` returns the report
+*and* the frame restricted to rows that survived every row-level check;
+`validate_dataset()` is the report-only wrapper. `load_approved_dataset()` refuses a
+file that is structurally valid but not technically eligible, and hands the trainer only
+the surviving rows, so a rejected duplicate, contradiction, censored label or impossible
+date cannot reach a cohort count or a score. The one exception is the labelled synthetic
+pipeline path: `allow_synthetic_for_testing` may fit below the thresholds only when rows
+declare `is_synthetic`, and the resulting artifact carries a limitation saying so (see
+ADR-0013). Synthetic detection reads the whole file before filtering, so a marker on a
+rejected row still marks the file.
 
 ## Versioning and validation
 

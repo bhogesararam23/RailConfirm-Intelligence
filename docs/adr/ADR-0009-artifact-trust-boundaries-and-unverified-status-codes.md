@@ -1,6 +1,9 @@
 # ADR-0009: Trust boundaries for model artifacts and unverified status codes
 
-- **Status:** Accepted
+- **Status:** Accepted. The artifact format identifier in the Decision section is
+  superseded by ADR-0013, which raises it to `railconfirm.frequency-baseline/2` to make
+  the declared cohort-status rule and consumed-feature list load-time requirements.
+  Everything else here stands.
 - **Date:** 2026-10-23
 - **Decision owner:** Project maintainer
 - **Related:** ADR-0002, ADR-0004, ADR-0005, ADR-0007, docs/technical/INFERENCE_AND_GROUP_PROBABILITIES.md, docs/model/STATUS_GLOSSARY.md

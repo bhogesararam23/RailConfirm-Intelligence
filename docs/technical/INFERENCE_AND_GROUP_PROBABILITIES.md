@@ -77,6 +77,24 @@ Codes once proposed for this document (`DATA_TOO_STALE`, `FEATURE_SCHEMA_MISMATC
 
 Every supported per-passenger outcome also records `basis`: the cohort key and its sample size, labelled as an exact status match or a broad-cohort fallback. A fallback estimate is a weaker claim than a cohort-specific one and a reader cannot tell them apart from the numbers alone.
 
+### The cohort key, and who agrees on it
+
+A cohort is `(class_code, quota_code, asof_normalized)`: the status the reservation held
+**as of the moment being estimated** — `current_status` when the source recorded one,
+otherwise `initial_status` in dataset rows, and the latest `StatusObservation` at or
+before `prediction_at` in a served request. `railconfirm.data.preprocessing.asof_statuses()`
+owns that rule, and fitting, scoring and the estimator's lookup all call it or receive
+its result, so a table cannot be built from one column and queried from another.
+`cohort_key()` normalises the components at both ends; status categories are expected,
+not raw strings.
+
+The artifact carries the agreement in the open: `cohort_semantics` (`asof_status_v1`) and
+`features_used` (`class_code`, `quota_code`, `asof_normalized`). `load_artifact()` refuses
+any artifact whose declarations differ, so the mismatch is a deployment-visible rejection
+rather than a silently wrong probability. `features_used` also bounds what may be claimed
+about the baseline: it reads three values, and the derived positions, queue ratio and lead
+days in `FEATURE_COLUMNS` are for later estimators (ADR-0013).
+
 ## Response metadata
 
 Every prediction should identify target definition, prediction timestamp, creation timestamp, model version, feature schema version, source/observation freshness, evidence coverage, supported/abstained state and relevant limitations. Explanation components must distinguish predictive association from causation.

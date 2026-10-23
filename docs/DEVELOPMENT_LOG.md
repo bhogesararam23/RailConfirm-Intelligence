@@ -680,3 +680,143 @@ CI run `39899994841` on `4c867bf`: **success** — backend 502 passed at 95.86% 
 coverage, ruff and mypy clean; frontend 93 passed, type-check, lint and build clean;
 documentation and hygiene job clean. The one remaining pytest warning is upstream
 (`StarletteDeprecationWarning` from `fastapi.testclient`'s own import), not from this code.
+
+## 2026-10-23 — The training gate enforces eligibility, and one as-of status spans fit, score and serve
+
+### Scope
+Two audit findings on the same theme: the pipeline reported more discipline than it
+enforced. First, `training/dataset.py` tested `report.structurally_valid` and handed on
+the **original frame**, so technically ineligible files and validator-rejected rows both
+reached fitting and scoring. Second, the baseline was keyed by `initial_status` while
+evaluation and the engine queried `current_status`, so metrics described a lookup the
+product never performs. Nothing was claimed fixed without reproducing it first.
+
+### What was reproduced before changing anything
+- `load_approved_dataset()` accepted a 32-row file carrying `contradictory_labels`,
+  `censored_label`, `unparseable_date`, `observation_after_journey`,
+  `invalid_train_number`, `missing_required_value`, `unknown_initial_status` and
+  `exact_duplicate_row` rejections, and returned all 32 rows: `len(frame)` was 32 while
+  the same report said `valid_rows = 23`.
+- `fit_cohorts()` counted a booked-`GNWL/40`-observed-`RAC 2` row into the `WL` cell while
+  `score_partition()` and `InferenceEngine` asked for the `RAC` cell. Nothing in the
+  artifact recorded which column its keys came from, so the mismatch survived a reload.
+- The evaluation report published all eight `FEATURE_COLUMNS` under one availability
+  sentence although the estimator reads three.
+
+### Decisions (ADR-0013)
+- **Decide the verdict and the rows in one pass.** `assess_dataset()` returns
+  `(report, usable_frame)`; `validate_dataset()` stays the report-only wrapper.
+  Re-filtering inside each consumer would let the counts and the data drift apart. The
+  frame's index is reset internally — a caller-supplied index with duplicate labels made
+  the per-row duplicate lookup ambiguous, which is a latent crash, not a theoretical one.
+- **Training requires technical eligibility.** Any eligibility finding is now a refusal
+  that quotes the findings. Blocker order is manifest verification → structural validity →
+  human permission rules → eligibility, so a rejected licence is still reported as a
+  rejected licence rather than as a quality problem.
+- **One relaxation, tied to the data and written down.** Fitting below the thresholds needs
+  rows declaring `is_synthetic` *and* `allow_synthetic_for_testing`; the flag alone cannot
+  rescue real data. The relaxation is recorded on `ApprovedDataset` and lands in the
+  artifact's limitations. Synthetic detection still reads the whole file before filtering,
+  so a marker living only on a rejected row cannot make the rest of a file look like
+  evidence.
+- **One as-of status.** `preprocessing.asof_statuses()` — `current_status` when the source
+  recorded one, `initial_status` otherwise, an unmappable value left `UNKNOWN` — is called
+  by the fitter, the scorer, and (through `StatusObservation`) the served request. A blank
+  later look means no later look existed, not that the status became unknown.
+- **Artifacts declare their contract.** `cohort_semantics` (`asof_status_v1`) and
+  `features_used` (`class_code, quota_code, asof_normalized`) are required at load, so a
+  table built on another rule is refused with an explanation instead of serving
+  wrong-population numbers. `artifact_format` becomes `railconfirm.frequency-baseline/2`;
+  ADR-0009's status line points at ADR-0013 for that one identifier and its decision
+  otherwise stands.
+- **Feature schema 3.0.0.** `obs_normalized`/`obs_position` became `asof_normalized`/
+  `asof_position` and the fallback changed meaning, so the version was bumped rather than
+  letting an old artifact be read under new semantics.
+- **Reports say what is unused.** The report publishes `used_by_estimator`,
+  `not_used_by_estimator`, `cohort_semantics` and which status columns the fit had, and
+  segments are reported for the booked status *and* the as-of status — the gap between
+  those two is where a keying mistake would hide.
+
+### Files
+`backend/railconfirm/data/{__init__,preprocessing,validator}.py`,
+`backend/railconfirm/inference/{artifacts,baseline,engine}.py`,
+`backend/railconfirm/training/{__main__,dataset,fitter,metrics,report}.py`;
+tests `data/test_preprocessing.py`, `data/test_validator.py`, `inference/test_baseline.py`,
+`inference/test_registry.py`, `support/datasets.py`, `training/test_cohort_parity.py` (new),
+`training/test_dataset_gate.py`, `training/test_fitter.py`, `training/test_report.py`,
+`training/test_cli.py`;
+docs `adr/ADR-0013-*.md` (new), `adr/ADR-0009-*.md` (status note), `adr/README.md`,
+`data/DATA_CONTRACT.md`, `data/DATASET_INTAKE_CHECKLIST.md`,
+`research/EVALUATION_PROTOCOL.md`, `technical/INFERENCE_AND_GROUP_PROBABILITIES.md`,
+`architecture/API_CONTRACT.md`, `PROJECT_STATUS.md`, `AGENT_HANDOFF.md`, plus `README.md`,
+`backend/README.md` and `CHANGELOG.md`.
+
+### Checks run
+- `python -m pytest tests --cov=railconfirm --cov-fail-under=90` → **563 passed**, coverage
+  **96.03%**, gate satisfied.
+- `python -m ruff check railconfirm tests` → **All checks passed!**
+- `python -m mypy` → **Success: no issues found in 38 source files** (local libraries; CI
+  resolves newer ones, so the pushed run is checked separately).
+- `npm run type-check && npm run lint && npm test && npm run build` in `frontend/` → lint
+  clean, **93 passed (5 files)**, build exit 0. The frontend was not touched by this change;
+  run to confirm no contract drift.
+- `python scripts/check_repository_hygiene.py` → exit 0, "22 required files, 201 tracked
+  files scanned".
+- `python -m railconfirm.data validate tests/fixtures/synthetic_dataset.csv` → exit **1**
+  (not technically eligible), unchanged.
+
+### Pipeline exercised on labelled synthetic fixtures
+- `railconfirm.data validate` on the moving fixture → structurally valid, technically
+  eligible, 240 rows, 12 distinct journey dates, 240 distinct labelled bookings.
+- `railconfirm.training fit … --allow-synthetic-for-testing` → exit 0. Printed
+  `Validation kept 240 of 240 rows (no rejections).`, wrote a `promotion: "candidate"`
+  artifact with 6 cohorts, and the report stated
+  `Cohorts: keyed by asof_status_v1 from initial_status + current_status; read by the
+  estimator: class_code, quota_code, asof_normalized; derived but not read: init_normalized,
+  init_position, asof_position, queue_ratio, lead_days`. Validation Brier 0.503704 vs
+  baseline 0.500000; event 0.251111 vs 0.250000, and the conclusions say both do not beat
+  the base rate. **No railway claim: these are synthetic rows.**
+- The original pipeline fixture re-fit to the numbers already documented (Brier 0.501038 vs
+  0.500000; event 0.232664 vs 0.250000), which is the expected result: it records no
+  `current_status`, so its as-of status is its booked status.
+- `fit` on a 32-row file with one of every rejected shape printed the per-reason accounting
+  (`9 rejected: censored_label=1, contradictory_labels=2, exact_duplicate_row=1, …`) plus
+  the relaxation notice, and the artifact it wrote carries a limitation saying intake was
+  not met.
+- `fit` on the same shape **without** `is_synthetic` → exit 1: `Refused: Dataset is
+  structurally valid but not technically eligible for training:` followed by the three
+  findings. Re-run **with** `--allow-synthetic-for-testing` → the identical refusal.
+- `evaluate` on the labelled synthetic artifact → exit 0 with both partitions scored; the
+  registry still refused the same artifact for serving (`not_promoted`, and
+  `data_not_approved` after promotion and version were hand-flipped in a temp copy).
+
+### Application runtime
+`uvicorn railconfirm.api.app:app --port 8041` with `RAILCONFIRM_MODELS_DIR` set to a
+**temporary, never-committed** probe artifact fitted from the labelled synthetic fixture
+(its flags set so the registry would serve it, its limitation text stating plainly that it
+is a runtime probe and not railway evidence). `GET /v1/health` reported
+`model_available: true, registry_status: ready`. `POST /v1/predictions/manual` with three
+passengers all booked `GNWL/40`:
+
+| current_status | served cohort | `p_cnf` | expected from the fitted cell |
+|---|---|---|---|
+| `RAC 2` | `cohort=SL/GN/RAC n=40 exact_status_match=true` | 0.4666667 | 21/45 |
+| `GNWL/40` | `cohort=SL/GN/WL n=80 exact_status_match=true` | 0.4823529 | 41/85 |
+| `MYSTERY/4` | — | `null`, `abstention_reason: unknown_status` | abstain |
+
+`feature_schema_version` reported `3.0.0` and `evidence_coverage: partial`. Before this
+change, the first row would have been answered from the `WL` cell. The server was stopped
+and the temp directories deleted afterwards.
+
+### Open
+- The dataset blocker is unchanged and is not a code problem: no candidate carries both a
+  reservation's booked status and its verified final-chart outcome under training permission
+  (`docs/data/CANDIDATE_DATASET_REVIEW.md`).
+- `asof_statuses()` inherits whatever `observation_date` means in a real file. A source
+  that publishes `current_status` after the chart would leak through a rule this repository
+  cannot see, so intake review must pin the publication time per source; the validator only
+  enforces `observation_date <= journey_date` today.
+- `features_used` is a per-estimator declaration. A future estimator needs its own
+  vocabulary and `ESTIMATOR_*` value, not a widened constant here.
+- Existing `/1` artifacts would now be refused. None exist in the repository or in any
+  documented deployment, so nothing was orphaned.

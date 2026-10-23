@@ -294,6 +294,10 @@ same as being disapproved, and no exit code can approve a dataset.
 The three verdicts a report gives are distinct: `structurally valid` (schema
 complete, at least one interpretable row), `technically eligible` (clears the
 documented intake minimums), and approval, which this tool never determines.
+`assess_dataset()` returns the report **and** the frame restricted to rows that passed
+every row-level check; `validate_dataset()` is the report-only wrapper. Training reads
+the file through that filter, so a duplicate, contradiction, censored label or
+impossible date cannot reach a cohort count (ADR-0013).
 
 Manifest YAML follows `docs/data/DATASET_MANIFEST_TEMPLATE.yaml`, and a test
 asserts every template section and key is present in generated output. Writing a
@@ -304,10 +308,11 @@ rationale is rejected by the model, as is `licence_review_status: approved` whil
 ## Training and evaluation
 
 `python -m railconfirm.training` fits the historical-frequency baseline and scores it on
-a later period (ADR-0011). It reads a dataset only through the approval gate: the
+a later period (ADR-0011, ADR-0013). It reads a dataset only through the gate: the
 manifest must verify against the file, a named reviewer must have recorded an `approved`
-decision, the licence review must permit `model_training`, and rows that declare
-`is_synthetic` are refused.
+decision, the licence review must permit `model_training`, rows that declare
+`is_synthetic` are refused, and the file must be **technically eligible** — structural
+validity alone is not enough. Only the rows validation kept are passed on.
 
 ```bash
 # from backend/ — fit a candidate artifact and write a reproducible report
@@ -324,18 +329,38 @@ python -m railconfirm.training evaluate data/processed/dataset.csv data/manifest
 A successful `fit` writes `promotion: "candidate"`, so nothing starts serving; activation
 still needs `RAILCONFIRM_ACTIVE_MODEL_VERSION` and the artifact's own approval field
 (ADR-0009). Exit codes match the data commands: `0` success, `1` refused or unusable
-input, `2` usage error.
+input, `2` usage error. A run states its intake accounting rather than resting on it
+silently:
+
+```text
+Validation kept 23 of 32 rows (9 rejected: censored_label=1, contradictory_labels=2,
+exact_duplicate_row=1, invalid_train_number=1, missing_required_value=1,
+observation_after_journey=1, unknown_initial_status=1, unparseable_date=1).
+Eligibility thresholds were NOT met; fitted only because this is a labelled synthetic pipeline test.
+```
 
 - Every partition is scored twice — as a five-class distribution and as the target's own
   event (`final_chart_cnf` is CNF; `final_chart_cnf_or_rac` is CNF or RAC) — against a
   prevalence baseline computed from the **training** period only. When the two verdicts
   disagree, the report says so instead of quoting the better one.
+- Cohorts are keyed `(class_code, quota_code, asof_normalized)`, where the as-of status is
+  `current_status` when the source recorded one and `initial_status` otherwise. Fitting,
+  scoring and the served request use that one rule, so a table is never queried under a
+  different contract than it was built with. Segments are reported for the booked status
+  and the as-of status separately, because the gap between them is where a keying mistake
+  would show.
+- The artifact declares `features_used` (`class_code`, `quota_code`, `asof_normalized`) and
+  `cohort_semantics` (`asof_status_v1`), and `load_artifact()` refuses anything that
+  declares otherwise. The wider feature schema is derived for later estimators; this
+  baseline does not read it, and the report says so.
 - Rows the estimator abstains on are excluded from the scores and counted separately.
 - `--generated-on` is required for a report: output stamped by the clock cannot be
   reproduced byte-for-byte.
 - `--allow-synthetic-for-testing` exists so the pipeline can be exercised. It marks the
   artifact synthetic, which the registry refuses to serve, so a fixture can never become
-  a user-visible probability.
+  a user-visible probability. It is the only route below the intake thresholds and it
+  works only when rows declare `is_synthetic` — passing the flag for a real file changes
+  nothing — and the artifact carries a limitation recording the relaxation.
 - Rolling-origin evaluation and calibration fitting are not implemented. The report
   states that no calibration was fitted whenever the artifact says so.
 

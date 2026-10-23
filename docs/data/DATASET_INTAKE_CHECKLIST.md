@@ -84,7 +84,8 @@ python -m railconfirm.data verify data/manifests/<id>.yaml path/to/dataset.csv
 | Raw status strings preserved while normalizing | Yes — parse keeps `raw`, and unknown codes are rejected rather than coerced |
 | Missing, duplicate, contradictory and censored records quantified | Yes — `null_counts`, `duplicate_rows`, `contradictory_label_groups`, `censored_label_rows`, per-reason rejection counts |
 | Timestamp semantics and ordering | Partly — ISO calendar dates and `observation_date <= journey_date` are enforced; sub-daily observation time is not in the row contract yet |
-| Features reconstructed from as-of information | Yes for the implemented split — `extract_features` refuses label columns and `chronological_split` allocates whole dates |
+| Features reconstructed from as-of information | Yes for the implemented split — `asof_statuses()` is the single as-of rule (`current_status`, else `initial_status`), `extract_features` refuses label columns and `chronological_split` allocates whole dates |
+| Rejected rows kept out of fitting and scoring | Yes — `assess_dataset()` returns only rows that passed, and the training gate refuses a file with any eligibility finding unless the rows are labelled synthetic and the caller opted in |
 | Booking snapshots in one partition | Yes when `booking_group_id` is present; without it the validator warns that group integrity cannot be checked |
 | File checksum, size, row-count consistency | Yes — `verify` rehashes and **recounts** instead of trusting the manifest |
 | Intake reproducibility | Yes — manifest output is deterministic; the same inputs give the same digest |
@@ -94,6 +95,12 @@ python -m railconfirm.data verify data/manifests/<id>.yaml path/to/dataset.csv
 
 A passing `validate` means the file is technically eligible to be attempted; it does
 not mean approved, and no exit code encodes approval.
+
+Training enforces the same verdict: `load_approved_dataset()` refuses a file with any
+eligibility finding and passes on only the rows the validator kept, so a rejected row
+cannot reach a cohort count or a score. The single exception is the labelled synthetic
+pipeline path, which needs `is_synthetic` rows *and* an explicit
+`--allow-synthetic-for-testing`, and whose artifact records the relaxation (ADR-0013).
 
 ## Required intake report
 

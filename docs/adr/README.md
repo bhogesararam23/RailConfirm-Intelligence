@@ -56,3 +56,4 @@ How will the decision be tested or revisited? Record evidence, not assumptions.
 | [ADR-0010](ADR-0010-declared-check-configurations-and-repository-hygiene-gate.md) | Lint and type-check rule sets declared in the repository, constrained tool ranges, and a hygiene gate that can actually fail | Accepted |
 | [ADR-0011](ADR-0011-provenance-gated-baseline-fitting-and-target-event-evaluation.md) | Provenance-gated baseline fitting, candidate-only artifacts, and evaluation of the target's own event | Accepted |
 | [ADR-0012](ADR-0012-opt-in-local-prediction-history.md) | Opt-in local prediction history: two switches, a retention floor, reopen by internal id only | Accepted |
+| [ADR-0013](ADR-0013-asof-cohort-rule-and-eligibility-enforced-training-gate.md) | One as-of cohort rule across fit/evaluate/serve, and a training gate that enforces technical eligibility and drops rejected rows | Accepted; raises ADR-0009's artifact format to `/2` |
