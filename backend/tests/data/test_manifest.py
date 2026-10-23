@@ -353,15 +353,34 @@ def test_manifest_name_must_be_yaml():
         manifest_output_path("notes.txt")
 
 
-@pytest.mark.parametrize("name", ["../outside.yaml", "sub/dir/x.yaml", "..\\escape.yaml"])
-def test_paths_cannot_escape_the_manifests_directory(name):
-    with pytest.raises(ManifestError):
-        manifest_output_path(name, DEFAULT_MANIFEST_DIR)
-
-
 def test_output_path_resolves_inside_the_given_directory(tmp_path: Path):
     target = manifest_output_path("ok.yaml", tmp_path)
     assert target.parent == tmp_path.resolve()
+
+
+@pytest.mark.parametrize(
+    "sep,altsep,label",
+    [("/", None, "POSIX"), ("\\", "/", "Windows")],
+)
+def test_bare_names_are_accepted_on_either_path_convention(
+    tmp_path: Path, monkeypatch, sep, altsep, label
+):
+    """Regression: os.altsep is None on Linux, and an empty string is a substring of
+    everything, so the separator set built from it rejected every name there while
+    passing on Windows."""
+    import os
+
+    monkeypatch.setattr(os, "sep", sep)
+    monkeypatch.setattr(os, "altsep", altsep)
+    assert manifest_output_path("ok.yaml", tmp_path).name == "ok.yaml"
+    with pytest.raises(ManifestError, match="bare filename"):
+        manifest_output_path(f"..{sep}evil.yaml", tmp_path)
+
+
+@pytest.mark.parametrize("name", ["../outside.yaml", "sub/dir/x.yaml", "..\\escape.yaml"])
+def test_separators_are_rejected_regardless_of_platform(name):
+    with pytest.raises(ManifestError, match="bare filename"):
+        manifest_output_path(name, DEFAULT_MANIFEST_DIR)
 
 
 def test_write_refuses_to_clobber_a_different_manifest(tmp_path: Path):

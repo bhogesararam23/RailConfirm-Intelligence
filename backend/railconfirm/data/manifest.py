@@ -527,9 +527,12 @@ def manifest_output_path(name: str, directory: Path | None = None) -> Path:
     """
     base = Path(directory) if directory is not None else DEFAULT_MANIFEST_DIR
     cleaned = str(name).strip()
+    # os.altsep is None on POSIX: an empty string is a substring of everything, so
+    # folding it into this set would reject every name on Linux and none on Windows.
+    separators = {"/", "\\", os.sep, os.altsep} - {None, ""}
     _require(cleaned.endswith(".yaml"), f"Manifest file name must end in .yaml, got {name!r}.")
     _require(
-        not any(sep in cleaned for sep in ("/", "\\", os.sep, os.altsep or "")),
+        not any(sep in cleaned for sep in separators),
         f"Manifest name {name!r} must be a bare filename without path separators; "
         "the directory is chosen with --output.",
     )
