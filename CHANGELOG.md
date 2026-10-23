@@ -66,6 +66,8 @@ Milestone A (audit and harden the implemented foundation) and the frontend rebui
 
 ### Added
 
+- **Rolling-origin evaluation (`python -m railconfirm.training origins`, ADR-0014).** `rolling_origin_windows()` plans whole-date expanding cutoffs — `min_train_dates` dates to start, the next `horizon_dates` scored, advancing by `step_dates`, with an optional calendar gap — and refuses to produce any window when the calendar supports fewer than two cutoffs, because one measurement under a plural name is how a trend gets invented. `run_rolling_origins()` refits the cohort table **and** its prevalence baseline from each origin's own past, so no cutoff is scored against a baseline fitted on the answer. The report prints `refit-per-origin, score-the-next-horizon`, counts origins that produced a score separately from origins that abstained everywhere, states the Brier and coverage ranges instead of averaging them away, and fixes the limitations that overlapping windows are not independent evaluations and that no multiplicity correction is applied. Reports stay byte-reproducible with `--generated-on`. 44 tests cover the planner, the arithmetic against hand-checked cells, the refusal paths and the wording.
+
 - **ADR-0013 — one as-of cohort rule and a dataset gate that enforces eligibility.** Records why `assess_dataset()` decides the verdict and the surviving rows together, why the eligibility relaxation is tied to `is_synthetic` rather than to a command-line flag, why `asof_statuses()` is the single definition shared by fitting, scoring and serving, and why an artifact now has to declare its key rule. Also raises the artifact format to `/2`, which ADR-0009's status line now points at.
 
 - **`tests/training/test_cohort_parity.py`** — 16 tests that take the same reservations through fitting, scoring and the served estimator: booked `WL` observed `RAC`, a blank later look, an unmappable later look, a changed queue position, a cohort that exists only as the broad fallback, and a whole-fixture run whose coverage can only reach 100% if the fitted keys and the query keys agree.
@@ -116,7 +118,7 @@ Milestone A (audit and harden the implemented foundation) and the frontend rebui
 
 ### Changed
 
-- Backend tests grew from 43 to 563 and branch coverage from 84% statements to 96.03% (statements and branches); CI now fails below 90%. 74 cover the training, evaluation and reporting pipeline, 16 pin the as-of cohort rule across fit, score and serve, 26 the history store and 38 the prediction-history API. Frontend tests grew to 93.
+- Backend tests grew from 43 to 611 and branch coverage from 84% statements to 96.30% (statements and branches); CI now fails below 90%. 74 cover the training, evaluation and reporting pipeline, 44 the rolling-origin planner and its report, 16 pin the as-of cohort rule across fit, score and serve, 26 the history store and 38 the prediction-history API. Frontend tests grew to 93.
 
 - **Feature schema 3.0.0** (`backend/railconfirm/data/preprocessing.py`): the derived status columns are renamed `asof_normalized` / `asof_position`, and a row whose `current_status` is blank now falls back to its `initial_status` instead of becoming `UNKNOWN` — a source that recorded no later look has not made the status unknown. The version bump is what makes an artifact built under 2.0.0 semantics refuse to load rather than be misread.
 

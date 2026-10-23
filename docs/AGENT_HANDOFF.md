@@ -14,9 +14,9 @@ Do not assume any of the following exist, because none do: an accuracy figure, a
 
 | Exists and is tested | Exists but is unverified against real data | Does not exist |
 |---|---|---|
-| Domain contracts, status mapping v1.1.0, temporal integrity rules, abstention reasons, API contract and error envelope (including unrouted paths), dataset loader/validator/manifest/verification, a training gate that enforces **technical eligibility** and passes on only validated rows, chronological splitting, one shared as-of status rule across fit/score/serve, artifact registry with promotion gate and load-time cohort-contract check, baseline fitting and target-event evaluation with deterministic reports, opt-in prediction history, frontend written and tested against the shipped contract, CI | Historical-frequency baseline (never loaded with real data), the training and evaluation pipeline (never run on approved data), group outcomes (independence baseline only), prediction history (never enabled by default, so untested against concurrent real users) | Calibration fitting, rolling-origin evaluation, dependence-aware group model, label feedback on stored reports, approved dataset, promoted artifact |
+| Domain contracts, status mapping v1.1.0, temporal integrity rules, abstention reasons, API contract and error envelope (including unrouted paths), dataset loader/validator/manifest/verification, a training gate that enforces **technical eligibility** and passes on only validated rows, chronological splitting, **rolling-origin evaluation with per-cutoff refitting**, one shared as-of status rule across fit/score/serve, artifact registry with promotion gate and load-time cohort-contract check, baseline fitting and target-event evaluation with deterministic reports, opt-in prediction history, frontend written and tested against the shipped contract, CI | Historical-frequency baseline (never loaded with real data), the training and evaluation pipeline (never run on approved data), group outcomes (independence baseline only), prediction history (never enabled by default, so untested against concurrent real users) | Calibration fitting, dependence-aware group model, label feedback on stored reports, approved dataset, promoted artifact |
 
-563 backend tests at 96.03% branch coverage, 93 frontend tests. CI was green on `main` at the last recorded push — re-check rather than trust this line.
+611 backend tests at 96.30% branch coverage, 93 frontend tests. CI was green on `main` at the last recorded push — re-check rather than trust this line.
 
 ## Read first
 
@@ -26,7 +26,7 @@ Do not assume any of the following exist, because none do: an accuracy figure, a
 4. `docs/ROADMAP.md`
 5. `docs/architecture/API_CONTRACT.md` — matches the shipped surface
 6. `docs/data/DATA_CONTRACT.md` and `docs/data/DATASET_INTAKE_CHECKLIST.md`
-7. ADR index, especially ADR-0007 (local-first boundary), ADR-0008 (future integration phases), ADR-0009 (artifact trust boundaries), ADR-0010 (declared check configurations), ADR-0011 (training gate and target-event scoring), ADR-0012 (prediction history and its retention rules) and ADR-0013 (the eligibility-enforced gate and the single as-of cohort rule)
+7. ADR index, especially ADR-0007 (local-first boundary), ADR-0008 (future integration phases), ADR-0009 (artifact trust boundaries), ADR-0010 (declared check configurations), ADR-0011 (training gate and target-event scoring), ADR-0012 (prediction history and its retention rules), ADR-0013 (the eligibility-enforced gate and the single as-of cohort rule) and ADR-0014 (rolling-origin evaluation and what a single cutoff cannot show)
 8. `docs/research/EVALUATION_PROTOCOL.md` before writing any metric code
 
 ## Working here
@@ -67,11 +67,16 @@ In order, based on the actual repository:
    the scorer all exist and are tested, but every number they produce today comes from
    synthetic rows.
 2. **Fit and evaluate on that dataset** with `python -m railconfirm.training fit` /
-   `evaluate`, then decide promotion from the report instead of from the code.
-3. **Close the evaluation gaps** the protocol describes and the code does not:
-   rolling-origin evaluation across multiple cutoffs, and calibration fitted on the
-   validation period and measured on a locked test period. Reliability bands are a
-   description today; `calibrated` is always false and the report says so.
+   `evaluate`, check the verdict across cutoffs with `python -m railconfirm.training
+   origins`, then decide promotion from the reports instead of from the code. A dataset
+   long enough for several origins is a real intake requirement, not just a nice-to-have:
+   the rolling path refuses below two cutoffs, and the current intake minimum of four
+   distinct journey dates only supports two.
+3. **Calibration**: fitted on the validation period and measured on a locked test period
+   (ADR-0004). Reliability bands are a description today; `calibrated` is always false and
+   the report says so. Rolling-origin evaluation is implemented (ADR-0014) — what is not
+   implemented is scoring one *frozen* artifact against successive horizons, which is a
+   different question from the refit-per-origin run the tool performs.
 4. **Dependence-aware group outcomes** (ADR-0003). The engine still multiplies under an
    independence assumption and labels it; group-event metrics are not scored.
 5. **Label feedback on stored reports.** History now exists, so "what did the chart

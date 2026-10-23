@@ -13,6 +13,8 @@ from railconfirm.data.preprocessing import (
     ASOF_STATUS_FEATURE,
     FEATURE_COLUMNS,
     FEATURE_SCHEMA_VERSION,
+    OriginWindow,
+    RollingOriginPlan,
     SplitResult,
     asof_statuses,
     assert_no_label_columns,
@@ -20,6 +22,7 @@ from railconfirm.data.preprocessing import (
     extract_features,
     feature_frame,
     require_status_columns,
+    rolling_origin_windows,
     strip_labels,
 )
 from railconfirm.data.validator import (
@@ -38,6 +41,8 @@ __all__ = [
     "DatasetValidationReport",
     "EligibilityThresholds",
     "ManifestError",
+    "OriginWindow",
+    "RollingOriginPlan",
     "SUPPORTED_SUFFIXES",
     "SplitResult",
     "asof_statuses",
@@ -50,6 +55,7 @@ __all__ = [
     "load_dataset_file",
     "parse_manifest",
     "require_status_columns",
+    "rolling_origin_windows",
     "strip_labels",
     "validate_dataset",
     "verify_manifest",

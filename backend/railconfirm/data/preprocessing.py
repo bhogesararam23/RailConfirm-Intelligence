@@ -437,3 +437,250 @@ def _ineligible(work: pd.DataFrame, *, date_column: str, reasons: Sequence[str])
         partitions=partitions,
         date_column=date_column,
     )
+
+
+# ── Rolling-origin evaluation windows ──────────────────────────────────────────
+
+DEFAULT_MIN_TRAIN_DATES = 3
+DEFAULT_HORIZON_DATES = 1
+DEFAULT_STEP_DATES = 1
+MIN_ORIGINS = 2
+"""A single cutoff is what :func:`chronological_split` already gives. Calling a
+one-origin run "rolling" would claim temporal robustness from one measurement."""
+
+
+@dataclass(frozen=True)
+class OriginWindow:
+    """One cutoff: the dates a fit may see, and the dates it is scored on after."""
+
+    index: int
+    train: pd.DataFrame
+    scored: pd.DataFrame
+    train_dates: tuple[str, ...]
+    scored_dates: tuple[str, ...]
+    gap_days: int
+
+    @property
+    def train_rows(self) -> int:
+        return int(len(self.train))
+
+    @property
+    def scored_rows(self) -> int:
+        return int(len(self.scored))
+
+    def describe(self) -> str:
+        return (
+            f"origin {self.index}: train {self.train_dates[0]}..{self.train_dates[-1]} "
+            f"({self.train_rows} rows, {len(self.train_dates)} dates) -> scored "
+            f"{self.scored_dates[0]}..{self.scored_dates[-1]} ({self.scored_rows} rows), "
+            f"gap {self.gap_days}d"
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "index": self.index,
+            "train_start": self.train_dates[0],
+            "train_end": self.train_dates[-1],
+            "train_dates": len(self.train_dates),
+            "train_rows": self.train_rows,
+            "scored_start": self.scored_dates[0],
+            "scored_end": self.scored_dates[-1],
+            "scored_dates": len(self.scored_dates),
+            "scored_rows": self.scored_rows,
+            "gap_days": self.gap_days,
+        }
+
+
+@dataclass(frozen=True)
+class RollingOriginPlan:
+    """The origins a dataset can support, or the reasons it cannot support two."""
+
+    windows: tuple[OriginWindow, ...]
+    eligible: bool
+    reasons: tuple[str, ...]
+    date_column: str
+    min_train_dates: int
+    horizon_dates: int
+    step_dates: int
+    gap_days: int
+
+    @property
+    def boundaries(self) -> list[str]:
+        return [window.describe() for window in self.windows]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "eligible": self.eligible,
+            "reasons": list(self.reasons),
+            "date_column": self.date_column,
+            "min_train_dates": self.min_train_dates,
+            "horizon_dates": self.horizon_dates,
+            "step_dates": self.step_dates,
+            "gap_days": self.gap_days,
+            "origin_count": len(self.windows),
+            "origins": [window.to_dict() for window in self.windows],
+        }
+
+
+def rolling_origin_windows(
+    df: pd.DataFrame,
+    *,
+    date_column: str = DATE_COLUMN,
+    min_train_dates: int = DEFAULT_MIN_TRAIN_DATES,
+    horizon_dates: int = DEFAULT_HORIZON_DATES,
+    step_dates: int = DEFAULT_STEP_DATES,
+    gap_days: int = 0,
+    min_scored_rows: int = 1,
+) -> RollingOriginPlan:
+    """Plan expanding-window origins: train on the past, score the next dates, advance.
+
+    Dates, never rows, so a record cannot straddle a cutoff. Each origin's training
+    block starts at the first date and grows by ``step_dates`` dates; the scored block
+    is the ``horizon_dates`` dates immediately after it, separated by more than
+    ``gap_days`` calendar days. Fewer than two usable origins is not an evaluation
+    strategy, and a plan that cannot give two returns **no windows** with the reasons —
+    the same rule :func:`chronological_split` follows, because an unusable origin is
+    worse than none when a metric is going to be computed on it.
+
+    Overlapping scored windows are refused: the same outcome counted in two origins is
+    one evaluation reported twice.
+    """
+    if date_column not in df.columns:
+        raise DatasetValidationError(
+            f"Cannot plan rolling origins without '{date_column}'."
+        )
+    for name, value in (
+        ("min_train_dates", min_train_dates),
+        ("horizon_dates", horizon_dates),
+        ("step_dates", step_dates),
+        ("min_scored_rows", min_scored_rows),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise DatasetValidationError(
+                f"{name} must be a positive integer, got {value!r}."
+            )
+    if gap_days < 0:
+        raise DatasetValidationError("gap_days cannot be negative.")
+    if step_dates < horizon_dates:
+        raise DatasetValidationError(
+            f"step_dates={step_dates} is below horizon_dates={horizon_dates}, which "
+            "would overlap two scored windows and count the same outcome in both."
+        )
+
+    plan_kwargs: dict[str, Any] = {
+        "date_column": date_column,
+        "min_train_dates": min_train_dates,
+        "horizon_dates": horizon_dates,
+        "step_dates": step_dates,
+        "gap_days": gap_days,
+    }
+
+    def refused(reasons: Sequence[str]) -> RollingOriginPlan:
+        return RollingOriginPlan(
+            windows=(), eligible=False, reasons=tuple(reasons), **plan_kwargs
+        )
+
+    work = df.copy()
+    work["_partition_date"] = _parse_dates(work[date_column], date_column)
+    work = (
+        work.assign(_original_index=work.index)
+        .sort_values(["_partition_date", "_original_index"], kind="mergesort")
+        .reset_index(drop=True)
+    )
+    dates = [pd.Timestamp(value) for value in sorted(work["_partition_date"].unique())]
+    if len(dates) < min_train_dates + horizon_dates:
+        return refused(
+            [
+                f"{len(dates)} distinct {date_column} values; one origin alone needs "
+                f"{min_train_dates} training dates plus {horizon_dates} scored dates, and "
+                f"rolling evaluation needs a second origin after it."
+            ]
+        )
+
+    group_dates: dict[str, set[pd.Timestamp]] = {}
+    if GROUP_COLUMN in work.columns:
+        pairs = work[[GROUP_COLUMN, "_partition_date"]].drop_duplicates()
+        for group, date in zip(
+            pairs[GROUP_COLUMN].tolist(), pairs["_partition_date"].tolist(), strict=True
+        ):
+            group_dates.setdefault(str(group), set()).add(pd.Timestamp(date))
+
+    windows: list[OriginWindow] = []
+    reasons: list[str] = []
+    index = 0
+    while True:
+        train_count = min_train_dates + index * step_dates
+        if train_count + horizon_dates > len(dates):
+            break
+        train_dates = dates[:train_count]
+        scored_dates = dates[train_count : train_count + horizon_dates]
+        separation = (scored_dates[0] - train_dates[-1]).days
+        if separation <= gap_days:
+            reasons.append(
+                f"Origin {index}: the scored window starts {separation} day(s) after the "
+                f"last training date, inside the {gap_days}-day gap required to keep "
+                "near-boundary records out of the evaluation."
+            )
+            break
+
+        train = work[work["_partition_date"].isin(train_dates)]
+        scored = work[work["_partition_date"].isin(scored_dates)]
+        if len(scored) < min_scored_rows:
+            reasons.append(
+                f"Origin {index}: the scored window holds {_rows(len(scored))}, below the "
+                f"required {min_scored_rows}."
+            )
+            break
+
+        if group_dates:
+            train_set = set(train_dates)
+            crossing = sorted(
+                group
+                for group, seen in group_dates.items()
+                if seen & train_set and seen & set(scored_dates)
+            )
+            if crossing:
+                reasons.append(
+                    f"{len(crossing)} {GROUP_COLUMN} values appear on both sides of origin "
+                    f"{index}'s cutoff (for example {crossing[:5]}); their outcome would be "
+                    "in the fit and in the evaluation at once."
+                )
+                break
+            # A booking scored by two origins would double-count the aggregate, but
+            # step_dates >= horizon_dates puts every earlier scored date inside every
+            # later training block, so any such booking is already caught above.
+
+        windows.append(
+            OriginWindow(
+                index=index,
+                train=_drop_helper(train),
+                scored=_drop_helper(scored),
+                train_dates=tuple(date.date().isoformat() for date in train_dates),
+                scored_dates=tuple(date.date().isoformat() for date in scored_dates),
+                gap_days=gap_days,
+            )
+        )
+        index += 1
+
+    if not reasons and len(windows) < MIN_ORIGINS:
+        reasons.append(
+            f"Only {_origins(len(windows))} usable from {len(dates)} distinct "
+            f"{date_column} values. A single cutoff is what `chronological_split` already "
+            f"provides; rolling evaluation needs at least {MIN_ORIGINS}, so no window was "
+            "produced rather than reporting one measurement as a temporal trend."
+        )
+        windows = []
+
+    if reasons:
+        return refused(reasons)
+    return RollingOriginPlan(
+        windows=tuple(windows), eligible=True, reasons=(), **plan_kwargs
+    )
+
+
+def _rows(count: int) -> str:
+    return f"{count} row" if count == 1 else f"{count} rows"
+
+
+def _origins(count: int) -> str:
+    return "1 origin" if count == 1 else f"{count} origins"

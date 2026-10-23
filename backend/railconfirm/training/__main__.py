@@ -2,6 +2,7 @@
 
     python -m railconfirm.training fit      --dataset … --manifest … --out models/candidate_v1.json
     python -m railconfirm.training evaluate --dataset … --manifest … --artifact …
+    python -m railconfirm.training origins  --dataset … --manifest … --min-train-dates 3
 
 Exit codes: 0 success, 1 refused or failed, 2 usage error.
 
@@ -9,6 +10,10 @@ A successful ``fit`` writes an artifact with ``promotion = "candidate"``. It doe
 serve anything: activation needs a human to set ``RAILCONFIRM_ACTIVE_MODEL_VERSION``
 and to change the artifact's own promotion field, and the registry refuses either
 without the other.
+
+``origins`` evaluates the fitting procedure rather than an artifact: it refits the
+cohort table at each cutoff and scores only the horizon that follows, and refuses to
+run at all when the data cannot support at least two cutoffs.
 """
 
 from __future__ import annotations
@@ -17,12 +22,18 @@ import argparse
 import sys
 from pathlib import Path
 
-from railconfirm.data.preprocessing import chronological_split
+from railconfirm.data.preprocessing import (
+    DEFAULT_HORIZON_DATES,
+    DEFAULT_MIN_TRAIN_DATES,
+    DEFAULT_STEP_DATES,
+    chronological_split,
+)
 from railconfirm.domain.exceptions import (
     DatasetValidationError,
     FrequencyTableValidationError,
     ModelArtifactError,
 )
+from railconfirm.domain.status import MAPPING_VERSION
 from railconfirm.inference.artifacts import load_artifact
 from railconfirm.training.dataset import load_approved_dataset
 from railconfirm.training.fitter import (
@@ -37,7 +48,13 @@ from railconfirm.training.metrics import (
     evaluation_provenance,
     score_partition,
 )
-from railconfirm.training.report import build_report, write_report
+from railconfirm.training.origins import describe_result, run_rolling_origins
+from railconfirm.training.report import (
+    build_origin_report,
+    build_report,
+    write_origin_report,
+    write_report,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -74,6 +91,48 @@ def build_parser() -> argparse.ArgumentParser:
     )
     evaluate.add_argument("--report", type=Path, default=None)
     evaluate.add_argument("--allow-synthetic-for-testing", action="store_true")
+
+    origins = subparsers.add_parser(
+        "origins",
+        help="refit the baseline at each cutoff and score only the horizon after it",
+    )
+    origins.add_argument("dataset", type=Path)
+    origins.add_argument("manifest", type=Path)
+    origins.add_argument(
+        "--target",
+        default="final_chart_cnf",
+        choices=sorted(TARGET_EVENTS),
+        help="target each origin is scored for",
+    )
+    origins.add_argument(
+        "--min-train-dates",
+        type=int,
+        default=DEFAULT_MIN_TRAIN_DATES,
+        help="dates a training window must hold before it can be scored against",
+    )
+    origins.add_argument(
+        "--horizon-dates",
+        type=int,
+        default=DEFAULT_HORIZON_DATES,
+        help="dates scored after each cutoff",
+    )
+    origins.add_argument(
+        "--step-dates",
+        type=int,
+        default=DEFAULT_STEP_DATES,
+        help="dates the cutoff advances by; must be at least --horizon-dates",
+    )
+    origins.add_argument("--min-scored-rows", type=int, default=1)
+    origins.add_argument("--gap-days", type=int, default=0)
+    origins.add_argument("--min-sample-threshold", type=int, default=30)
+    origins.add_argument("--laplace-alpha", type=float, default=1.0)
+    origins.add_argument("--report", type=Path, default=None)
+    origins.add_argument(
+        "--generated-on",
+        default=None,
+        help="YYYY-MM-DD recorded in the report; required so output is reproducible",
+    )
+    origins.add_argument("--allow-synthetic-for-testing", action="store_true")
 
     return parser
 
@@ -283,10 +342,57 @@ def _evaluate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _origins(args: argparse.Namespace) -> int:
+    dataset = _dataset(args)
+    print(_describe_intake(dataset))
+    if dataset.eligibility_relaxed:
+        print(
+            "Eligibility thresholds were NOT met; running only because this is a "
+            "labelled synthetic pipeline test."
+        )
+    source = dataset.manifest.source
+    result = run_rolling_origins(
+        dataset.frame,
+        dataset_id=dataset.dataset_id,
+        dataset_sha256=dataset.sha256,
+        source_reference=source.source_register_entry or source.publisher,
+        approval_status=dataset.manifest.decision.decision,
+        is_synthetic=dataset.is_synthetic,
+        mapping_version=MAPPING_VERSION,
+        target=args.target,
+        min_sample_threshold=args.min_sample_threshold,
+        laplace_alpha=args.laplace_alpha,
+        min_train_dates=args.min_train_dates,
+        horizon_dates=args.horizon_dates,
+        step_dates=args.step_dates,
+        gap_days=args.gap_days,
+        min_scored_rows=args.min_scored_rows,
+    )
+    print(describe_result(result))
+    if args.report is not None:
+        report = build_origin_report(
+            result,
+            dataset_id=dataset.dataset_id,
+            dataset_sha256=dataset.sha256,
+            dataset_rows=dataset.report.total_rows,
+            status_mapping_version=MAPPING_VERSION,
+            data_approval_status=dataset.manifest.decision.decision,
+            is_synthetic=dataset.is_synthetic,
+            generated_on=_require_generated_on(args),
+        )
+        path = write_origin_report(report, args.report)
+        print()
+        print(report.summary())
+        print(f"\nReport written to {path}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    handlers = {"fit": _fit, "evaluate": _evaluate, "origins": _origins}
     try:
-        return _fit(args) if args.command == "fit" else _evaluate(args)
+        return handlers[args.command](args)
     except (
         DatasetValidationError,
         ModelArtifactError,

@@ -324,6 +324,11 @@ python -m railconfirm.training fit data/processed/dataset.csv data/manifests/set
 # score an existing artifact on held-out partitions
 python -m railconfirm.training evaluate data/processed/dataset.csv data/manifests/set.yaml \
   --artifact models/baseline_v1.json --target final_chart_cnf
+
+# refit at each cutoff and score only the horizon after it (rolling-origin, ADR-0014)
+python -m railconfirm.training origins data/processed/dataset.csv data/manifests/set.yaml \
+  --min-train-dates 4 --horizon-dates 2 --step-dates 2 \
+  --report reports/origins.json --generated-on 2026-10-23
 ```
 
 A successful `fit` writes `promotion: "candidate"`, so nothing starts serving; activation
@@ -361,8 +366,17 @@ Eligibility thresholds were NOT met; fitted only because this is a labelled synt
   a user-visible probability. It is the only route below the intake thresholds and it
   works only when rows declare `is_synthetic` — passing the flag for a real file changes
   nothing — and the artifact carries a limitation recording the relaxation.
-- Rolling-origin evaluation and calibration fitting are not implemented. The report
-  states that no calibration was fitted whenever the artifact says so.
+- Rolling-origin evaluation (`origins`) plans whole-date cutoffs, refits the cohort table
+  and its prevalence baseline from each origin's own past, and refuses to run at all when
+  the calendar supports fewer than two cutoffs. Conclusions are written against the
+  origins that produced a score — an abstaining horizon is counted separately, not as a
+  lost forecast — and the Brier and coverage ranges across origins are printed instead of
+  being averaged into a single flattering number. The method is
+  `refit-per-origin, score-the-next-horizon`: it measures the fitting procedure over time,
+  not one frozen artifact's decay.
+- Not implemented: calibration fitting, and scoring one *frozen* artifact against
+  successive horizons. The report states that no calibration was fitted whenever the
+  artifact says so.
 
 ## Limitations
 

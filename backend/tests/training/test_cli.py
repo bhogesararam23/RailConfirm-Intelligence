@@ -11,6 +11,7 @@ from tests.support.datasets import (
     write_approved_manifest,
     write_dataset,
     write_gate_dataset,
+    write_moving_dataset,
 )
 
 
@@ -351,6 +352,93 @@ def test_evaluate_can_write_a_full_report(paths):
     assert payload["conclusions"]
     assert any("Brier" in line for line in payload["conclusions"])
     assert any("calibration" in line.lower() for line in payload["limitations"])
+
+
+def test_origins_scores_several_cutoffs_and_writes_a_report(tmp_path: Path, capsys):
+    csv = write_moving_dataset(tmp_path)
+    manifest = write_approved_manifest(csv, tmp_path, dataset_id="origins-cli")
+    report = tmp_path / "origins.json"
+    code = main(
+        [
+            "origins",
+            str(csv),
+            str(manifest),
+            "--min-sample-threshold",
+            "1",
+            "--min-train-dates",
+            "4",
+            "--horizon-dates",
+            "2",
+            "--step-dates",
+            "2",
+            "--report",
+            str(report),
+            "--generated-on",
+            "2026-10-23",
+            "--allow-synthetic-for-testing",
+        ]
+    )
+    printed = capsys.readouterr().out
+    assert code == 0, printed
+    assert "Validation kept 240 of 240 rows" in printed
+    assert "Aggregate over" in printed
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    assert payload["evaluation_method"] == "refit-per-origin, score-the-next-horizon"
+    assert payload["plan"]["origin_count"] == len(payload["origins"])
+    assert payload["plan"]["origin_count"] >= 2
+    assert payload["dataset"]["is_synthetic"] is True
+    assert payload["conclusions"]
+    assert any("independent evaluations" in line for line in payload["limitations"])
+
+
+def test_origins_refuses_data_that_supports_only_one_cutoff(tmp_path: Path, capsys):
+    """Six dates with a five-date training block leaves a single horizon."""
+    csv = write_gate_dataset(tmp_path)
+    manifest = write_approved_manifest(csv, tmp_path, dataset_id="origins-one")
+    code = main(
+        [
+            "origins",
+            str(csv),
+            str(manifest),
+            "--min-train-dates",
+            "5",
+            "--min-sample-threshold",
+            "1",
+            "--allow-synthetic-for-testing",
+        ]
+    )
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "rolling-origin evaluation" in err
+    assert "Only 1 origin usable" in err
+
+
+def test_origins_report_still_requires_an_explicit_generation_date(tmp_path: Path, capsys):
+    csv = write_moving_dataset(tmp_path)
+    manifest = write_approved_manifest(csv, tmp_path, dataset_id="origins-undated")
+    assert (
+        main(
+            [
+                "origins",
+                str(csv),
+                str(manifest),
+                "--min-train-dates",
+                "4",
+                "--report",
+                str(tmp_path / "o.json"),
+                "--allow-synthetic-for-testing",
+            ]
+        )
+        == 1
+    )
+    assert "--generated-on" in capsys.readouterr().err
+
+
+def test_origins_refuses_a_technically_ineligible_real_dataset(tmp_path: Path, capsys):
+    csv = write_gate_dataset(tmp_path, synthetic="false")
+    manifest = write_approved_manifest(csv, tmp_path, dataset_id="origins-real")
+    assert main(["origins", str(csv), str(manifest), "--min-train-dates", "2"]) == 1
+    assert "not technically eligible" in capsys.readouterr().err
 
 
 def test_unknown_command_is_a_usage_error():

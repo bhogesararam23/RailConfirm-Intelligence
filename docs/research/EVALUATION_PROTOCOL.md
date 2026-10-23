@@ -17,11 +17,11 @@ All snapshots from the same booking/journey must remain in one partition. Dedupl
 
 For each training example, reconstruct the exact information available at `prediction_at`. Exclude later status movements, final outcomes, events published later, and any data fields computed using future information. Late-ingested records must not be backdated to pretend they were available to the model.
 
-Record split dates and eligibility rules before model selection. If the time span permits, use rolling-origin evaluation across multiple cutoffs.
+Record split dates and eligibility rules before model selection. Use rolling-origin evaluation across multiple cutoffs whenever the time span permits it; when it does not, `rolling_origin_windows` refuses rather than reporting one cutoff as a temporal result.
 
 ### Implemented split behaviour
 
-`backend/railconfirm/data/preprocessing.py` currently provides the single-cutoff case; rolling-origin evaluation is not implemented and must be added before any result is called temporally robust.
+`backend/railconfirm/data/preprocessing.py` provides both the single-cutoff case (`chronological_split`) and the multi-cutoff plan (`rolling_origin_windows`, ADR-0014). Rolling-origin evaluation is implemented; it has never run on approved real data, because no approved dataset exists yet.
 
 - `chronological_split` allocates **whole dates**, not rows, so records sharing a journey date cannot straddle a boundary, and the result is independent of input row order. Dates are parsed strictly as ISO `YYYY-MM-DD`: an ambiguous value such as `01/02/2026` is refused rather than resolved by locale, because a wrong resolution silently reorders which records are "future".
 - A split that cannot give all three partitions at least one date and `min_rows_per_partition` rows, or that cannot respect `gap_days`, returns `eligible=False` with reasons **and no partitions at all**. Returning every row as `train` with an empty test frame — which is what the first implementation did for fewer than four distinct dates, and at exactly three dates — lets a later step fit, score and report a metric on data that was never held back.
@@ -31,6 +31,19 @@ Record split dates and eligibility rules before model selection. If the time spa
 - `FEATURE_SCHEMA_VERSION` and `FEATURE_COLUMNS` are the shared definition that training and inference must agree on. Changing feature meaning or nullability requires a version bump so a stored artifact can be rejected rather than misread. Version 3.0.0 renamed the derived status columns `asof_normalized`/`asof_position` and made a blank `current_status` fall back per row instead of becoming `UNKNOWN`.
 
 Every split result carries `PartitionSummary` counts — rows, distinct dates, distinct bookings and boundaries — which are what an evaluation report must publish alongside its metrics.
+
+### Implemented rolling-origin behaviour
+
+`rolling_origin_windows(df, min_train_dates=3, horizon_dates=1, step_dates=1, gap_days=0)` plans expanding-window cutoffs on **whole dates**: origin *k* trains on the first `min_train_dates + k × step_dates` dates and is scored on the `horizon_dates` dates immediately after them, separated by more than `gap_days` calendar days.
+
+- **Two origins minimum.** A plan that yields fewer than `MIN_ORIGINS = 2` usable origins is not eligible and returns **no windows**, with a reason naming the date count. One cutoff is what `chronological_split` already measures; reporting it under a plural name would turn a single draw into a temporal claim.
+- **`step_dates >= horizon_dates` is required.** Overlapping horizons would score the same outcome twice. Because every earlier horizon sits inside every later training block, one rule — no booking on both sides of a cutoff — also guarantees no booking is scored by two origins.
+- **Bookings that straddle a cutoff block the plan**, exactly as in the single-cutoff split.
+- **Each origin refits.** `run_rolling_origins` calls `fit_cohorts` on that window's training block, builds the estimator from those cohorts and scores the horizon with `score_partition`, so the baseline prevalence always comes from the origin's own past. Consequences the report states: the method line is `refit-per-origin, score-the-next-horizon` (this measures the fitting procedure across time, not one frozen artifact's decay), per-origin baselines differ by construction, and overlapping windows mean the origins are **not independent evaluations** — no multiplicity correction is applied.
+- **Origins that produced no score are counted separately from origins that lost.** A horizon where every row abstained contributes no Brier, and the conclusions are written against `origins_with_scores`, not against the origin count.
+- **Instability is the output.** Conclusions report how many scoring origins beat their baseline (all / none / some), the Brier range and the coverage range across origins. `--report` is byte-reproducible and requires `--generated-on`.
+
+Reproduce it with `python -m railconfirm.training origins DATASET MANIFEST --min-train-dates 3 --horizon-dates 1 --step-dates 1 --allow-synthetic-for-testing`.
 
 ### Implemented scoring
 
@@ -43,7 +56,7 @@ Every split result carries `PartitionSummary` counts — rows, distinct dates, d
 
 Fitting or scoring an artifact for a target it was not fitted for is refused rather than tolerated: `evaluate --target` is checked against the artifact's declared target, and `--target` accepts only the targets `TARGET_EVENTS` defines.
 
-Not implemented: rolling-origin evaluation across multiple cutoffs, calibration fitting, and any dependence-aware group model. No number produced by this code has come from approved real data.
+Not implemented: calibration fitting, a dependence-aware group model, and evaluation of one *frozen* artifact against successive horizons (the rolling-origin path refits at each cutoff). No number produced by this code has come from approved real data.
 
 ## Baselines and candidates
 

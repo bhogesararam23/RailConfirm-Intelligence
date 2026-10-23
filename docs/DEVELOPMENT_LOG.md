@@ -820,3 +820,102 @@ and the temp directories deleted afterwards.
   vocabulary and `ESTIMATOR_*` value, not a widened constant here.
 - Existing `/1` artifacts would now be refused. None exist in the repository or in any
   documented deployment, so nothing was orphaned.
+
+## 2026-10-23 — Rolling-origin evaluation: the pipeline now refuses a single cutoff
+
+### Scope
+The next gap the project's own protocol named: `docs/research/EVALUATION_PROTOCOL.md` said
+rolling-origin evaluation "must be added before any result is called temporally robust",
+and `docs/AGENT_HANDOFF.md` listed it as a task. ADR-0011 had postponed it because it
+"needs a dataset long enough for several cutoffs" — which is true of the *result* and
+false of the *tool*: if the multi-cutoff path only gets written after the data lands, the
+first run on approved data is the one most likely to be quoted, and it would be one cutoff.
+This revises that reasoning (ADR-0014), on labelled synthetic fixtures only.
+
+### Decisions (ADR-0014)
+- **Whole-date expanding cutoffs, planned before any fitting.** `rolling_origin_windows()`
+  takes `min_train_dates` dates to start, scores the next `horizon_dates`, advances by
+  `step_dates`, optionally separated by `gap_days`. Dates, never rows, so a record cannot
+  straddle a cutoff; ambiguous dates raise exactly as in `chronological_split`.
+- **Fewer than two usable origins is refused, not averaged in.** `MIN_ORIGINS = 2`; a plan
+  that yields one returns **no windows** with a reason naming the date count, and
+  `run_rolling_origins()` raises instead of scoring a partial plan. One measurement under a
+  plural name is the misleading case the command exists to prevent.
+- **`step_dates >= horizon_dates` is required, and it makes double-counting impossible with
+  one rule.** Every earlier horizon sits inside every later training block, so a booking
+  appearing in two scored windows necessarily straddles the later cutoff — the crossing
+  check already refuses it. An added "scored twice" check was written, found unreachable,
+  and removed rather than left as decoration.
+- **Each origin refits, and each origin gets its own baseline.** `fit_cohorts` → cohorts +
+  prevalence → `build_estimator` → `score_partition`, all the same functions the
+  single-cutoff path uses. Consequences stated in the report: the method line is
+  `refit-per-origin, score-the-next-horizon` (this measures the fitting procedure across
+  time, not one frozen artifact's decay), baselines differ by construction, overlapping
+  windows are not independent evaluations, and no multiplicity correction is applied.
+- **Origins that scored nothing are counted apart from origins that lost.**
+  `origins_with_scores` sits beside `origins_beating_baseline`; conclusions are written
+  against the scoring origins, and an all-abstention run says "No origin measured anything
+  … this run is evidence about coverage, not about accuracy" instead of implying a loss.
+- **The spread is the finding.** Conclusions report all/none/some beating, the Brier range
+  and the coverage range. `--report` requires `--generated-on` and is byte-reproducible.
+
+### Files
+New: `backend/railconfirm/training/origins.py`,
+`backend/tests/data/test_rolling_origins.py`, `backend/tests/training/test_origins.py`,
+`docs/adr/ADR-0014-rolling-origin-evaluation-with-per-cutoff-refitting.md`.
+Changed: `backend/railconfirm/data/preprocessing.py` (window planner),
+`backend/railconfirm/training/{report,__main__,__init__}.py`,
+`backend/railconfirm/data/__init__.py`, `backend/tests/training/test_cli.py`,
+`docs/research/EVALUATION_PROTOCOL.md`, `docs/adr/README.md`, `docs/PROJECT_STATUS.md`,
+`docs/AGENT_HANDOFF.md`, `README.md`, `backend/README.md`, `CHANGELOG.md`.
+
+### Checks run
+- `python -m pytest tests --cov=railconfirm --cov-fail-under=90` → **611 passed**, coverage
+  **96.30%**; `railconfirm/training/origins.py` at 100%, `report.py` 97% (remaining gaps are
+  pre-existing single-cutoff branches).
+- `python -m ruff check railconfirm tests` → **All checks passed!**
+- `python -m mypy` → **Success: no issues found in 39 source files**.
+- `python scripts/check_repository_hygiene.py` → exit 0, "22 required files, 205 tracked
+  files scanned".
+- 44 new tests: the planner (boundaries grow by the step, no origin scores a date it
+  trained on, horizons disjoint, row order cannot move a boundary, scarce horizon /
+  unhonourable gap / single origin / straddling booking each refuse with reasons, ambiguous
+  dates raise, argument rules raise, no frames in `to_dict`); the run (hand-checked cells —
+  origin 0's four-CNF block gives baseline 2.0 against model 92/81, origin 1's 4-CNF/2-WL
+  block gives 2/9 against 48/121, mean and spread match; a threshold only one horizon
+  clears yields "1 of 2 origins produced no score at all" plus a coverage range; a
+  both-waitlisted fixture yields "All 2 scoring origins beat…"; one cutoff refuses; an
+  unfittable window names "Origin 0 (2026-02-01..2026-02-02)"; the merged target scores
+  6/9 mass; reports are byte-stable); the CLI (nine-origin run writes a report, single
+  cutoff exits 1, missing `--generated-on` exits 1, an ineligible real file exits 1).
+
+### Pipeline exercised on labelled synthetic fixtures
+- `python -m railconfirm.training origins synthetic-moving.csv … --min-sample-threshold 1
+  --allow-synthetic-for-testing --report … --generated-on 2026-10-23` → exit 0, **9 origins
+  over 12 journey dates, all 9 producing a score**. Printed:
+  `Aggregate over 9 origin(s), 9 of which produced a score: mean Brier 0.958270 vs baseline
+  0.607018, 1/9 beat it`, `event 0.473334 vs baseline 0.303509, 2/9 beat it`,
+  `rows scored 180 of 180`, `Brier ranged 0.503704 to 1.632000 across origins`, and the
+  conclusion that the distribution verdict "is not stable across cutoffs and one cutoff's
+  number should not be quoted as the result".
+- This is the concrete argument for the feature: the single-cutoff run on the same file
+  reports Brier 0.503704 against 0.500000 — one number that reads as "barely loses" — while
+  across nine cutoffs the same method ranges up to 1.632000 and beats the base rate at one
+  of nine. **Synthetic rows: neither figure says anything about railways.**
+- Repeating the run produced a byte-identical report (`cmp` clean), which is what
+  `--generated-on` exists to guarantee.
+- A six-date file asked for a five-date training block → exit 1:
+  `Refused: Cannot run rolling-origin evaluation: - Only 1 origin usable from 6 distinct
+  journey_date values…`, after the same run printed its intake accounting and the synthetic
+  relaxation notice.
+
+### Open
+- Rolling-origin evaluation has never run on approved real data, and the current intake
+  floor of four distinct journey dates only supports two origins with the defaults — a
+  real temporal claim needs a longer file, which is now an explicit intake requirement in
+  `docs/AGENT_HANDOFF.md`.
+- Not implemented: calibration fitting (ADR-0004), and scoring one *frozen* artifact against
+  successive horizons, which is a different question from the refit-per-origin run and would
+  need its own method declaration.
+- Per-origin results are unweighted. Weighting by horizon rows is a decision for when real
+  row counts exist, not a default to add now.

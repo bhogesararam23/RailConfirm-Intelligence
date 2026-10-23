@@ -21,8 +21,13 @@ from railconfirm.data.preprocessing import FEATURE_COLUMNS, SplitResult
 from railconfirm.inference.artifacts import ModelArtifactMetadata
 from railconfirm.training.fitter import FitSummary
 from railconfirm.training.metrics import TARGET_EVENTS, Scorecard
+from railconfirm.training.origins import RollingOriginResult
 
 REPORT_SCHEMA_VERSION = "1.0.0"
+ORIGIN_REPORT_SCHEMA_VERSION = "1.0.0"
+"""Separate from ``REPORT_SCHEMA_VERSION``: a rolling-origin report describes many
+cutoffs, not one train/validation/test run, and a reader must be able to tell which
+shape the bytes are."""
 
 METRIC_DEFINITIONS: dict[str, str] = {
     "brier": (
@@ -301,6 +306,224 @@ def build_report(
 
 
 def write_report(report: EvaluationReport, path: Path) -> Path:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(report.to_json(), encoding="utf-8")
+    return target
+
+
+@dataclass
+class RollingOriginReport:
+    """Every origin measured, the aggregate, and what the spread means."""
+
+    report_schema_version: str
+    generated_on: str
+    evaluation_method: str
+    target: str
+    target_event_classes: list[str]
+    dataset: dict[str, Any]
+    plan: dict[str, Any]
+    aggregate: dict[str, Any]
+    origins: list[dict[str, Any]]
+    metric_definitions: dict[str, str]
+    limitations: list[str] = field(default_factory=list)
+    conclusions: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
+
+    def summary(self) -> str:
+        lines = [
+            "=== Rolling-origin evaluation report ===",
+            (
+                f"{self.evaluation_method} · target {self.target} "
+                f"(event: {'/'.join(self.target_event_classes) or 'undefined'}) · "
+                f"generated {self.generated_on}"
+            ),
+            (
+                f"Dataset {self.dataset['dataset_id']} "
+                f"(sha256 {str(self.dataset['sha256'])[:12]}…, "
+                f"{self.dataset['rows']} rows)"
+            ),
+            "",
+            "Origins:",
+        ]
+        for origin in self.origins:
+            score = origin["score"]
+            window = origin["origin"]
+            lines.append(
+                f"  {window['train_start']}..{window['train_end']} "
+                f"({window['train_rows']} rows, {window['train_dates']} dates) -> "
+                f"{window['scored_start']}..{window['scored_end']} "
+                f"({window['scored_rows']} rows)"
+            )
+            lines.append(
+                f"    Brier {_fmt(score['brier'])} vs {_fmt(score['baseline_brier'])} "
+                f"· event {_fmt(score['event_brier'])} vs "
+                f"{_fmt(score['event_baseline_brier'])} · coverage "
+                f"{score['coverage']:.1%} ({score['scored_rows']}/{score['rows']}), "
+                f"{origin['cohorts']} cohorts"
+            )
+        aggregate = self.aggregate
+        lines += [
+            "",
+            f"Aggregate: mean Brier {_fmt(aggregate['mean_brier'])} vs "
+            f"{_fmt(aggregate['mean_baseline_brier'])}, mean event "
+            f"{_fmt(aggregate['mean_event_brier'])} vs "
+            f"{_fmt(aggregate['mean_event_baseline_brier'])}",
+            (
+                f"Origins beating the base rate: "
+                f"{aggregate['origins_beating_baseline']}/"
+                f"{aggregate['origins_with_scores']} scoring origins (distribution), "
+                f"{aggregate['origins_beating_event_baseline']}/"
+                f"{aggregate['origins_with_event_scores']} (event)"
+            ),
+            "",
+            "Conclusions:",
+        ]
+        lines += [f"  - {item}" for item in self.conclusions]
+        lines += ["", "Limitations:"]
+        lines += [f"  - {item}" for item in self.limitations]
+        return "\n".join(lines)
+
+
+ORIGIN_EVALUATION_METHOD = "refit-per-origin, score-the-next-horizon"
+"""The method line a reader judges the numbers by: the table is refitted each cutoff,
+so this measures the fitting procedure over time rather than one frozen artifact."""
+
+
+def build_origin_report(
+    result: RollingOriginResult,
+    *,
+    dataset_id: str,
+    dataset_sha256: str,
+    dataset_rows: int,
+    status_mapping_version: str,
+    data_approval_status: str,
+    is_synthetic: bool,
+    generated_on: str,
+) -> RollingOriginReport:
+    """Assemble the origin report and derive its conclusions from what was measured."""
+    payload = result.to_dict()
+    limitations = [
+        "Origins use expanding training windows that overlap each other, so this is not "
+        f"{result.origin_count} independent evaluations; no multiplicity correction is "
+        "applied and the spread is described, not tested.",
+        "Each cutoff refits the cohort table from its own training window, so this "
+        "measures the fitting procedure over time rather than one promoted artifact's "
+        "decay.",
+        "Each origin's prevalence baseline comes from its own training window; the "
+        "baselines differ between origins by construction.",
+        "No calibration was fitted or applied. Reliability bands describe observed "
+        "alignment only.",
+        "RailConfirm is an independent research tool and not an official IRCTC service.",
+    ]
+    if is_synthetic:
+        limitations.insert(
+            0,
+            "Fitted and scored on rows that declare is_synthetic: pipeline verification "
+            "only, never evidence about railway behaviour.",
+        )
+
+    conclusions = _origin_conclusions(result)
+    return RollingOriginReport(
+        report_schema_version=ORIGIN_REPORT_SCHEMA_VERSION,
+        generated_on=generated_on,
+        evaluation_method=ORIGIN_EVALUATION_METHOD,
+        target=result.target,
+        target_event_classes=list(TARGET_EVENTS[result.target]),
+        dataset={
+            "dataset_id": dataset_id,
+            "sha256": dataset_sha256,
+            "rows": dataset_rows,
+            "status_mapping_version": status_mapping_version,
+            "data_approval_status": data_approval_status,
+            "is_synthetic": is_synthetic,
+        },
+        plan=payload["plan"],
+        aggregate=payload["aggregate"],
+        origins=payload["origins"],
+        metric_definitions=dict(METRIC_DEFINITIONS),
+        limitations=limitations,
+        conclusions=conclusions,
+    )
+
+
+def _origin_conclusions(result: RollingOriginResult) -> list[str]:
+    """Say whether the verdict holds across cutoffs, which is the point of the run."""
+    conclusions: list[str] = []
+    total = result.origin_count
+    distribution_scored = result.origins_with_scores
+    event_scored = result.origins_with_event_scores
+    silent = total - distribution_scored
+    if silent:
+        conclusions.append(
+            f"{silent} of {total} origins produced no score at all: every row in those "
+            "horizons abstained, and an abstention is not a failed forecast."
+        )
+    if not distribution_scored:
+        conclusions.append(
+            f"No origin measured anything: all {result.rows_seen} horizon rows abstained, "
+            "so this run is evidence about coverage, not about accuracy."
+        )
+        return conclusions
+
+    beats = result.origins_beating_baseline
+    if beats == distribution_scored:
+        conclusions.append(
+            f"All {distribution_scored} scoring origins beat their own training-period "
+            "prevalence baseline; the distribution verdict held across cutoffs."
+        )
+    elif beats == 0:
+        conclusions.append(
+            "No scoring origin beat its training-period prevalence baseline; the "
+            "distribution verdict did not hold at any cutoff."
+        )
+    else:
+        conclusions.append(
+            f"{beats} of {distribution_scored} scoring origins beat their prevalence "
+            "baseline, so the distribution verdict is not stable across cutoffs and one "
+            "cutoff's number should not be quoted as the result."
+        )
+
+    event_beats = result.origins_beating_event_baseline
+    if event_beats == event_scored:
+        conclusions.append(
+            f"All {event_scored} origins beat the baseline for the target event "
+            f"({'/'.join(TARGET_EVENTS[result.target])})."
+        )
+    elif event_beats == 0:
+        conclusions.append(
+            f"No origin beat the baseline for the target event "
+            f"({'/'.join(TARGET_EVENTS[result.target])}); the headline probability is "
+            "no better than the base rate at any cutoff."
+        )
+    else:
+        conclusions.append(
+            f"{event_beats} of {event_scored} origins beat the target-event baseline: "
+            "the headline claim holds at some cutoffs and not others."
+        )
+
+    spread = result.brier_spread
+    if spread and spread[1] > spread[0]:
+        conclusions.append(
+            f"Brier ranged from {spread[0]:.6f} to {spread[1]:.6f} across origins; the "
+            "spread is a description of instability, not a tested difference."
+        )
+    coverage = result.coverage_spread
+    if coverage and coverage[0] < 1.0:
+        conclusions.append(
+            f"Coverage ranged from {coverage[0]:.1%} to {coverage[1]:.1%}: at least one "
+            "origin abstained on rows the others scored, and abstentions are excluded "
+            "rather than counted as errors."
+        )
+    return conclusions
+
+
+def write_origin_report(report: RollingOriginReport, path: Path) -> Path:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(report.to_json(), encoding="utf-8")
