@@ -427,8 +427,17 @@ Eligibility thresholds were NOT met; fitted only because this is a labelled synt
   judging. The run refuses below two usable horizons, refuses when a booking spans the
   cutoff, counts horizons that abstained everywhere separately from horizons that lost, and
   reports first-to-last drift plus the spread rather than a mean that hides the ordering.
-- Not implemented: calibration measured within a cohort subgroup, and any number computed
-  from approved real data. The reports state both limits in their own words.
+- Subgroup calibration (`--calibrate` or not, ADR-0019) is published on every scorecard: per
+  `class_code`, `quota_code`, booked status and as-of status it reports the mean predicted event
+  probability, the observed event rate, `gap = observed - predicted` and the row count. A
+  population can look aligned while offsetting cohorts are not, which reliability bands cannot
+  show because they pool classes. The gaps are measured on the corrected probability — the number
+  a passenger was handed — and no per-segment correction is fitted, so the report calls these
+  numbers the correction's residual error. Segments below the scorecard's row floor (default 25)
+  are flagged `low_sample` and carry no claim in either direction; when none clears the floor the
+  conclusion says subgroup calibration cannot be claimed rather than quoting a thin cohort.
+- Not implemented: a per-segment calibration correction, and any number computed from approved
+  real data. The reports state both limits in their own words.
 
 ## Limitations
 

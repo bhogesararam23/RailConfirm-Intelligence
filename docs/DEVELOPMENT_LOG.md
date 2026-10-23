@@ -1302,3 +1302,99 @@ Changed: `backend/railconfirm/data/preprocessing.py`, `backend/railconfirm/data/
   intake minimum of four distinct journey dates only barely supports. That is an intake
   requirement to raise with the reviewer, not a reason to relax a refusal.
 
+## 2026-10-24 — Subgroup calibration measured, and a floor on what may be claimed from it
+
+### Scope
+ADR-0017 closed by recording that subgroup calibration was not measured. That sentence was
+honest and it was also the last remaining way this repository could say "calibrated" about a
+population while knowing nothing about the cohorts it serves — and a served probability is
+keyed by class, quota and as-of status, so the claim has always been about cohorts. Measured it,
+and recorded the wording discipline in ADR-0019.
+
+### Why the average is not the finding
+One logistic correction moves every row's log-odds by the same rule, so two cohorts sitting on
+opposite sides of the population mean can average out to an aligned headline while each stays
+wrong. Reliability bands do not reveal this, because they pool classes: they answer "rows
+predicted in the 0.3–0.4 band confirmed how often", across every cohort at once. The test that
+pins the whole change is exactly that case — ten rows predicted 0.3 that all confirm, ten
+predicted 0.7 that none do: population predicted 0.5 against observed 0.5, and segments sitting
+at +0.7 and −0.7.
+
+### Implemented
+- `training/metrics.py` — `SegmentCalibration`, `segment_calibration()`,
+  `MIN_SEGMENT_CALIBRATION_ROWS = 25`, and a `segment_calibration` field on every `Scorecard`.
+  Sliced by the dimensions `score_partition` already segments by (`class_code`, `quota_code`,
+  `asof_status`, `initial_status`), publishing `rows`, `mean_predicted`, `observed_rate`,
+  `gap = observed − predicted` and `low_sample`.
+- `training/report.py` — the metric definition, `_segment_calibration_line()` as a per-partition
+  conclusion, the unconditional "no per-segment correction is fitted" limitation, and — when a
+  layer is present — the statement that the gaps are that correction's residual error.
+- Nothing in `inference/` changed: no new artifact field, no new abstention reason, and no
+  probability moves. This is measurement on the evaluation side.
+
+### Two things the design refuses
+- **No per-cohort slope.** Cohorts are counted in the tens, and a correction whose provenance
+  depends on a passenger's class is a lookup table with a claim attached. The gap is a
+  measurement, not a proposal.
+- **No claim below the floor.** `gap` is published for every segment, but a three-row cohort
+  where all three confirmed is not a 33-point miscalibration — it is three rows. Segments under
+  the scorecard's existing `min_segment_rows` are flagged and unusable, and when no segment
+  clears the floor the conclusion says subgroup calibration cannot be claimed in either
+  direction rather than quoting a thin cohort to fill the line.
+
+### Caught by the repository's own rule
+Adding a scorecard field failed `test_every_published_metric_is_defined_and_nothing_extra_is`
+immediately — the check that no number may be published without a written definition. Two suites
+red on the first run, and the fix was to define the field rather than to exempt it, which is the
+outcome that test exists to produce.
+
+### Live run (labelled synthetic fixture, in the OS temp directory, nothing committed)
+```
+$ python -m railconfirm.training fit synthetic-balanced.csv synthetic-balanced-fixture.yaml \
+    --version segcal_v1 --out segcal_v1.json --report segcal-report.json \
+    --generated-on 2026-10-24 --min-sample-threshold 5 --allow-synthetic-for-testing
+exit 0 · validation population event Brier 0.240085 against a 0.240000 baseline
+
+validation segment_calibration:
+  asof_status=WL      rows=40  pred=0.388169 obs=0.400000 gap=+0.011831  low_sample=False
+  initial_status=WL   rows=40  pred=0.388169 obs=0.400000 gap=+0.011831  low_sample=False
+  quota_code=GN       rows=40  pred=0.388169 obs=0.400000 gap=+0.011831  low_sample=False
+  class_code=3A       rows=17  pred=0.391892 obs=0.411765 gap=+0.019873  low_sample=True
+  class_code=SL       rows=23  pred=0.385417 obs=0.391304 gap=+0.005887  low_sample=True
+
+conclusion: validation: the widest segment gap is +0.011831 in asof_status=WL over 40 rows
+  (predicted 0.388169, observed 0.400000); the partition average can hide cohorts that
+  disagree with it.
+limitation: 4 segment results rest on fewer than 25 rows and are marked low_sample.
+```
+The largest gap in the run belongs to `class_code=3A` (+0.019873) and the report declines to
+build a claim on it because 17 rows cannot carry one — which is the whole point of the floor.
+The synthetic cohorts are near-identical, so the informative gaps are around +0.012: this is
+evidence the measurement reads correctly, not evidence about railway cohorts.
+
+### Checks run and results
+- `python -m pytest tests/ -q --cov=railconfirm --cov-fail-under=90` → **824 passed** in 265.95s,
+  total coverage **96.23%** (exit 0). 22 of them new, in `tests/training/test_segment_calibration.py`.
+- `ruff check railconfirm/ tests/` → **All checks passed!**
+- `mypy` → **Success: no issues found in 42 source files**
+- Frontend, untouched by this change and re-run as confirmation: `npm test -- --run` →
+  **115 passed**; `npm run type-check` clean; `npm run lint` → **No ESLint warnings or errors**;
+  `npm run build` → compiled successfully, 7 static pages.
+- `python scripts/check_repository_hygiene.py` → recorded below, run after this entry.
+
+### Files
+New: `backend/tests/training/test_segment_calibration.py`,
+`docs/adr/ADR-0019-subgroup-calibration-measured-with-a-row-floor-on-the-claim.md`.
+Changed: `backend/railconfirm/training/metrics.py`, `backend/railconfirm/training/report.py`,
+`README.md`, `backend/README.md`, `CHANGELOG.md`, `docs/PROJECT_STATUS.md`,
+`docs/AGENT_HANDOFF.md`, `docs/adr/README.md`, `docs/research/EVALUATION_PROTOCOL.md`,
+`docs/DEVELOPMENT_LOG.md`.
+
+### Unresolved
+- The gaps have never been read on approved data, and on a sparse real file the most likely
+  honest output is "no segment holds 25 rows". That is a statement about dataset size, and it
+  argues for raising the distinct-journey-date intake minimum before any promotion decision.
+- No interval on the gaps, deliberately: a defensible one needs a stated resampling scheme and
+  counts, and a fake precision would be worse than a point estimate with a flag. Deferred, not
+  rejected.
+
