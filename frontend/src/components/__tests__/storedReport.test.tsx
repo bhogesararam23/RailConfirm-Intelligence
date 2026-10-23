@@ -145,4 +145,63 @@ describe('StoredPredictionReport', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Start a new estimate' }));
     expect(push).toHaveBeenCalledWith('/');
   });
+
+  it('asks before deleting, then removes only after the backend agrees', async () => {
+    fetchMock()
+      .mockResolvedValueOnce(jsonResponse(200, report))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    render(<StoredPredictionReport predictionId={ID} />);
+    await waitFor(() => expect(screen.getByText('Prediction report')).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole('button', { name: 'Delete this report' }));
+    // The first click only asks.
+    expect(fetchMock()).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm delete' }));
+    await waitFor(() => expect(screen.getByText('Report deleted')).toBeInTheDocument());
+    const [url, init] = fetchMock().mock.calls[1] as unknown as [string, RequestInit];
+    expect(init.method).toBe('DELETE');
+    expect(url).toBe(`${configuredApiUrl()}/v1/predictions/${ID}`);
+    expect(screen.getByRole('link', { name: 'See what is still kept' })).toHaveAttribute(
+      'href',
+      '/history',
+    );
+  });
+
+  it('keeps showing the report when the delete is refused', async () => {
+    fetchMock()
+      .mockResolvedValueOnce(jsonResponse(200, report))
+      .mockResolvedValueOnce(
+        jsonResponse(404, {
+          error: 'No stored report with this id could be deleted.',
+          details: [
+            { code: 'not_found', message: 'No stored report with this id could be deleted.' },
+          ],
+          request_id: 'req-gone',
+        }),
+      );
+    render(<StoredPredictionReport predictionId={ID} />);
+    await waitFor(() => expect(screen.getByText('Prediction report')).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole('button', { name: 'Delete this report' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm delete' }));
+
+    await waitFor(() => expect(screen.getByText(/Not deleted: No stored report/)).toBeInTheDocument());
+    // The report is still on screen: a delete that did not happen must not look done.
+    expect(screen.getByText('Prediction report')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete this report' })).toBeInTheDocument();
+  });
+
+  it('reports a network failure during deletion without claiming success', async () => {
+    fetchMock().mockResolvedValueOnce(jsonResponse(200, report));
+    fetchMock().mockRejectedValueOnce(new TypeError('fetch failed'));
+    render(<StoredPredictionReport predictionId={ID} />);
+    await waitFor(() => expect(screen.getByText('Prediction report')).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole('button', { name: 'Delete this report' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm delete' }));
+
+    await waitFor(() => expect(screen.getByText(/Not deleted/)).toBeInTheDocument());
+    expect(screen.getByText('Prediction report')).toBeInTheDocument();
+  });
 });

@@ -1,12 +1,17 @@
-"""POST /v1/predictions/manual endpoint.
+"""The prediction routes.
 
-Validates the incoming request, normalizes statuses, dispatches to the inference
-engine, and returns a structured response.
+``POST /v1/predictions/manual`` validates the incoming request, normalises statuses,
+dispatches to the inference engine and returns a structured response. If no validated
+model or approved data is available the engine returns a structured abstention — never a
+fabricated probability. A valid request that the available evidence cannot support is
+reported through the abstention contract, not as a 200 with an invented number and not as
+an HTTP error.
 
-If no validated model or approved data is available the engine returns a
-structured abstention — never a fabricated probability. A valid request that the
-available evidence cannot support is reported through the abstention contract,
-not as a 200 with an invented number and not as an HTTP error.
+``GET /v1/predictions/{id}`` reopens a report the caller chose to keep, ``GET
+/v1/predictions`` lists what history holds without describing any of it, and ``DELETE
+/v1/predictions/{id}`` removes one report on request instead of waiting for retention.
+All three refuse a PNR-shaped id, and all three answer the same way whether the report is
+absent, expired or never stored — a history route must not confirm what it does not have.
 """
 
 from __future__ import annotations
@@ -25,6 +30,8 @@ from railconfirm.api.v1.schemas import (
     PassengerOutcomeResponse,
     PredictionRequest,
     PredictionResponse,
+    StoredReportsResponse,
+    StoredReportSummary,
 )
 from railconfirm.domain.journey import make_journey
 from railconfirm.domain.passenger import StatusObservation, make_observation
@@ -282,24 +289,8 @@ async def read_prediction(
     store: Annotated[PredictionStore | None, Depends(get_prediction_store)],
 ) -> PredictionResponse:
     """Serve a stored report by internal id."""
-    if store is None:
-        raise ApiProblem(
-            status_code=404,
-            code=ReasonCode.HISTORY_DISABLED,
-            message="This server keeps no prediction history.",
-        )
-    if len(prediction_id) == 10 and prediction_id.isdigit() and prediction_id[0] != "0":
-        # The id in a URL is the one place a user might paste a PNR. Answering that
-        # question here would make this endpoint a ticket tracker.
-        raise ApiProblem(
-            status_code=404,
-            code=ReasonCode.NOT_FOUND,
-            message=(
-                "Reports are reopened by the internal id the server returned, not by a "
-                "PNR number."
-            ),
-        )
-    stored = store.get(prediction_id, now=datetime.now(UTC))
+    opened = _require_store(store, prediction_id)
+    stored = opened.get(prediction_id, now=datetime.now(UTC))
     if stored is None:
         raise ApiProblem(
             status_code=404,
@@ -330,3 +321,105 @@ async def read_prediction(
             "retention_expires_at": stored.expires_at,
         }
     )
+
+
+@router.get(
+    "/predictions",
+    response_model=StoredReportsResponse,
+    summary="List the reports this server has kept",
+    description=(
+        "Ids, targets, model versions and retention clocks — never report contents. A "
+        "report whose retention window has closed is not listed, because the list and the "
+        "reopen route must agree about what exists. Requires prediction history to be "
+        "enabled; with history off this answers 404 rather than returning an empty list, "
+        "so a client cannot mistake 'disabled' for 'nothing kept'."
+    ),
+    tags=["predictions"],
+)
+async def list_predictions(
+    store: Annotated[PredictionStore | None, Depends(get_prediction_store)],
+) -> StoredReportsResponse:
+    """Describe the stored reports without loading any payload."""
+    if store is None:
+        raise ApiProblem(
+            status_code=404,
+            code=ReasonCode.HISTORY_DISABLED,
+            message="This server keeps no prediction history.",
+        )
+    now = datetime.now(UTC)
+    summaries = [
+        StoredReportSummary(
+            prediction_id=summary.prediction_id,
+            target=summary.target,
+            model_version=summary.model_version,
+            recorded_at=summary.recorded_at,
+            retention_expires_at=summary.expires_at,
+        )
+        for summary in store.summaries(now=now)
+    ]
+    return StoredReportsResponse(
+        reports=summaries,
+        count=len(summaries),
+        retention_days=store.retention_days,
+    )
+
+
+@router.delete(
+    "/predictions/{prediction_id}",
+    status_code=204,
+    summary="Delete a kept report",
+    description=(
+        "Removes the stored report for this internal id now, instead of waiting for its "
+        "retention window to close. Nothing is returned: a deleted report must not be "
+        "confirmable by reading it back. An id that is absent, already deleted or past "
+        "retention answers the same way, so this route cannot be used to probe what is "
+        "kept. PNR numbers are not accepted here."
+    ),
+    tags=["predictions"],
+)
+async def delete_prediction(
+    prediction_id: str,
+    store: Annotated[PredictionStore | None, Depends(get_prediction_store)],
+) -> None:
+    """Hard-delete one stored report by internal id."""
+    opened = _require_store(store, prediction_id)
+    removed = opened.delete(prediction_id)
+    if not removed:
+        # Deliberately the same answer as "never existed": whether a report expired,
+        # was deleted a minute ago, or was never kept is not information this route
+        # should hand out to whoever holds an id.
+        raise ApiProblem(
+            status_code=404,
+            code=ReasonCode.NOT_FOUND,
+            message=(
+                "No stored report with this id could be deleted. Either it was never "
+                "stored, it has already been deleted, or its retention window closed and "
+                "it is gone."
+            ),
+        )
+    logger.info("Prediction history: deleted report %s", prediction_id[:8])
+    return None
+
+
+def _require_store(
+    store: PredictionStore | None, prediction_id: str
+) -> PredictionStore:
+    """The guards every id-addressed history route shares, in one place."""
+    if store is None:
+        raise ApiProblem(
+            status_code=404,
+            code=ReasonCode.HISTORY_DISABLED,
+            message="This server keeps no prediction history.",
+        )
+    if len(prediction_id) == 10 and prediction_id.isdigit() and prediction_id[0] != "0":
+        # The id in a URL is the one place a user might paste a PNR. Answering that
+        # question here would make this endpoint a ticket tracker.
+        raise ApiProblem(
+            status_code=404,
+            code=ReasonCode.NOT_FOUND,
+            message=(
+                "Reports are reopened by the internal id the server returned, not by a "
+                "PNR number."
+            ),
+        )
+    return store

@@ -3,7 +3,9 @@ import {
   ApiFailure,
   checkHealth,
   configuredApiUrl,
+  deleteStoredPrediction,
   fetchStoredPrediction,
+  fetchStoredReports,
   isLoopbackApi,
   submitPrediction,
 } from '@/lib/api';
@@ -162,6 +164,81 @@ describe('fetchStoredPrediction', () => {
   it('encodes an id that contains path characters', async () => {
     fetchMock().mockResolvedValue(jsonResponse(404, { error: 'no', details: [] }));
     await fetchStoredPrediction('a/b').catch(() => undefined);
+    const [url] = fetchMock().mock.calls[0] as unknown as [string];
+    expect(url).toBe(`${configuredApiUrl()}/v1/predictions/a%2Fb`);
+  });
+});
+
+describe('fetchStoredReports', () => {
+  it('GETs the history list and returns it unchanged', async () => {
+    const body = {
+      reports: [
+        {
+          prediction_id: 'a1b2',
+          target: 'final_chart_cnf',
+          model_version: 'fixture_v1',
+          recorded_at: '2026-10-23T10:00:00Z',
+          retention_expires_at: '2026-10-30T10:00:00Z',
+        },
+      ],
+      count: 1,
+      retention_days: 7,
+    };
+    fetchMock().mockResolvedValue(jsonResponse(200, body));
+    await expect(fetchStoredReports()).resolves.toEqual(body);
+    const [url, init] = fetchMock().mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe(`${configuredApiUrl()}/v1/predictions`);
+    expect(init.method).toBe('GET');
+  });
+
+  it('keeps history_disabled distinguishable from an empty list', async () => {
+    fetchMock().mockResolvedValue(
+      jsonResponse(404, {
+        error: 'This server keeps no prediction history.',
+        details: [{ code: 'history_disabled', message: 'This server keeps no prediction history.' }],
+        request_id: 'req-off',
+      }),
+    );
+    const failure = await fetchStoredReports().catch((error) => error);
+    expect(failure).toBeInstanceOf(ApiFailure);
+    expect(failure.code).toBe('history_disabled');
+    expect(failure.status).toBe(404);
+  });
+});
+
+describe('deleteStoredPrediction', () => {
+  it('resolves on 204 without trying to parse a body', async () => {
+    fetchMock().mockResolvedValue(new Response(null, { status: 204 }));
+    await expect(deleteStoredPrediction('a1b2')).resolves.toBeUndefined();
+    const [url, init] = fetchMock().mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe(`${configuredApiUrl()}/v1/predictions/a1b2`);
+    expect(init.method).toBe('DELETE');
+  });
+
+  it('reports a refused delete as the envelope said, not as success', async () => {
+    fetchMock().mockResolvedValue(
+      jsonResponse(404, {
+        error: 'No stored report with this id could be deleted.',
+        details: [{ code: 'not_found', message: 'No stored report with this id could be deleted.' }],
+        request_id: 'req-gone',
+      }),
+    );
+    const failure = await deleteStoredPrediction('a1b2').catch((error) => error);
+    expect(failure).toBeInstanceOf(ApiFailure);
+    expect(failure.status).toBe(404);
+    expect(failure.code).toBe('not_found');
+    expect(failure.requestId).toBe('req-gone');
+  });
+
+  it('classifies a transport failure the same way the reopen route does', async () => {
+    fetchMock().mockRejectedValue(new TypeError('fetch failed'));
+    const failure = await deleteStoredPrediction('a1b2').catch((error) => error);
+    expect(failure.kind).toBe('network');
+  });
+
+  it('encodes the id so a delete cannot reach another path', async () => {
+    fetchMock().mockResolvedValue(new Response(null, { status: 204 }));
+    await deleteStoredPrediction('a/b');
     const [url] = fetchMock().mock.calls[0] as unknown as [string];
     expect(url).toBe(`${configuredApiUrl()}/v1/predictions/a%2Fb`);
   });

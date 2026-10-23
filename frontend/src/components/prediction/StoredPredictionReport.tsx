@@ -2,12 +2,13 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ApiFailure, fetchStoredPrediction } from '@/lib/api';
+import Link from 'next/link';
+import { ApiFailure, deleteStoredPrediction, fetchStoredPrediction } from '@/lib/api';
 import type { PredictionResponse } from '@/lib/types';
 import { PredictionResult } from './PredictionResult';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 
-type LoadState = 'loading' | 'found' | 'missing' | 'error';
+type LoadState = 'loading' | 'found' | 'missing' | 'deleted' | 'error';
 
 interface StoredPredictionReportProps {
   predictionId: string;
@@ -25,11 +26,16 @@ export function StoredPredictionReport({ predictionId }: StoredPredictionReportP
   const [state, setState] = useState<LoadState>('loading');
   const [report, setReport] = useState<PredictionResponse | null>(null);
   const [failure, setFailure] = useState<ApiFailure | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [deleteMessage, setDeleteMessage] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setState('loading');
     setReport(null);
     setFailure(null);
+    setConfirmingDelete(false);
+    setDeleteMessage(null);
     try {
       const stored = await fetchStoredPrediction(predictionId);
       setReport(stored);
@@ -49,8 +55,57 @@ export function StoredPredictionReport({ predictionId }: StoredPredictionReportP
     void load();
   }, [load]);
 
+  async function removeReport() {
+    setRemoving(true);
+    setDeleteMessage(null);
+    try {
+      await deleteStoredPrediction(predictionId);
+      setState('deleted');
+    } catch (error) {
+      // Keep showing the report: a delete that did not happen must not look like one.
+      setDeleteMessage(
+        error instanceof ApiFailure
+          ? `Not deleted: ${error.message}`
+          : 'Not deleted: the backend did not answer.',
+      );
+      setConfirmingDelete(false);
+    } finally {
+      setRemoving(false);
+    }
+  }
+
   if (state === 'loading') {
     return <LoadingSpinner label={`Looking up report ${predictionId}…`} />;
+  }
+
+  if (state === 'deleted') {
+    return (
+      <div
+        role="status"
+        className="rounded-lg border border-gray-200 bg-white p-6 text-sm text-gray-700 shadow-sm"
+      >
+        <h1 className="text-lg font-semibold text-gray-900">Report deleted</h1>
+        <p className="mt-2">
+          This copy has been removed from the server’s history. The page you were on may still
+          show it — that is your browser’s memory, not stored data.
+        </p>
+        <div className="mt-4 flex gap-3">
+          <Link
+            href="/history"
+            className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-800 hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+          >
+            See what is still kept
+          </Link>
+          <button
+            type="button"
+            onClick={() => router.push('/')}
+            className="rounded-md bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+          >
+            Start a new estimate
+          </button>
+        </div>
+      </div>
+    );
   }
 
   if (state === 'found' && report) {
@@ -64,6 +119,46 @@ export function StoredPredictionReport({ predictionId }: StoredPredictionReportP
           )}
         </p>
         <PredictionResult result={report} onReset={() => router.push('/')} />
+        <div className="rounded-lg border border-gray-200 bg-white p-4">
+          {confirmingDelete ? (
+            <div className="flex flex-wrap items-center gap-3">
+              <span role="status" aria-live="polite" className="text-sm text-gray-800">
+                Delete this stored report? Nothing else will be removed, and this cannot be
+                undone.
+              </span>
+              <button
+                type="button"
+                onClick={() => void removeReport()}
+                disabled={removing}
+                className="rounded-md bg-red-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-600 disabled:opacity-60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+              >
+                {removing ? 'Removing…' : 'Confirm delete'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmingDelete(false)}
+                className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-800 hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+              >
+                Keep it
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setConfirmingDelete(true)}
+                className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-800 hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+              >
+                Delete this report
+              </button>
+              {deleteMessage && (
+                <span role="status" aria-live="polite" className="text-xs text-red-700">
+                  {deleteMessage}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     );
   }

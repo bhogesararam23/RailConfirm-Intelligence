@@ -26,6 +26,8 @@ Status: describes the implemented `/v1` surface of `backend/railconfirm/api/`. F
 | `GET /v1/health` | Liveness plus model availability, the limits in force and the history state |
 | `POST /v1/predictions/manual` | Manual journey and passenger input, per-passenger and group outcomes |
 | `GET /v1/predictions/{prediction_id}` | Reopen a stored report by the internal id that served it (ADR-0012) |
+| `GET /v1/predictions` | List kept reports as ids, clocks and provenance only (ADR-0015) |
+| `DELETE /v1/predictions/{prediction_id}` | Remove one kept report now instead of waiting for retention (ADR-0015) |
 
 ## `POST /v1/predictions/manual`
 
@@ -142,6 +144,53 @@ reopened report is evidence about what was said then, including the `model_versi
 A `prediction_id` shaped like a PNR (10 digits, not starting with 0) is answered with
 `not_found` and a message saying reports are reopened by the id the server returned. That
 endpoint is not a ticket tracker, and a PNR never becomes a lookup key by convenience.
+
+## `GET /v1/predictions`
+
+```json
+{
+  "reports": [
+    {
+      "prediction_id": "a1b2c3d4-0000-4000-8000-000000000009",
+      "target": "final_chart_cnf",
+      "model_version": "no_model_v0",
+      "recorded_at": "2026-10-23T10:04:07Z",
+      "retention_expires_at": "2026-10-30T10:04:07Z"
+    }
+  ],
+  "count": 1,
+  "retention_days": 7
+}
+```
+
+Newest first, with `prediction_id` as a stable tie-break when two saves land in the same
+second. The list is deliberately the narrowest thing that is still usable: no train number,
+no stations, no statuses, no probabilities, no passenger rows. Everything about a report's
+contents arrives by reopening that report deliberately
+(ADR-0015 — widening this shape is a privacy decision, not a field addition).
+
+| Outcome | When |
+|---|---|
+| `200` | History is enabled; `reports` may be empty because nothing has been kept |
+| `404` `history_disabled` | This server keeps no history. Not the same answer as an empty list, because the actions differ |
+| `500` `storage_unavailable` | A stored row contradicts itself (e.g. expiry before recording) and cannot be explained |
+
+A report past its retention window is absent here and unreadable at
+`GET /v1/predictions/{prediction_id}`: the list and the read route agree about what exists.
+
+## `DELETE /v1/predictions/{prediction_id}`
+
+Removes one stored row immediately. Expiry hides; this is the user asking, so the row goes.
+
+| Outcome | When |
+|---|---|
+| `204` | A row was removed. No body: a deleted report must not be confirmable by reading it back |
+| `404` `not_found` | Nothing was removed — never stored, already deleted, expired, wrong id, or a PNR-shaped number. One body in every case, so the route cannot be used to probe which ids this machine has held |
+| `404` `history_disabled` | This server keeps no history |
+| `500` `storage_unavailable` | The store refused the operation |
+
+The interface asks twice (Delete → Confirm delete) and leaves the row listed until the
+backend has answered, because a delete that did not happen must not look like one that did.
 
 ## `GET /v1/health`
 

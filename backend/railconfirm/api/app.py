@@ -37,7 +37,7 @@ from railconfirm.domain.exceptions import (
 )
 from railconfirm.domain.validation import ReasonCode
 from railconfirm.inference.engine import InferenceEngine
-from railconfirm.storage.predictions import PredictionStore
+from railconfirm.storage.predictions import PredictionStorageError, PredictionStore
 
 ACCESS_LOG = logging.getLogger("railconfirm.access")
 
@@ -316,6 +316,22 @@ def create_app(
             content=_error_payload(
                 "The request could not be processed.",
                 [ErrorDetail(code=ReasonCode.INTERNAL_ERROR, message=exc.__class__.__name__)],
+                request,
+            ),
+        )
+
+    @app.exception_handler(PredictionStorageError)
+    async def storage_error_handler(
+        request: Request, exc: PredictionStorageError
+    ) -> JSONResponse:
+        # A history row this build cannot trust is a storage problem, not a mystery
+        # internal error: the operator needs to see which gate the store refused.
+        logging.getLogger(__name__).warning("Prediction storage error: %s", exc)
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content=_error_payload(
+                "Prediction history could not be read.",
+                [ErrorDetail(code=ReasonCode.STORAGE_UNAVAILABLE, message=str(exc))],
                 request,
             ),
         )

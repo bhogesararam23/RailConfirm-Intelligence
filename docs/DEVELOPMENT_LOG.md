@@ -919,3 +919,73 @@ Changed: `backend/railconfirm/data/preprocessing.py` (window planner),
   need its own method declaration.
 - Per-origin results are unweighted. Weighting by horizon rows is a decision for when real
   row counts exist, not a default to add now.
+
+## 2026-10-23 — History listing and per-report deletion
+
+### Scope
+Extended prediction history (ADR-0012) with a list route, a delete route, and a frontend
+history page, completing ADR-0015. The previous session's uncommitted work was verified
+clean before committing.
+
+### Added
+- `GET /v1/predictions` — lists stored report summaries (id, target, model version, clocks)
+  without payload; answers 404 with `history_disabled` when the store is off so a client
+  cannot mistake "nothing kept" for "storage disabled".
+- `DELETE /v1/predictions/{id}` — hard-deletes one report; absent, expired, and already-
+  deleted answer identically (same 404 body) so the route cannot be used to probe what this
+  machine holds. PNR-shaped ids are refused the same way the GET route refuses them.
+- `PredictionStore.delete()` — removes the named row and returns whether anything was
+  removed; a blank id returns False rather than raising.
+- `PredictionStore.summaries()` — newest first with a stable id tie-break; excludes rows
+  past retention; carries no payload (asserted by scanning the serialised list for
+  probability and status keys).
+- `PRAGMA secure_delete = ON` on the SQLite connection — freed pages are zeroed on delete;
+  the limitation (WAL side-file, filesystem snapshot) is documented rather than overstated.
+- `StoredReportSummary` / `StoredReportsResponse` schemas in `api/v1/schemas.py`.
+- `frontend/src/app/history/` — history page listing kept reports with two-step deletion
+  confirmation (first click shows Confirm, second issues DELETE, Keep it escapes).
+- `frontend/src/components/prediction/HistoryList.tsx` — loading, listed, empty, disabled
+  and failed states; a refused or network-failed delete leaves the report listed.
+- `frontend/src/components/layout/Header.tsx` — History nav link.
+- Three new `StoredPredictionReport` tests covering the two-step deletion flow.
+- `docs/adr/ADR-0015-history-listing-and-per-report-deletion.md`.
+- API contract updated with the two new routes.
+
+### Checks run
+- `python -m pytest tests/ -x --tb=short -q` → **633 passed in 35.16 s** (exit 0).
+- `python -m ruff check .` → **All checks passed!** (exit 0).
+- `python -m mypy railconfirm/` → **Success: no issues found** (exit 0).
+- `npm test -- --run` (frontend) → **6 test files, 113 tests, 0 failed** (exit 0).
+- `npx tsc --noEmit` (frontend) → clean (exit 0).
+- `npm run lint` (frontend) → **No ESLint warnings or errors** (exit 0).
+- `npm run build` (frontend) → **Compiled successfully**, 7 static pages generated (exit 0).
+
+### Files
+New: `docs/adr/ADR-0015-history-listing-and-per-report-deletion.md`,
+`frontend/src/app/history/` (page.tsx, loading.tsx),
+`frontend/src/components/prediction/HistoryList.tsx`,
+`frontend/src/components/__tests__/historyList.test.tsx`.
+Changed: `backend/railconfirm/api/app.py`,
+`backend/railconfirm/api/v1/predictions.py` (list + delete routes),
+`backend/railconfirm/api/v1/schemas.py` (summary/response types),
+`backend/railconfirm/storage/__init__.py` (StoredSummary export),
+`backend/railconfirm/storage/predictions.py` (delete, summaries, secure_delete),
+`backend/tests/api/test_contract.py` (history routes contract),
+`backend/tests/api/test_prediction_history.py` (list, delete, metadata-only assertions),
+`backend/tests/storage/test_predictions.py` (delete, summaries, secure_delete),
+`frontend/src/components/__tests__/storedReport.test.tsx` (deletion confirmation),
+`frontend/src/components/layout/Header.tsx`,
+`frontend/src/components/prediction/StoredPredictionReport.tsx` (delete trigger),
+`frontend/src/lib/__tests__/api.test.ts`,
+`frontend/src/lib/api.ts` (listPredictions, deletePrediction),
+`frontend/src/lib/types.ts`,
+`docs/adr/README.md`, `docs/architecture/API_CONTRACT.md`.
+
+### Open
+- `purge_expired()` has no scheduler in the local-first build; rows past retention are
+  hidden and unreadable but occupy disk until an operator purges them or a per-report delete
+  clears one. This is ADR-0012's recorded position, unchanged.
+- No new access boundary: the list and delete routes are unauthenticated like every other
+  route in the local-first build (CORS allowlist limits which origins). Multi-user history
+  would require authentication; that is ADR-0012's stated consequence.
+

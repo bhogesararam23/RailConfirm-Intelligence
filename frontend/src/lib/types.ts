@@ -124,6 +124,28 @@ export interface PredictionResponse {
 /** Codes the error envelope uses for history problems. */
 export type HistoryErrorCode = 'not_found' | 'history_disabled' | 'storage_unavailable';
 
+/**
+ * One kept report, as the history list describes it.
+ *
+ * Mirrors `api/v1/schemas.py::StoredReportSummary`. The list carries no journey, no
+ * probabilities and no statuses on purpose: it exists so a user can find and remove a
+ * report, not so a page can display ticket detail without opening it.
+ */
+export interface StoredReportSummary {
+  prediction_id: string;
+  target: string;
+  model_version: string;
+  recorded_at: string;
+  retention_expires_at: string;
+}
+
+/** What `GET /v1/predictions` returns. `count` equals `reports.length`. */
+export interface StoredReportsResponse {
+  reports: StoredReportSummary[];
+  count: number;
+  retention_days: number;
+}
+
 export interface HealthResponse {
   status: string;
   model_version: string;

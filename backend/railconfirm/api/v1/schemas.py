@@ -351,6 +351,38 @@ class PredictionResponse(BaseModel):
     )
 
 
+# ── Prediction history listing ─────────────────────────────────────────────────
+
+
+class StoredReportSummary(BaseModel):
+    """One kept report, described without describing its contents.
+
+    Deliberately narrow: a list endpoint is where ticket detail would leak, so it carries
+    the id the user needs to reopen the report and the clocks they need to decide whether
+    to keep it, and nothing about the journey or the probabilities.
+    """
+
+    prediction_id: str
+    target: str
+    model_version: str
+    recorded_at: datetime
+    retention_expires_at: datetime
+
+
+class StoredReportsResponse(BaseModel):
+    """What history currently holds, and for how long."""
+
+    reports: list[StoredReportSummary] = Field(default_factory=list)
+    count: int = Field(
+        ...,
+        description="Number of reports listed. Equal to len(reports), published so a client does not have to trust the array.",
+    )
+    retention_days: int = Field(
+        ...,
+        description="This server's retention window; a report stops being retrievable after it.",
+    )
+
+
 # ── Error response ─────────────────────────────────────────────────────────────
 
 

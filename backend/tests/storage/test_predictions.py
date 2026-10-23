@@ -22,11 +22,12 @@ from railconfirm.storage.predictions import (
 
 PREDICTION_AT = datetime(2026, 10, 21, 9, 0, tzinfo=UTC)
 RECORDED_AT = datetime(2026, 10, 21, 9, 0, 30, tzinfo=UTC)
+DEFAULT_ID = "3f2a1c9e-7b6d-4e5f-8a1b-2c3d4e5f6a7b"
 
 
 def payload(**overrides) -> dict:
     base = {
-        "prediction_id": "3f2a1c9e-7b6d-4e5f-8a1b-2c3d4e5f6a7b",
+        "prediction_id": DEFAULT_ID,
         "target": "final_chart_cnf",
         "prediction_at": PREDICTION_AT.isoformat(),
         "model_version": "no_model_v0",
@@ -132,7 +133,9 @@ def test_purge_leaves_rows_still_inside_retention(store: PredictionStore) -> Non
     )
     # 35 days on: the first row (expires +30) is gone, the second expires +50.
     assert store.purge_expired(now=RECORDED_AT + timedelta(days=35)) == 1
-    assert store.ids() == ["bbbbbbbb-0000-4000-8000-000000000002"]
+    assert [s.prediction_id for s in store.summaries(now=RECORDED_AT + timedelta(days=35))] == [
+        "bbbbbbbb-0000-4000-8000-000000000002"
+    ]
 
 
 def test_rows_written_from_different_offsets_still_purge_in_time_order(store: PredictionStore) -> None:
@@ -157,16 +160,102 @@ def test_rows_written_from_different_offsets_still_purge_in_time_order(store: Pr
     )
     boundary = datetime(2026, 11, 20, 4, 0, tzinfo=UTC)
     assert store.purge_expired(now=boundary) == 1
-    assert store.ids() == ["later-0000-4000-8000-000000000002"]
+    assert [s.prediction_id for s in store.summaries(now=boundary)] == [
+        "later-0000-4000-8000-000000000002"
+    ]
 
 
-def test_ids_are_listed_without_listing_contents(store: PredictionStore) -> None:
+def test_summaries_are_listed_without_listing_contents(store: PredictionStore) -> None:
     save(store)
     save(store, prediction_id="cccccccc-0000-4000-8000-000000000003")
-    listed = store.ids()
+    listed = store.summaries(now=RECORDED_AT)
     assert len(listed) == 2
-    assert all(isinstance(identifier, str) for identifier in listed)
-    assert "GNWL/41" not in json.dumps(listed)
+    assert all(isinstance(summary.prediction_id, str) for summary in listed)
+    rendered = json.dumps([summary.__dict__ for summary in listed], default=str)
+    assert "GNWL/41" not in rendered
+    assert "p_cnf" not in rendered
+
+
+def test_summaries_carry_the_clocks_and_provenance_a_list_needs(store: PredictionStore) -> None:
+    save(store, model_version="baseline_v3")
+    summary = store.summaries(now=RECORDED_AT)[0]
+    assert summary.target == "final_chart_cnf"
+    assert summary.model_version == "baseline_v3"
+    assert summary.recorded_at == RECORDED_AT
+    assert summary.expires_at == RECORDED_AT + timedelta(days=30)
+    assert summary.is_expired(RECORDED_AT + timedelta(days=30)) is True
+
+
+def test_summaries_are_newest_first(store: PredictionStore) -> None:
+    save(store, prediction_id="older-0000-4000-8000-000000000001")
+    save(
+        store,
+        prediction_id="newer-0000-4000-8000-000000000002",
+        recorded_at=RECORDED_AT + timedelta(hours=1),
+    )
+    assert [s.prediction_id for s in store.summaries(now=RECORDED_AT)] == [
+        "newer-0000-4000-8000-000000000002",
+        "older-0000-4000-8000-000000000001",
+    ]
+
+
+def test_a_report_past_retention_is_not_listed(store: PredictionStore) -> None:
+    """The list and the reopen route must agree about what a user can still open."""
+    save(store)
+    assert store.summaries(now=RECORDED_AT + timedelta(days=31)) == []
+    assert store.get(DEFAULT_ID, now=RECORDED_AT + timedelta(days=31)) is None
+
+
+def test_delete_removes_the_row_and_says_so(store: PredictionStore) -> None:
+    save(store)
+    assert store.delete(DEFAULT_ID) is True
+    assert store.size == 0
+    assert store.get(DEFAULT_ID, now=RECORDED_AT) is None
+
+
+def test_deleting_an_absent_id_is_false_not_an_error(store: PredictionStore) -> None:
+    """The route turns this into the same 404 as any other missing id, on purpose."""
+    assert store.delete("never-0000-4000-8000-000000000009") is False
+    assert store.delete("   ") is False
+    assert store.delete("") is False
+
+
+def test_delete_removes_one_report_and_leaves_the_rest(store: PredictionStore) -> None:
+    save(store)
+    save(store, prediction_id="bbbbbbbb-0000-4000-8000-000000000002")
+    assert store.delete("bbbbbbbb-0000-4000-8000-000000000002") is True
+    assert [s.prediction_id for s in store.summaries(now=RECORDED_AT)] == [DEFAULT_ID]
+
+
+def test_a_deleted_report_can_be_replaced_by_a_later_save(store: PredictionStore) -> None:
+    """Deletion is not a tombstone: keeping the same id again writes a fresh row."""
+    save(store)
+    store.delete("aaaaaaaa-0000-4000-8000-000000000001")
+    save(store, model_version="baseline_v2")
+    assert store.size == 1
+    assert store.get(DEFAULT_ID, now=RECORDED_AT).model_version == "baseline_v2"
+
+
+def test_deleting_a_report_past_retention_removes_the_hidden_row(store: PredictionStore) -> None:
+    """Expired means hidden, not gone; an explicit request still clears it."""
+    save(store)
+    assert store.delete(DEFAULT_ID) is True
+    assert store.size == 0
+
+
+def test_secure_delete_is_on_so_a_removed_row_is_not_left_in_a_free_page(store: PredictionStore) -> None:
+    row = store._connection.execute("PRAGMA secure_delete").fetchone()
+    assert int(row[0]) == 1
+
+
+def test_summaries_refuse_a_row_whose_expiry_precedes_its_recording(store: PredictionStore) -> None:
+    save(store)
+    store._connection.execute(
+        "UPDATE predictions SET expires_at = recorded_at",
+    )
+    store._connection.commit()
+    with pytest.raises(PredictionStorageError, match="before it was recorded"):
+        store.summaries(now=RECORDED_AT - timedelta(days=1))
 
 
 def test_a_denied_key_blocks_the_write(store: PredictionStore) -> None:
@@ -375,7 +464,7 @@ def test_concurrent_saves_from_other_threads_are_written_not_lost(tmp_path: Path
         with ThreadPoolExecutor(max_workers=6) as pool:
             written = list(pool.map(write, range(count)))
         assert store.size == count
-        assert set(store.ids()) == set(written)
+        assert {s.prediction_id for s in store.summaries(now=RECORDED_AT)} == set(written)
         # Every row is readable, so no commit overwrote another thread's work.
         for identifier in written:
             assert store.get(identifier, now=RECORDED_AT) is not None

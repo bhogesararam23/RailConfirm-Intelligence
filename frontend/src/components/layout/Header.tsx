@@ -18,6 +18,12 @@ export function Header() {
             Predictor
           </Link>
           <Link
+            href="/history"
+            className="rounded hover:text-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            History
+          </Link>
+          <Link
             href="/about/methodology"
             className="rounded hover:text-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
           >

@@ -4,6 +4,7 @@ import type {
   HealthResponse,
   PredictionRequest,
   PredictionResponse,
+  StoredReportsResponse,
 } from './types';
 
 const DEFAULT_API_URL = 'http://127.0.0.1:8000';
@@ -109,18 +110,25 @@ async function requestJson<T>(
   const requestId = response.headers.get('X-Request-ID');
 
   let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch {
-    throw new ApiFailure({
-      kind: 'http',
-      status: response.status,
-      requestId,
-      message:
-        response.status >= 500
-          ? 'The backend returned an error it did not describe.'
-          : 'The backend replied, but not with the JSON this client expects.',
-    });
+  if (response.status === 204) {
+    // A successful delete answers with no body on purpose: a removed report must not
+    // be confirmable by reading it back. Parsing would fail, so this is handled before
+    // the JSON step rather than by inventing an empty object.
+    payload = null;
+  } else {
+    try {
+      payload = await response.json();
+    } catch {
+      throw new ApiFailure({
+        kind: 'http',
+        status: response.status,
+        requestId,
+        message:
+          response.status >= 500
+            ? 'The backend returned an error it did not describe.'
+            : 'The backend replied, but not with the JSON this client expects.',
+      });
+    }
   }
 
   if (!response.ok) {
@@ -187,6 +195,34 @@ export function fetchStoredPrediction(
     { method: 'GET' },
     timeoutMs,
   );
+}
+
+/**
+ * The reports this server has kept, newest first, without their contents.
+ *
+ * A 404 with code `history_disabled` is a different fact from an empty list, and the
+ * backend keeps them apart so this page can say which one is true.
+ */
+export function fetchStoredReports(timeoutMs = REQUEST_TIMEOUT_MS): Promise<StoredReportsResponse> {
+  return requestJson<StoredReportsResponse>('/v1/predictions', { method: 'GET' }, timeoutMs);
+}
+
+/**
+ * Remove one kept report now instead of waiting for its retention window to close.
+ *
+ * Resolves on 204 with nothing to show. An id that is absent, already deleted or expired
+ * rejects with a 404 whose message is the same in every case, so a failure here cannot be
+ * read as evidence about what was stored.
+ */
+export function deleteStoredPrediction(
+  predictionId: string,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+): Promise<void> {
+  return requestJson<null>(
+    `/v1/predictions/${encodeURIComponent(predictionId)}`,
+    { method: 'DELETE' },
+    timeoutMs,
+  ).then(() => undefined);
 }
 
 /** The origin this client will call, for display and for the privacy statement. */

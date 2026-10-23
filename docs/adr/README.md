@@ -58,3 +58,4 @@ How will the decision be tested or revisited? Record evidence, not assumptions.
 | [ADR-0012](ADR-0012-opt-in-local-prediction-history.md) | Opt-in local prediction history: two switches, a retention floor, reopen by internal id only | Accepted |
 | [ADR-0013](ADR-0013-asof-cohort-rule-and-eligibility-enforced-training-gate.md) | One as-of cohort rule across fit/evaluate/serve, and a training gate that enforces technical eligibility and drops rejected rows | Accepted; raises ADR-0009's artifact format to `/2` |
 | [ADR-0014](ADR-0014-rolling-origin-evaluation-with-per-cutoff-refitting.md) | Rolling-origin evaluation: whole-date expanding windows, per-cutoff refit and baseline, two-origin floor, scoring-origin counts kept separate from abstentions | Accepted |
+| [ADR-0015](ADR-0015-history-listing-and-per-report-deletion.md) | History listing limited to ids and clocks, immediate per-report deletion, absent/expired/deleted answered alike | Accepted |

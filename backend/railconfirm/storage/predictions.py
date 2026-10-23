@@ -153,6 +153,25 @@ class StoredPrediction:
         return now >= self.expires_at
 
 
+@dataclass(frozen=True)
+class StoredSummary:
+    """What a history list may say about a report without saying what it says.
+
+    Id, clock and provenance only: a list that carried probabilities would put ticket
+    detail in a place nobody agreed to look, and the whole point of the reopen route is
+    that the report itself is fetched deliberately.
+    """
+
+    prediction_id: str
+    recorded_at: datetime
+    expires_at: datetime
+    target: str
+    model_version: str
+
+    def is_expired(self, now: datetime) -> bool:
+        return now >= self.expires_at
+
+
 class PredictionStore:
     """SQLite-backed history of prediction reports."""
 
@@ -177,6 +196,10 @@ class PredictionStore:
         self._connection.execute("PRAGMA journal_mode = WAL")
         self._connection.execute("PRAGMA busy_timeout = 5000")
         self._connection.execute("PRAGMA foreign_keys = ON")
+        # A deleted row's bytes would otherwise stay in a free page until SQLite reused
+        # it. This is accident-proofing, not a cryptographic erase: the WAL side files and
+        # any filesystem-level snapshot can still hold older bytes.
+        self._connection.execute("PRAGMA secure_delete = ON")
         self._connection.execute(_CREATE_SQL)
         self._connection.execute(_CREATE_INDEX_SQL)
         self._connection.commit()
@@ -321,10 +344,58 @@ class PredictionStore:
             self._connection.commit()
         return cursor.rowcount
 
-    def ids(self) -> list[str]:
-        """Stored ids, newest first. Ids only: contents are the sensitive part."""
+    def delete(self, prediction_id: str) -> bool:
+        """Remove one report outright, and report whether anything was removed.
+
+        Expiry hides; this is the user asking for it back, so the row goes. SQLite's
+        ``secure_delete`` zeroes freed pages on the way, which stops a casual read of the
+        file finding a deleted report — it does not reach the WAL side files or a
+        filesystem snapshot, and the difference is stated in docs/SECURITY_AND_PRIVACY.md
+        rather than oversold here.
+        """
+        if not prediction_id.strip():
+            return False
+        with self._lock:
+            cursor = self._connection.execute(
+                "DELETE FROM predictions WHERE prediction_id = ?", (prediction_id,)
+            )
+            self._connection.commit()
+        return cursor.rowcount > 0
+
+    def summaries(self, *, now: datetime | None = None) -> list[StoredSummary]:
+        """Every report a reopen would still serve, newest first, without its contents.
+
+        A report past its retention is left out rather than listed as available: the list
+        and the read route must agree about what exists, or a click on the list becomes an
+        unexplained 404.
+        """
+        instant = _normalise(_aware(now or datetime.now(UTC), "now"))
         with self._lock:
             rows = self._connection.execute(
-                "SELECT prediction_id FROM predictions ORDER BY recorded_at DESC"
+                "SELECT prediction_id, recorded_at, expires_at, target, model_version "
+                "FROM predictions WHERE expires_at > ? "
+                # Retention is second-precise, so two saves can share a timestamp; the id
+                # breaks the tie so a user's list does not reorder between page loads.
+                "ORDER BY recorded_at DESC, prediction_id DESC",
+                (_instant(instant),),
             ).fetchall()
-        return [str(row["prediction_id"]) for row in rows]
+        summaries: list[StoredSummary] = []
+        for row in rows:
+            recorded_at = _parse_instant("recorded_at", str(row["recorded_at"]))
+            expires_at = _parse_instant("expires_at", str(row["expires_at"]))
+            if expires_at <= recorded_at:
+                raise PredictionStorageError(
+                    f"Stored prediction {row['prediction_id']} expires at "
+                    f"{expires_at.isoformat()}, before it was recorded at "
+                    f"{recorded_at.isoformat()}."
+                )
+            summaries.append(
+                StoredSummary(
+                    prediction_id=str(row["prediction_id"]),
+                    recorded_at=recorded_at,
+                    expires_at=expires_at,
+                    target=str(row["target"]),
+                    model_version=str(row["model_version"]),
+                )
+            )
+        return summaries

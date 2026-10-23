@@ -6,6 +6,7 @@ from railconfirm.storage.predictions import (
     PredictionStorageError,
     PredictionStore,
     StoredPrediction,
+    StoredSummary,
     assert_storeable,
 )
 
@@ -15,5 +16,6 @@ __all__ = [
     "PredictionStorageError",
     "PredictionStore",
     "StoredPrediction",
+    "StoredSummary",
     "assert_storeable",
 ]

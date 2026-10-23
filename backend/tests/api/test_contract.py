@@ -383,3 +383,22 @@ def test_openapi_documents_the_verified_fields(client: TestClient):
         assert field in response_props, field
     assert "/v1/predictions/{prediction_id}" in schema["paths"]
     assert "prediction_history" in schema["components"]["schemas"]["HealthResponse"]["properties"]
+
+    # History listing and deletion are part of the contract, so their shape is pinned
+    # here: the frontend types are written against exactly these fields.
+    assert "get" in schema["paths"]["/v1/predictions"], "GET /v1/predictions is undocumented"
+    assert "delete" in schema["paths"]["/v1/predictions/{prediction_id}"]
+    list_props = schema["components"]["schemas"]["StoredReportsResponse"]["properties"]
+    assert set(list_props) == {"reports", "count", "retention_days"}
+    summary_props = schema["components"]["schemas"]["StoredReportSummary"]["properties"]
+    assert set(summary_props) == {
+        "prediction_id",
+        "target",
+        "model_version",
+        "recorded_at",
+        "retention_expires_at",
+    }
+    delete_responses = schema["paths"]["/v1/predictions/{prediction_id}"]["delete"]["responses"]
+    # A deleted report answers with nothing at all, so nothing can be read back.
+    assert "204" in delete_responses
+    assert not delete_responses["204"].get("content")
