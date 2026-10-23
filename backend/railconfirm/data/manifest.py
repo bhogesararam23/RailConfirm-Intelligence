@@ -529,7 +529,7 @@ def manifest_output_path(name: str, directory: Path | None = None) -> Path:
     cleaned = str(name).strip()
     # os.altsep is None on POSIX: an empty string is a substring of everything, so
     # folding it into this set would reject every name on Linux and none on Windows.
-    separators = {"/", "\\", os.sep, os.altsep} - {None, ""}
+    separators: set[str] = {sep for sep in ("/", "\\", os.sep, os.altsep) if sep}
     _require(cleaned.endswith(".yaml"), f"Manifest file name must end in .yaml, got {name!r}.")
     _require(
         not any(sep in cleaned for sep in separators),

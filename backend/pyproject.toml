@@ -20,13 +20,20 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Development tools are pinned to the versions the suite is actually verified on.
+# A loose range let CI resolve ruff 0.17.2 and mypy 2.4.0 while developers ran
+# 0.16.9 and 1.19.1, so the same commit could be told twice: first that DTZ was a
+# rule and then that it was not, and once that a `str | None` narrowing was fine
+# and once that it was an error. Widen a pin deliberately, after re-running every
+# gate on both ends, rather than letting CI discover the difference on someone's
+# unrelated commit.
 dev = [
     "pytest>=8.2.0,<10.0",
     "pytest-asyncio>=0.23.0,<2.0",
     "pytest-cov>=5.0.0,<8.0",
     "coverage>=7.5.0,<8.0",
-    "ruff>=0.16.9,<0.18",
-    "mypy>=1.19.0,<3.0",
+    "ruff~=0.16.9",
+    "mypy~=1.19.1",
     "types-PyYAML>=6.0.12,<7.0",
 ]
 
