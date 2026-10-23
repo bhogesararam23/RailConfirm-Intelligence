@@ -19,6 +19,7 @@ from typing import Any
 
 from railconfirm.data.preprocessing import FEATURE_COLUMNS, SplitResult
 from railconfirm.inference.artifacts import ModelArtifactMetadata
+from railconfirm.training.calibration import CalibrationEvidence
 from railconfirm.training.fitter import FitSummary
 from railconfirm.training.metrics import TARGET_EVENTS, Scorecard
 from railconfirm.training.origins import RollingOriginResult
@@ -94,6 +95,11 @@ class EvaluationReport:
     metric_definitions: dict[str, str]
     validation: Scorecard
     test: Scorecard | None
+    calibration: dict[str, Any] | None = None
+    """Before/after evidence for the calibration layer, when the artifact carries one.
+
+    Kept separate from the scorecards because it answers a different question — what the
+    correction changed — and the headline validation/test numbers already include it."""
     limitations: list[str] = field(default_factory=list)
     conclusions: list[str] = field(default_factory=list)
 
@@ -133,6 +139,25 @@ class EvaluationReport:
         lines += _metric_lines(self.validation)
         if self.test is not None:
             lines += _metric_lines(self.test)
+        if self.calibration is not None:
+            lines += [
+                "",
+                (
+                    f"Calibration: event Brier validation "
+                    f"{self.calibration['validation_event_brier_before']} -> "
+                    f"{self.calibration['validation_event_brier_after']}, locked test "
+                    f"{self.calibration['test_event_brier_before']} -> "
+                    f"{self.calibration['test_event_brier_after']} "
+                    f"({'helped' if self.calibration['helps_on_locked_test'] else 'did not help'} "
+                    "on the locked period)"
+                ),
+            ]
+        elif self.validation.calibration_applied:
+            lines += [
+                "",
+                "Calibration: applied to the numbers above, but no before/after "
+                "measurement was supplied, so its effect is unknown here.",
+            ]
         lines += ["", "Conclusions:"]
         lines += [f"  - {item}" for item in self.conclusions]
         lines += ["", "Limitations:"]
@@ -205,6 +230,7 @@ def build_report(
     validation: Scorecard,
     test: Scorecard | None,
     generated_on: str,
+    calibration: CalibrationEvidence | None = None,
 ) -> EvaluationReport:
     """Assemble the report and derive its conclusions from what was measured."""
     limitations = list(metadata.limitations)
@@ -279,6 +305,37 @@ def build_report(
             "observed alignment only; they are not evidence that the probabilities "
             "are calibrated."
         )
+        if calibration is not None:
+            limitations.append(
+                "A calibration was measured for this run but the artifact does not "
+                "carry one, so the numbers above are the uncorrected ones."
+            )
+    elif calibration is None:
+        limitations.append(
+            "The artifact declares a calibration layer but this run carried no "
+            "before/after measurement for it, so the effect of that correction is "
+            "unknown here — the tables describe the corrected numbers only."
+        )
+    else:
+        verdict = (
+            "an improvement, which is what a locked period has to show before a "
+            "correction is trusted"
+            if calibration.helps_on_locked_test
+            else "no improvement: the gain belonged to the validation window and did "
+            "not carry into the locked period, so promotion should weigh this"
+        )
+        conclusions.append(
+            f"Calibration: {calibration.spec.description}. It was embedded because the "
+            f"validation event Brier moved {calibration.validation_before.event_brier} -> "
+            f"{calibration.validation_after.event_brier}; on the locked test the same "
+            f"correction moved {calibration.test_before.event_brier} -> "
+            f"{calibration.test_after.event_brier}, which is {verdict}."
+        )
+        limitations.append(
+            "Calibration is measured per partition overall. Subgroup calibration — by "
+            "class, quota or booked status — is not evaluated here, and the protocol "
+            "forbids claiming calibration inside a subgroup without counts behind it."
+        )
 
     return EvaluationReport(
         report_schema_version=REPORT_SCHEMA_VERSION,
@@ -314,6 +371,7 @@ def build_report(
         metric_definitions=dict(METRIC_DEFINITIONS),
         validation=validation,
         test=test,
+        calibration=calibration.to_dict() if calibration else None,
         limitations=limitations,
         conclusions=conclusions,
     )
@@ -431,6 +489,9 @@ def build_origin_report(
         "decay.",
         "Each origin's prevalence baseline comes from its own training window; the "
         "baselines differ between origins by construction.",
+        "No calibration layer is applied here: each origin refits its cohort table and "
+        "no correction is fitted per cutoff, so these scores describe the uncorrected "
+        "estimator.",
         "No calibration was fitted or applied. Reliability bands describe observed "
         "alignment only.",
         "RailConfirm is an independent research tool and not an official IRCTC service.",

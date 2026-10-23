@@ -27,6 +27,7 @@ from railconfirm.domain.prediction import (
 from railconfirm.domain.status import NormalizedStatus
 from railconfirm.domain.validation import validate_prediction_timing
 from railconfirm.inference.baseline import HistoricalFrequencyBaseline
+from railconfirm.inference.calibration import CalibrationSpec, calibrate_outcome
 from railconfirm.inference.group import compute_group_outcomes
 from railconfirm.inference.registry import ModelRegistry
 
@@ -91,15 +92,24 @@ class InferenceEngine:
         estimator, resolution = self.registry.estimator(target, self.baseline)
         artifact = resolution.artifact
         is_model_served = resolution.is_ready
+        calibration: CalibrationSpec | None = None
 
         if is_model_served and artifact is not None:
             model_version = artifact.metadata.version
             feature_schema_version = artifact.metadata.feature_schema_version
             limitations = list(artifact.metadata.limitations)
-            if not artifact.metadata.calibrated:
+            calibration = artifact.metadata.calibration
+            if calibration is None:
                 limitations.append(
                     "Probabilities are not calibrated; no validation of predicted "
                     "against observed outcome frequency has been recorded."
+                )
+            else:
+                limitations.append(
+                    f"Probabilities are calibrated — {calibration.description}. The "
+                    "correction is fitted to the target event, so the split between the "
+                    "classes inside that event keeps the model's own proportions and is "
+                    "not separately calibrated."
                 )
         else:
             model_version = "no_model_v0"
@@ -140,6 +150,8 @@ class InferenceEngine:
                     class_code=journey.class_code,
                     quota_code=journey.quota_code,
                 )
+                if calibration is not None:
+                    outcome = calibrate_outcome(calibration, outcome)
                 if outcome.abstention_reason is AbstentionReason.UNSUPPORTED_STATUS:
                     warnings.append(
                         f"Passenger {p_id[:8]}: status '{curr_obs.raw_status}' "

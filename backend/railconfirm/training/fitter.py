@@ -18,7 +18,7 @@ Three rules are enforced here rather than documented and hoped for:
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +53,7 @@ from railconfirm.inference.baseline import (
     cohort_key,
     normalize_frequency_table,
 )
+from railconfirm.inference.calibration import CalibrationSpec
 from railconfirm.training.dataset import ApprovedDataset
 
 CANDIDATE_PROMOTION = "candidate"
@@ -64,6 +65,15 @@ CANDIDATE_PROMOTION = "candidate"
 FITTABLE_ASOF_STATUSES = TARGET_ELIGIBLE_STATUSES
 
 LABEL_COLUMN = "final_chart_status"
+
+UNCALIBRATED_LIMITATION = "Smoothed historical frequencies, not a trained or calibrated model."
+"""The claim an uncorrected table makes about itself."""
+
+CALIBRATED_LIMITATION = (
+    "Smoothed historical frequencies with a calibration layer fitted on validation "
+    "applied to the target event — still cohort counts, not a trained model."
+)
+"""Replaces the sentence above when a layer is embedded, so one artifact cannot carry both."""
 
 
 @dataclass
@@ -187,6 +197,36 @@ class FittedBaseline:
     prevalence: dict[str, float]
 
 
+def with_calibration(fitted: FittedBaseline, spec: CalibrationSpec) -> FittedBaseline:
+    """Attach a fitted calibration layer to a candidate artifact.
+
+    The calibration lives beside the table it corrects, and the limitations say which
+    partition it was fitted on and what it does not reach: the correction moves the
+    target event's mass, and the classes inside that event keep the table's proportions
+    because no evidence was fitted for them separately.
+    """
+    limitations = [
+        CALIBRATED_LIMITATION
+        if item == UNCALIBRATED_LIMITATION
+        else item
+        for item in fitted.metadata.limitations
+    ] + [
+        (
+            f"Probabilities are calibrated — {spec.description}. The correction moves the "
+            "target event's mass; the classes inside that event keep the table's "
+            "proportions, because nothing was fitted for them separately."
+        ),
+    ]
+    metadata = replace(
+        fitted.metadata,
+        calibrated=True,
+        calibration_method=spec.method,
+        calibration=spec,
+        limitations=tuple(limitations),
+    )
+    return replace(fitted, metadata=metadata)
+
+
 def build_metadata(
     dataset: ApprovedDataset,
     summary: FitSummary,
@@ -258,7 +298,7 @@ def fit_baseline(
 
     summary = fit_cohorts(split.train)
     limitations = [
-        "Smoothed historical frequencies, not a trained or calibrated model.",
+        UNCALIBRATED_LIMITATION,
         "Fitted on the training partition only; no validation or test row contributed "
         "to these counts.",
         (

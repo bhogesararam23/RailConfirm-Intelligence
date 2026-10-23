@@ -32,6 +32,10 @@ from railconfirm.inference.baseline import (
     HistoricalFrequencyBaseline,
     normalize_frequency_table,
 )
+from railconfirm.inference.calibration import (
+    CalibrationSpec,
+    spec_from_mapping,
+)
 
 ARTIFACT_FORMAT = "railconfirm.frequency-baseline/2"
 """Artifact format identifier. Bump when the JSON layout changes.
@@ -81,6 +85,12 @@ class ModelArtifactMetadata:
     trained_to: str | None = None
     calibration_method: str | None = None
     calibrated: bool = False
+    calibration: CalibrationSpec | None = None
+    """The fitted correction over the target event, when there is one.
+
+    ``calibrated`` is derived from this block rather than claimed beside it: an artifact
+    that says it is calibrated must carry the method, the slope, the intercept and the
+    rows behind them, and one that does not must say ``calibrated: false``."""
     notes: str | None = None
 
     def provenance(self) -> FrequencyTableProvenance:
@@ -224,11 +234,28 @@ def metadata_from_mapping(raw: Any, *, expected_version: str, expected_target: s
         f"Artifact calibrated must be a boolean, got {calibrated!r}.",
     )
     calibration_method = raw.get("calibration_method")
-    if calibrated:
+    calibration_raw = raw.get("calibration")
+    calibration: CalibrationSpec | None = None
+    if calibration_raw is not None:
+        calibration = spec_from_mapping(calibration_raw, artifact_target=raw["target"])
         _require(
-            isinstance(calibration_method, str) and bool(calibration_method.strip()),
-            "An artifact claiming calibrated=true must name the calibration method "
-            "and the period it was fitted on.",
+            calibrated is True,
+            "Artifact carries a calibration block but declares calibrated=false: a "
+            "correction that is not applied must not be shipped beside one that is, or a "
+            "reader cannot tell which number the artifact produced.",
+        )
+        _require(
+            calibration_method in (None, calibration.method),
+            f"Artifact calibration_method {calibration_method!r} disagrees with the "
+            f"block's {calibration.method!r}.",
+        )
+        calibration_method = calibration.method
+    else:
+        _require(
+            calibrated is False,
+            "An artifact claiming calibrated=true must carry the calibration block — "
+            "method, fitted partition, row count, period and both parameters. A claim "
+            "without them cannot be reviewed, reproduced or applied.",
         )
 
     features_used = raw.get("features_used")
@@ -290,6 +317,7 @@ def metadata_from_mapping(raw: Any, *, expected_version: str, expected_target: s
         trained_to=trained_to,
         calibration_method=calibration_method,
         calibrated=calibrated,
+        calibration=calibration,
         notes=notes,
     )
 

@@ -35,11 +35,17 @@ from railconfirm.domain.exceptions import (
 )
 from railconfirm.domain.status import MAPPING_VERSION
 from railconfirm.inference.artifacts import load_artifact
+from railconfirm.training.calibration import (
+    DEFAULT_MIN_CALIBRATION_ROWS,
+    CalibrationEvidence,
+    fit_and_measure,
+)
 from railconfirm.training.dataset import load_approved_dataset
 from railconfirm.training.fitter import (
     fit_baseline,
     fit_cohorts,
     prevalence_distribution,
+    with_calibration,
     write_fitted_artifact,
 )
 from railconfirm.training.metrics import (
@@ -78,6 +84,20 @@ def build_parser() -> argparse.ArgumentParser:
     fit.add_argument("--min-sample-threshold", type=int, default=30)
     fit.add_argument("--laplace-alpha", type=float, default=1.0)
     fit.add_argument("--notes", default=None)
+    fit.add_argument(
+        "--calibrate",
+        action="store_true",
+        help=(
+            "fit a logistic calibration layer on the validation partition and embed it in "
+            "the artifact; refuses to write one that does not improve validation"
+        ),
+    )
+    fit.add_argument(
+        "--calibrate-min-rows",
+        type=int,
+        default=DEFAULT_MIN_CALIBRATION_ROWS,
+        help="scored validation rows required before a slope and intercept are fitted",
+    )
     fit.add_argument("--allow-synthetic-for-testing", action="store_true")
 
     evaluate = subparsers.add_parser("evaluate", help="score an artifact on held-out partitions")
@@ -203,10 +223,34 @@ def _fit(args: argparse.Namespace) -> int:
         laplace_alpha=args.laplace_alpha,
         notes=args.notes,
     )
+    calibration: CalibrationEvidence | None = None
+    if args.calibrate:
+        calibration = fit_and_measure(
+            fitted,
+            dataset_id=dataset.dataset_id,
+            dataset_sha256=dataset.sha256,
+            source_reference=fitted.metadata.source_reference,
+            approval_status=fitted.metadata.data_approval_status,
+            is_synthetic=dataset.is_synthetic,
+            mapping_version=fitted.metadata.status_mapping_version,
+            target=args.target,
+            min_rows=args.calibrate_min_rows,
+        )
+        fitted = with_calibration(fitted, calibration.spec)
+
     written = write_fitted_artifact(fitted, args.out)
     print(f"Wrote candidate artifact {written}")
     print(f"Used {fitted.summary.rows_used} of {fitted.summary.rows_seen} training rows")
     print(f"Cohorts: {len(fitted.cohorts)}")
+    if calibration is not None:
+        print(f"Calibration: {calibration.spec.description}")
+        print(
+            f"  validation event Brier {calibration.validation_before.event_brier} -> "
+            f"{calibration.validation_after.event_brier}; locked test "
+            f"{calibration.test_before.event_brier} -> "
+            f"{calibration.test_after.event_brier} "
+            f"({'helped' if calibration.helps_on_locked_test else 'did not help'})"
+        )
     print("Promotion is 'candidate': nothing is served until it is approved and activated.")
 
     if args.report is not None:
@@ -226,12 +270,15 @@ def _fit(args: argparse.Namespace) -> int:
             min_sample_threshold=args.min_sample_threshold,
             laplace_alpha=args.laplace_alpha,
         )
+        # Scored with the calibration the artifact now carries, so the headline numbers
+        # describe the arithmetic a served request would produce.
         validation = score_partition(
             fitted.split.val,
             estimator,
             prevalence=fitted.prevalence,
             partition="validation",
             target=args.target,
+            calibration=fitted.metadata.calibration,
         )
         test = score_partition(
             fitted.split.test,
@@ -239,6 +286,7 @@ def _fit(args: argparse.Namespace) -> int:
             prevalence=fitted.prevalence,
             partition="test",
             target=args.target,
+            calibration=fitted.metadata.calibration,
         )
         report = build_report(
             metadata=fitted.metadata,
@@ -250,6 +298,7 @@ def _fit(args: argparse.Namespace) -> int:
             validation=validation,
             test=test,
             generated_on=_require_generated_on(args),
+            calibration=calibration,
         )
         path = write_report(report, args.report)
         print()
@@ -305,19 +354,33 @@ def _evaluate(args: argparse.Namespace) -> int:
         laplace_alpha=metadata.laplace_alpha,
     )
 
+    # Scored through the artifact's own calibration layer when it declares one: the
+    # numbers below have to describe what a served request would emit, not a variant
+    # of the model that nothing ever runs.
     validation = score_partition(
         split.val,
         estimator,
         prevalence=prevalence,
         partition="validation",
         target=args.target,
+        calibration=metadata.calibration,
     )
     test = score_partition(
-        split.test, estimator, prevalence=prevalence, partition="test", target=args.target
+        split.test,
+        estimator,
+        prevalence=prevalence,
+        partition="test",
+        target=args.target,
+        calibration=metadata.calibration,
+    )
+    applied = (
+        f"calibration applied ({metadata.calibration.method})"
+        if metadata.calibration is not None
+        else "uncalibrated"
     )
     print(
         f"Artifact {metadata.version} · dataset {metadata.dataset_id} · "
-        f"target {args.target}\n"
+        f"target {args.target} · {applied}\n"
         f"  validation Brier {validation.brier} (baseline {validation.baseline_brier}), "
         f"event Brier {validation.event_brier} (baseline {validation.event_baseline_brier})\n"
         f"  test       Brier {test.brier} (baseline {test.baseline_brier}), "

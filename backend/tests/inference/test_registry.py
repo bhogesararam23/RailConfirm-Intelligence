@@ -17,6 +17,7 @@ from railconfirm.inference.artifacts import (
     load_artifact,
 )
 from railconfirm.inference.baseline import HistoricalFrequencyBaseline
+from railconfirm.inference.calibration import CalibrationSpec
 from railconfirm.inference.registry import ArtifactStatus, ModelRegistry
 from tests.support.artifacts import (
     COHORTS,
@@ -30,6 +31,18 @@ from tests.support.artifacts import (
 from tests.support.artifacts import (
     write_fixture_artifact as write,
 )
+
+CALIBRATION_BLOCK = {
+    "method": "platt_logistic_v1",
+    "target": "final_chart_cnf",
+    "event_classes": ["CNF"],
+    "slope": 1.234,
+    "intercept": -0.432,
+    "fitted_partition": "validation",
+    "fitted_rows": 120,
+    "fitted_from": "2026-04-01",
+    "fitted_to": "2026-04-12",
+}
 
 # ── Promotion and absence ──────────────────────────────────────────────────────
 
@@ -185,7 +198,7 @@ def test_document_level_defects_are_rejected(tmp_path, mutate, expected_fragment
         ("laplace_alpha", 0.0, "positive finite"),
         ("laplace_alpha", float("nan"), "positive finite"),
         ("limitations", [], "non-empty list"),
-        ("calibrated", True, "calibration method"),
+        ("calibrated", True, "must carry the calibration block"),
         ("trained_from", "2026-07-01", "reversed"),
         ("trained_to", "not-a-date", "ISO-8601 date"),
         ("feature_schema_version", "   ", "non-empty string"),
@@ -238,8 +251,24 @@ def test_an_artifact_that_declares_neither_of_its_cohort_rules_is_refused(tmp_pa
         )
 
 
-def test_calibration_claim_requires_a_method(tmp_path):
+def test_a_bare_calibrated_claim_is_refused(tmp_path):
+    """A claim with nothing behind it is not evidence.
+
+    Before the block existed, an artifact could assert `calibrated: true` and name a
+    method, and nothing in the file said what the correction actually was — so a reader
+    could not reproduce, review or even apply it."""
     write(tmp_path, calibrated=True, calibration_method="platt_on_validation_2026_q1")
+    with pytest.raises(ModelArtifactError, match="must carry the calibration block"):
+        load_artifact(
+            tmp_path / "fixture_v1.json",
+            expected_version="fixture_v1",
+            expected_target=PredictionTarget.FINAL_CHART_CNF.value,
+            max_bytes=1_000_000,
+        )
+
+
+def test_a_declared_calibration_survives_the_round_trip(tmp_path):
+    write(tmp_path, calibrated=True, calibration=CALIBRATION_BLOCK)
     loaded = load_artifact(
         tmp_path / "fixture_v1.json",
         expected_version="fixture_v1",
@@ -247,6 +276,88 @@ def test_calibration_claim_requires_a_method(tmp_path):
         max_bytes=1_000_000,
     )
     assert loaded.metadata.calibrated is True
+    assert loaded.metadata.calibration_method == "platt_logistic_v1"
+    assert loaded.metadata.calibration == CalibrationSpec(
+        method="platt_logistic_v1",
+        target="final_chart_cnf",
+        event_classes=("CNF",),
+        slope=1.234,
+        intercept=-0.432,
+        fitted_partition="validation",
+        fitted_rows=120,
+        fitted_from="2026-04-01",
+        fitted_to="2026-04-12",
+    )
+    # A calibrated artifact no longer carries the "not calibrated" limitation the
+    # engine adds for an uncorrected one.
+    assert loaded.metadata.calibration is not None
+
+
+@pytest.mark.parametrize(
+    "mutate,fragment",
+    [
+        ({"method": "isotonic"}, "Unknown calibration method"),
+        ({"slope": -0.5}, "must not be negative"),
+        ({"slope": float("inf")}, "must be finite"),
+        ({"intercept": "1.0"}, "must be a number"),
+        ({"fitted_rows": 0}, "0 fitted rows"),
+        ({"event_classes": []}, "name the event classes"),
+        ({"target": "final_chart_cnf_or_rac"}, "was fitted for target"),
+        ({"fitted_partition": "  "}, "fitted_partition must be a non-empty string"),
+        ({"fitted_partition": None}, "fitted_partition must be a non-empty string"),
+    ],
+)
+def test_a_calibration_that_cannot_be_applied_is_refused(tmp_path, mutate, fragment):
+    block = {**CALIBRATION_BLOCK, **mutate}
+    write(tmp_path, calibrated=True, calibration=block)
+    with pytest.raises(ModelArtifactError, match=fragment):
+        load_artifact(
+            tmp_path / "fixture_v1.json",
+            expected_version="fixture_v1",
+            expected_target=PredictionTarget.FINAL_CHART_CNF.value,
+            max_bytes=1_000_000,
+        )
+
+
+@pytest.mark.parametrize("dropped", ["slope", "fitted_partition", "fitted_rows"])
+def test_a_partial_calibration_block_is_refused(tmp_path, dropped):
+    """Half a fitted layer is not a layer, so a missing field is not defaulted."""
+    block = {key: value for key, value in CALIBRATION_BLOCK.items() if key != dropped}
+    write(tmp_path, calibrated=True, calibration=block)
+    with pytest.raises(ModelArtifactError, match=f"missing {dropped!r}"):
+        load_artifact(
+            tmp_path / "fixture_v1.json",
+            expected_version="fixture_v1",
+            expected_target=PredictionTarget.FINAL_CHART_CNF.value,
+            max_bytes=1_000_000,
+        )
+
+
+def test_a_calibration_block_on_an_uncalibrated_artifact_is_refused(tmp_path):
+    write(tmp_path, calibrated=False, calibration=CALIBRATION_BLOCK)
+    with pytest.raises(ModelArtifactError, match="declares calibrated=false"):
+        load_artifact(
+            tmp_path / "fixture_v1.json",
+            expected_version="fixture_v1",
+            expected_target=PredictionTarget.FINAL_CHART_CNF.value,
+            max_bytes=1_000_000,
+        )
+
+
+def test_a_method_that_disagrees_with_the_block_is_refused(tmp_path):
+    write(
+        tmp_path,
+        calibrated=True,
+        calibration_method="something_else",
+        calibration=CALIBRATION_BLOCK,
+    )
+    with pytest.raises(ModelArtifactError, match="disagrees with the"):
+        load_artifact(
+            tmp_path / "fixture_v1.json",
+            expected_version="fixture_v1",
+            expected_target=PredictionTarget.FINAL_CHART_CNF.value,
+            max_bytes=1_000_000,
+        )
 
 
 @pytest.mark.parametrize("version", ["../secrets", "..\\..\\x", "a" * 65, "with space", ""])

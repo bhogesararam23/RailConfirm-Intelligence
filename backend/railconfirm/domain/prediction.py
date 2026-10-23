@@ -18,7 +18,8 @@ Key design rules
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
 
@@ -156,6 +157,39 @@ class PassengerOutcome:
     def is_supported(self) -> bool:
         """Return True if this is a supported (non-abstaining) outcome."""
         return self.abstention_reason is None
+
+    _PROBABILITY_FIELDS = {
+        "CNF": "p_cnf",
+        "RAC": "p_rac",
+        "WL": "p_wl",
+        "CANCELLED": "p_cancelled",
+        "OTHER": "p_other",
+    }
+
+    def as_distribution(self) -> dict[str, float] | None:
+        """The outcome as a class→probability mapping, or None when abstaining."""
+        if not self.is_supported():
+            return None
+        return {
+            outcome: float(getattr(self, field))
+            for outcome, field in self._PROBABILITY_FIELDS.items()
+        }
+
+    def with_distribution(self, distribution: Mapping[str, float]) -> PassengerOutcome:
+        """The same outcome carrying a different distribution, basis kept for context.
+
+        Used by the calibration layer, which must return the same passenger's answer
+        with corrected probabilities rather than a new object that lost the evidence
+        note explaining where the estimate came from.
+        """
+        return replace(
+            self,
+            p_cnf=distribution.get("CNF", self.p_cnf),
+            p_rac=distribution.get("RAC", self.p_rac),
+            p_wl=distribution.get("WL", self.p_wl),
+            p_cancelled=distribution.get("CANCELLED", self.p_cancelled),
+            p_other=distribution.get("OTHER", self.p_other),
+        )
 
 
 def make_abstention_outcome(

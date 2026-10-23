@@ -83,6 +83,41 @@ def write_dataset(directory: Path, *, count: int = 240) -> Path:
     return path
 
 
+def build_balanced_rows(count: int = 240) -> list[str]:
+    """Rows whose cohort *and* outcome both vary inside every journey date.
+
+    ``write_dataset`` ties the label to the same modulus as the date, so each date —
+    and so each partition — carries one class only, which calibration correctly refuses
+    to fit on. Here the label cycles on 5 and the class on 7, both coprime with the
+    twelve-date cycle, so every date holds a mix of cohorts and of both labels and the
+    predicted probability actually varies across the rows being fitted.
+    """
+    rows: list[str] = []
+    for index in range(count):
+        day = index % 12 + 1
+        position = 10 + (index % 40)
+        travel_class = "SL" if index % 7 < 4 else "3A"
+        final = "CNF" if index % 5 < 2 else "WL/5"
+        rows.append(
+            f"1230{index % 3},2026-04-{day:02d},{travel_class},GN,GNWL/{position},{final},"
+            f"2026-03-{(index % 28) + 1:02d},B{index:04d},P{index:04d},true"
+        )
+    return rows
+
+
+def write_balanced_dataset(directory: Path, *, count: int = 240) -> Path:
+    path = Path(directory) / "synthetic-balanced.csv"
+    path.write_text(
+        SYNTHETIC_MARK + "\n"
+        + HEADER
+        + "\n"
+        + "\n".join(build_balanced_rows(count))
+        + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
 def build_moving_rows(count: int = 240) -> list[str]:
     """Rows whose status moves between booking and the as-of observation.
 

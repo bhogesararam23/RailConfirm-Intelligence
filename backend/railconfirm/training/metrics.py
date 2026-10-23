@@ -27,6 +27,10 @@ from railconfirm.inference.baseline import (
     FrequencyTableProvenance,
     HistoricalFrequencyBaseline,
 )
+from railconfirm.inference.calibration import (
+    CalibrationSpec,
+    apply_calibration,
+)
 from railconfirm.inference.group import (
     compute_group_outcomes,
     compute_queue_dependent_bounds,
@@ -116,6 +120,12 @@ class Scorecard:
     segments: list[SegmentMetric]
     outcome_distribution: dict[str, int]
     min_segment_rows: int
+    calibration_applied: bool = False
+    """Whether these scores include the artifact's calibration layer.
+
+    Structural, not a metric: it says which pipeline produced the numbers, and a reader
+    comparing a calibrated run against an uncalibrated one is comparing two different
+    questions."""
     group: GroupScorecard | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -152,6 +162,7 @@ STRUCTURAL_FIELDS = frozenset(
         "segments",
         "outcome_distribution",
         "min_segment_rows",
+        "calibration_applied",
         "group",
     }
 )
@@ -294,23 +305,52 @@ def _slices(
     return slices
 
 
-def score_partition(
+@dataclass(frozen=True)
+class ScoredRow:
+    """One held-out reservation, as the estimator answered it.
+
+    Carrying the row through in this shape is what lets calibration be fitted on
+    exactly the rows the metrics score: two separate loops over the same frame would
+    disagree about which rows abstained, and the fitted curve would then describe a
+    different population than the published numbers."""
+
+    hypothesis: dict[str, float]
+    truth: dict[str, float]
+    observed: str
+    event_predicted: float
+    event_observed: float
+    brier: float
+    loss: float
+    slices: list[tuple[str, str]]
+
+
+@dataclass(frozen=True)
+class RowScores:
+    """Every row one partition holds, scored or not."""
+
+    rows: list[ScoredRow]
+    group_members: dict[str, list[tuple[PassengerOutcome | None, str | None]]]
+    rows_total: int
+    abstained: int
+
+
+def score_rows(
     frame: pd.DataFrame,
     estimator: HistoricalFrequencyBaseline,
     *,
-    prevalence: Mapping[str, float],
-    partition: str = "test",
     target: str = PredictionTarget.FINAL_CHART_CNF.value,
-    min_segment_rows: int = DEFAULT_MIN_SEGMENT_ROWS,
-    reliability_bins: int = RELIABILITY_BINS,
-) -> Scorecard:
-    """Score one partition with the estimator that would serve it in production.
+    calibration: CalibrationSpec | None = None,
+) -> RowScores:
+    """Ask the production estimator for every row, and keep what it said.
 
-    The estimator is the same object inference uses, and the status each row is
-    queried with comes from the same :func:`asof_statuses` call the fitter used, so a
-    metric computed here cannot describe a code path the product does not run or a
-    cohort the table was never keyed by. ``target`` selects which event the headline
-    numbers describe; the full distribution is always scored as well.
+    ``calibration`` is applied to the hypothesis before any scoring, because the
+    number a user is served is the calibrated one: measuring the raw table while
+    serving something else would make the evaluation describe a code path the
+    product does not run.
+
+    Rows the estimator abstains on are counted, never scored as errors. A group whose
+    members abstain still appears in ``group_members`` — a missing member is the fact
+    the group score has to report, not a row to drop silently.
     """
     if target not in TARGET_EVENTS:
         raise DatasetValidationError(
@@ -318,10 +358,10 @@ def score_partition(
             f"Known targets: {sorted(TARGET_EVENTS)}."
         )
     if frame.empty:
-        raise DatasetValidationError(f"Cannot score an empty {partition} partition.")
+        raise DatasetValidationError("Cannot score an empty partition.")
     if "final_chart_status" not in frame.columns:
         raise DatasetValidationError(
-            f"The {partition} partition has no 'final_chart_status' column to score against."
+            "This partition has no 'final_chart_status' column to score against."
         )
 
     event_classes = TARGET_EVENTS[target]
@@ -333,17 +373,8 @@ def score_partition(
             if pd.notna(gid) and str(gid).strip():
                 group_members.setdefault(str(gid).strip(), [])
 
-    predictions: list[dict[str, float]] = []
-    truths: list[dict[str, float]] = []
-    event_pairs: list[tuple[float, float]] = []
-    segment_rows: dict[tuple[str, str], list[tuple[float, float]]] = {}
-    outcome_counts: dict[str, int] = {}
+    rows: list[ScoredRow] = []
     abstained = 0
-    brier_total = 0.0
-    loss_total = 0.0
-    event_brier_total = 0.0
-    event_loss_total = 0.0
-    event_baseline_total = 0.0
 
     for (_, row), asof in zip(frame.iterrows(), statuses, strict=True):
         gid = (
@@ -375,27 +406,65 @@ def score_partition(
             continue
 
         hypothesis = _hypothesis_from(outcome)
-        predictions.append(hypothesis)
-        truths.append(truth)
+        if calibration is not None:
+            hypothesis = apply_calibration(calibration, hypothesis, event_classes)
         brier = _brier_one(hypothesis, truth)
-        brier_total += brier
-        loss_total += _log_loss_one(hypothesis, truth)
-        outcome_counts[observed] = outcome_counts.get(observed, 0) + 1
-
         event_observed = 1.0 if observed in event_classes else 0.0
-        event_predicted = _event_probability(hypothesis, event_classes)
-        event_pairs.append((event_predicted, event_observed))
-        event_brier_total += (event_predicted - event_observed) ** 2
-        event_loss_total += _binary_log_loss(event_predicted, event_observed)
-        event_baseline_total += (
-            _event_probability(prevalence, event_classes) - event_observed
-        ) ** 2
+        rows.append(
+            ScoredRow(
+                hypothesis=hypothesis,
+                truth=truth,
+                observed=observed,
+                event_predicted=_event_probability(hypothesis, event_classes),
+                event_observed=event_observed,
+                brier=brier,
+                loss=_log_loss_one(hypothesis, truth),
+                slices=_slices(row, frame, asof),
+            )
+        )
 
-        for dimension, value in _slices(row, frame, asof):
-            bucket = segment_rows.setdefault((dimension, value), [])
-            bucket.append((brier, 1.0))
+    return RowScores(
+        rows=rows,
+        group_members=group_members,
+        rows_total=int(len(frame)),
+        abstained=abstained,
+    )
 
-    scored = len(predictions)
+
+def score_partition(
+    frame: pd.DataFrame,
+    estimator: HistoricalFrequencyBaseline,
+    *,
+    prevalence: Mapping[str, float],
+    partition: str = "test",
+    target: str = PredictionTarget.FINAL_CHART_CNF.value,
+    min_segment_rows: int = DEFAULT_MIN_SEGMENT_ROWS,
+    reliability_bins: int = RELIABILITY_BINS,
+    calibration: CalibrationSpec | None = None,
+) -> Scorecard:
+    """Score one partition with the estimator that would serve it in production.
+
+    The estimator is the same object inference uses, and the status each row is
+    queried with comes from the same :func:`asof_statuses` call the fitter used, so a
+    metric computed here cannot describe a code path the product does not run or a
+    cohort the table was never keyed by. ``target`` selects which event the headline
+    numbers describe; the full distribution is always scored as well.
+    """
+    scored_rows = score_rows(
+        frame, estimator, target=target, calibration=calibration
+    )
+    event_classes = TARGET_EVENTS[target]
+    rows = scored_rows.rows
+    abstained = scored_rows.abstained
+    predictions = [row.hypothesis for row in rows]
+    truths = [row.truth for row in rows]
+    event_pairs = [(row.event_predicted, row.event_observed) for row in rows]
+
+    outcome_counts: dict[str, int] = {}
+    for row in rows:
+        outcome_counts[row.observed] = outcome_counts.get(row.observed, 0) + 1
+
+    scored = len(rows)
     baseline_brier = None
     baseline_loss = None
     if scored:
@@ -406,116 +475,58 @@ def score_partition(
             _log_loss_one(prevalence, truth) for truth in truths
         ) / scored
 
+    segment_rows: dict[tuple[str, str], list[tuple[float, float]]] = {}
+    for row in rows:
+        for dimension, value in row.slices:
+            segment_rows.setdefault((dimension, value), []).append((row.brier, 1.0))
+
     segments = [
         SegmentMetric(
             dimension=dimension,
             value=value,
-            rows=len(rows),
-            brier=round(sum(item[0] for item in rows) / len(rows), 6),
-            low_sample=len(rows) < min_segment_rows,
+            rows=len(items),
+            brier=round(sum(item[0] for item in items) / len(items), 6),
+            low_sample=len(items) < min_segment_rows,
         )
-        for (dimension, value), rows in sorted(segment_rows.items())
+        for (dimension, value), items in sorted(segment_rows.items())
     ]
 
-    mean_brier: float | None = brier_total / scored if scored else None
-    mean_loss: float | None = loss_total / scored if scored else None
-    mean_event_brier: float | None = event_brier_total / scored if scored else None
-    mean_event_loss: float | None = event_loss_total / scored if scored else None
+    mean_brier: float | None = (
+        sum(row.brier for row in rows) / scored if scored else None
+    )
+    mean_loss: float | None = (
+        sum(row.loss for row in rows) / scored if scored else None
+    )
+    mean_event_brier: float | None = (
+        sum((row.event_predicted - row.event_observed) ** 2 for row in rows) / scored
+        if scored
+        else None
+    )
+    mean_event_loss: float | None = (
+        sum(_binary_log_loss(row.event_predicted, row.event_observed) for row in rows) / scored
+        if scored
+        else None
+    )
+    event_baseline = _event_probability(prevalence, event_classes)
     mean_event_baseline: float | None = (
-        event_baseline_total / scored if scored else None
+        sum((event_baseline - row.event_observed) ** 2 for row in rows) / scored
+        if scored
+        else None
     )
 
-    group_card: GroupScorecard | None = None
-    if has_groups and group_members:
-        total_groups = len(group_members)
-        single_passenger_groups = 0
-        multi_passenger_groups = 0
-        scored_groups = 0
-        abstained_groups = 0
-
-        indep_brier_cnf_sum = 0.0
-        indep_brier_cnf_rac_sum = 0.0
-        indep_brier_wl_sum = 0.0
-        queue_brier_cnf_sum = 0.0
-        queue_brier_cnf_rac_sum = 0.0
-        queue_brier_wl_sum = 0.0
-        baseline_brier_cnf_sum = 0.0
-
-        p_prev_event = _event_probability(prevalence, event_classes)
-
-        for _gid, members in group_members.items():
-            n_passengers = len(members)
-            if n_passengers <= 1:
-                single_passenger_groups += 1
-                continue
-            multi_passenger_groups += 1
-
-            if any(po is None or not po.is_supported() or label is None for po, label in members):
-                abstained_groups += 1
-                continue
-
-            scored_groups += 1
-            po_list = [po for po, _ in members if po is not None]
-            labels = [label for _, label in members if label is not None]
-
-            true_all_cnf = 1.0 if all(lbl in event_classes for lbl in labels) else 0.0
-            true_all_cnf_or_rac = 1.0 if all(lbl in ("CNF", "RAC") for lbl in labels) else 0.0
-            true_at_least_one_wl = 1.0 if any(lbl == "WL" for lbl in labels) else 0.0
-
-            indep = compute_group_outcomes(po_list, method="independence_baseline")
-            p_indep_cnf = indep.p_all_cnf if indep and indep.p_all_cnf is not None else 0.0
-            p_indep_cnf_rac = indep.p_all_cnf_or_rac if indep and indep.p_all_cnf_or_rac is not None else 0.0
-            p_indep_wl = indep.p_at_least_one_wl if indep and indep.p_at_least_one_wl is not None else 0.0
-
-            indep_brier_cnf_sum += (p_indep_cnf - true_all_cnf) ** 2
-            indep_brier_cnf_rac_sum += (p_indep_cnf_rac - true_all_cnf_or_rac) ** 2
-            indep_brier_wl_sum += (p_indep_wl - true_at_least_one_wl) ** 2
-
-            queue = compute_queue_dependent_bounds(po_list)
-            p_queue_cnf = queue.p_all_cnf if queue and queue.p_all_cnf is not None else 0.0
-            p_queue_cnf_rac = queue.p_all_cnf_or_rac if queue and queue.p_all_cnf_or_rac is not None else 0.0
-            p_queue_wl = queue.p_at_least_one_wl if queue and queue.p_at_least_one_wl is not None else 0.0
-
-            queue_brier_cnf_sum += (p_queue_cnf - true_all_cnf) ** 2
-            queue_brier_cnf_rac_sum += (p_queue_cnf_rac - true_all_cnf_or_rac) ** 2
-            queue_brier_wl_sum += (p_queue_wl - true_at_least_one_wl) ** 2
-
-            p_base_group = p_prev_event ** n_passengers
-            baseline_brier_cnf_sum += (p_base_group - true_all_cnf) ** 2
-
-        mean_indep_cnf = indep_brier_cnf_sum / scored_groups if scored_groups else None
-        mean_indep_cnf_rac = indep_brier_cnf_rac_sum / scored_groups if scored_groups else None
-        mean_indep_wl = indep_brier_wl_sum / scored_groups if scored_groups else None
-
-        mean_queue_cnf = queue_brier_cnf_sum / scored_groups if scored_groups else None
-        mean_queue_cnf_rac = queue_brier_cnf_rac_sum / scored_groups if scored_groups else None
-        mean_queue_wl = queue_brier_wl_sum / scored_groups if scored_groups else None
-
-        mean_base_cnf = baseline_brier_cnf_sum / scored_groups if scored_groups else None
-
-        group_card = GroupScorecard(
-            total_groups=total_groups,
-            single_passenger_groups=single_passenger_groups,
-            multi_passenger_groups=multi_passenger_groups,
-            scored_groups=scored_groups,
-            abstained_groups=abstained_groups,
-            brier_all_cnf=_rounded(mean_indep_cnf),
-            brier_all_cnf_or_rac=_rounded(mean_indep_cnf_rac),
-            brier_at_least_one_wl=_rounded(mean_indep_wl),
-            queue_brier_all_cnf=_rounded(mean_queue_cnf),
-            queue_brier_all_cnf_or_rac=_rounded(mean_queue_cnf_rac),
-            queue_brier_at_least_one_wl=_rounded(mean_queue_wl),
-            baseline_brier_all_cnf=_rounded(mean_base_cnf),
-            brier_skill_all_cnf=_skill(mean_indep_cnf, mean_base_cnf),
-        )
+    group_card = _group_scorecard(
+        group_members=scored_rows.group_members,
+        event_classes=event_classes,
+        prevalence=prevalence,
+    )
 
     return Scorecard(
         partition=partition,
         target=target,
-        rows=int(len(frame)),
+        rows=scored_rows.rows_total,
         scored_rows=scored,
         abstained_rows=abstained,
-        coverage=round(scored / len(frame), 6) if len(frame) else 0.0,
+        coverage=round(scored / scored_rows.rows_total, 6) if scored_rows.rows_total else 0.0,
         brier=_rounded(mean_brier),
         log_loss=_rounded(mean_loss),
         baseline_brier=_rounded(baseline_brier),
@@ -530,7 +541,106 @@ def score_partition(
         segments=segments,
         outcome_distribution=dict(sorted(outcome_counts.items())),
         min_segment_rows=min_segment_rows,
+        calibration_applied=calibration is not None,
         group=group_card,
+    )
+
+
+def _group_scorecard(
+    *,
+    group_members: Mapping[str, list[tuple[PassengerOutcome | None, str | None]]],
+    event_classes: tuple[str, ...],
+    prevalence: Mapping[str, float],
+) -> GroupScorecard | None:
+    """Score the joint group claims over bookings that were fully observed."""
+    if not group_members:
+        return None
+
+    total_groups = len(group_members)
+    single_passenger_groups = 0
+    multi_passenger_groups = 0
+    scored_groups = 0
+    abstained_groups = 0
+
+    indep_brier_cnf_sum = 0.0
+    indep_brier_cnf_rac_sum = 0.0
+    indep_brier_wl_sum = 0.0
+    queue_brier_cnf_sum = 0.0
+    queue_brier_cnf_rac_sum = 0.0
+    queue_brier_wl_sum = 0.0
+    baseline_brier_cnf_sum = 0.0
+    p_prev_event = _event_probability(prevalence, event_classes)
+
+    for _gid, members in group_members.items():
+        n_passengers = len(members)
+        if n_passengers <= 1:
+            single_passenger_groups += 1
+            continue
+        multi_passenger_groups += 1
+
+        if any(po is None or not po.is_supported() or label is None for po, label in members):
+            abstained_groups += 1
+            continue
+
+        scored_groups += 1
+        po_list = [po for po, _ in members if po is not None]
+        labels = [label for _, label in members if label is not None]
+
+        true_all_cnf = 1.0 if all(lbl in event_classes for lbl in labels) else 0.0
+        true_all_cnf_or_rac = 1.0 if all(lbl in ("CNF", "RAC") for lbl in labels) else 0.0
+        true_at_least_one_wl = 1.0 if any(lbl == "WL" for lbl in labels) else 0.0
+
+        indep = compute_group_outcomes(po_list, method="independence_baseline")
+        p_indep_cnf = indep.p_all_cnf if indep and indep.p_all_cnf is not None else 0.0
+        p_indep_cnf_rac = (
+            indep.p_all_cnf_or_rac if indep and indep.p_all_cnf_or_rac is not None else 0.0
+        )
+        p_indep_wl = (
+            indep.p_at_least_one_wl if indep and indep.p_at_least_one_wl is not None else 0.0
+        )
+
+        indep_brier_cnf_sum += (p_indep_cnf - true_all_cnf) ** 2
+        indep_brier_cnf_rac_sum += (p_indep_cnf_rac - true_all_cnf_or_rac) ** 2
+        indep_brier_wl_sum += (p_indep_wl - true_at_least_one_wl) ** 2
+
+        queue = compute_queue_dependent_bounds(po_list)
+        p_queue_cnf = queue.p_all_cnf if queue and queue.p_all_cnf is not None else 0.0
+        p_queue_cnf_rac = (
+            queue.p_all_cnf_or_rac if queue and queue.p_all_cnf_or_rac is not None else 0.0
+        )
+        p_queue_wl = (
+            queue.p_at_least_one_wl if queue and queue.p_at_least_one_wl is not None else 0.0
+        )
+
+        queue_brier_cnf_sum += (p_queue_cnf - true_all_cnf) ** 2
+        queue_brier_cnf_rac_sum += (p_queue_cnf_rac - true_all_cnf_or_rac) ** 2
+        queue_brier_wl_sum += (p_queue_wl - true_at_least_one_wl) ** 2
+
+        p_base_group = p_prev_event**n_passengers
+        baseline_brier_cnf_sum += (p_base_group - true_all_cnf) ** 2
+
+    mean_indep_cnf = indep_brier_cnf_sum / scored_groups if scored_groups else None
+    mean_indep_cnf_rac = indep_brier_cnf_rac_sum / scored_groups if scored_groups else None
+    mean_indep_wl = indep_brier_wl_sum / scored_groups if scored_groups else None
+    mean_queue_cnf = queue_brier_cnf_sum / scored_groups if scored_groups else None
+    mean_queue_cnf_rac = queue_brier_cnf_rac_sum / scored_groups if scored_groups else None
+    mean_queue_wl = queue_brier_wl_sum / scored_groups if scored_groups else None
+    mean_base_cnf = baseline_brier_cnf_sum / scored_groups if scored_groups else None
+
+    return GroupScorecard(
+        total_groups=total_groups,
+        single_passenger_groups=single_passenger_groups,
+        multi_passenger_groups=multi_passenger_groups,
+        scored_groups=scored_groups,
+        abstained_groups=abstained_groups,
+        brier_all_cnf=_rounded(mean_indep_cnf),
+        brier_all_cnf_or_rac=_rounded(mean_indep_cnf_rac),
+        brier_at_least_one_wl=_rounded(mean_indep_wl),
+        queue_brier_all_cnf=_rounded(mean_queue_cnf),
+        queue_brier_all_cnf_or_rac=_rounded(mean_queue_cnf_rac),
+        queue_brier_at_least_one_wl=_rounded(mean_queue_wl),
+        baseline_brier_all_cnf=_rounded(mean_base_cnf),
+        brier_skill_all_cnf=_skill(mean_indep_cnf, mean_base_cnf),
     )
 
 
