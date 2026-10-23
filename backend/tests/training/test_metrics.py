@@ -292,3 +292,113 @@ def test_a_partition_of_only_abstentions_reports_no_event_score():
     assert card.event_brier is None
     assert card.event_beats_baseline is None
     assert card.event_reliability == []
+
+
+def test_partition_without_booking_group_id_has_no_group_scorecard():
+    frame = rows([("GNWL/10", "CNF"), ("GNWL/10", "WL/5")])
+    card = score_partition(frame, estimator(), prevalence=PREVALENCE, partition="test")
+    assert card.group is None
+    assert card.to_dict()["group"] is None
+
+
+def test_group_scoring_with_multi_passenger_bookings():
+    # 2 rows with group B1 (multi-passenger), 1 row with group B2 (single-passenger)
+    frame = pd.DataFrame(
+        [
+            {
+                "train_number": "12301",
+                "journey_date": "2026-04-01",
+                "class_code": "SL",
+                "quota_code": "GN",
+                "initial_status": "GNWL/10",
+                "current_status": "GNWL/10",
+                "final_chart_status": "CNF",
+                "observation_date": "2026-03-20",
+                "passenger_record_id": "P1",
+                "booking_group_id": "B1",
+            },
+            {
+                "train_number": "12301",
+                "journey_date": "2026-04-01",
+                "class_code": "SL",
+                "quota_code": "GN",
+                "initial_status": "GNWL/10",
+                "current_status": "GNWL/10",
+                "final_chart_status": "CNF",
+                "observation_date": "2026-03-20",
+                "passenger_record_id": "P2",
+                "booking_group_id": "B1",
+            },
+            {
+                "train_number": "12301",
+                "journey_date": "2026-04-01",
+                "class_code": "SL",
+                "quota_code": "GN",
+                "initial_status": "GNWL/10",
+                "current_status": "GNWL/10",
+                "final_chart_status": "WL/5",
+                "observation_date": "2026-03-20",
+                "passenger_record_id": "P3",
+                "booking_group_id": "B2",
+            },
+        ]
+    )
+    card = score_partition(frame, estimator(), prevalence=PREVALENCE, partition="test")
+    assert card.group is not None
+    assert card.group.total_groups == 2
+    assert card.group.single_passenger_groups == 1
+    assert card.group.multi_passenger_groups == 1
+    assert card.group.scored_groups == 1
+    assert card.group.abstained_groups == 0
+    # Group B1: 2 passengers, both p_cnf = 91/105 ~ 0.866667
+    # P(all CNF indep) = (91/105)^2 ~ 0.751134
+    # P(all CNF queue) = 91/105 ~ 0.866667
+    # Observed all CNF = 1.0
+    p_indep = round((91 / 105) ** 2, 6)
+    p_queue = round(91 / 105, 6)
+    assert card.group.brier_all_cnf == pytest.approx((p_indep - 1.0) ** 2, abs=1e-5)
+    assert card.group.queue_brier_all_cnf == pytest.approx((p_queue - 1.0) ** 2, abs=1e-5)
+    # Queue-clearing Brier is lower (better) than independence Brier when both confirmed!
+    assert card.group.queue_brier_all_cnf < card.group.brier_all_cnf
+    payload = card.to_dict()
+    assert "group" in payload
+    assert payload["group"]["total_groups"] == 2
+
+
+def test_group_scoring_abstained_when_passenger_abstains():
+    # Group B1 has one valid passenger and one with unmappable status
+    frame = pd.DataFrame(
+        [
+            {
+                "train_number": "12301",
+                "journey_date": "2026-04-01",
+                "class_code": "SL",
+                "quota_code": "GN",
+                "initial_status": "GNWL/10",
+                "current_status": "GNWL/10",
+                "final_chart_status": "CNF",
+                "observation_date": "2026-03-20",
+                "passenger_record_id": "P1",
+                "booking_group_id": "B1",
+            },
+            {
+                "train_number": "12301",
+                "journey_date": "2026-04-01",
+                "class_code": "SL",
+                "quota_code": "GN",
+                "initial_status": "NOT_A_STATUS",
+                "current_status": "NOT_A_STATUS",
+                "final_chart_status": "CNF",
+                "observation_date": "2026-03-20",
+                "passenger_record_id": "P2",
+                "booking_group_id": "B1",
+            },
+        ]
+    )
+    card = score_partition(frame, estimator(), prevalence=PREVALENCE, partition="test")
+    assert card.group is not None
+    assert card.group.total_groups == 1
+    assert card.group.multi_passenger_groups == 1
+    assert card.group.scored_groups == 0
+    assert card.group.abstained_groups == 1
+    assert card.group.brier_all_cnf is None

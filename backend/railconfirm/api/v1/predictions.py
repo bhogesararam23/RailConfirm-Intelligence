@@ -186,6 +186,8 @@ async def predict_manual(
             abstention_reason=(
                 go.abstention_reason.value if go.abstention_reason else None
             ),
+            p_at_least_k_cnf=go.p_at_least_k_cnf,
+            p_exactly_k_cnf=go.p_exactly_k_cnf,
         )
 
     response = PredictionResponse(

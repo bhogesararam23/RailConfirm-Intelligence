@@ -1,6 +1,6 @@
 # Project status and scope
 
-Last reviewed: 2026-10-23 (after the foundation audit, frontend rebuild, training/evaluation pipeline, rolling-origin evaluation, and history listing/deletion)
+Last reviewed: 2026-10-23 (after the foundation audit, frontend rebuild, training/evaluation pipeline, rolling-origin evaluation, history listing/deletion, and dependent group outcomes)
 
 ## Status
 
@@ -22,16 +22,16 @@ Each row states which of these it is: **verified with real data**, **implemented
 | Prediction API (`POST /v1/predictions/manual`, `GET /v1/predictions/{id}`, `GET /v1/health`) | Implemented and tested, verified over real HTTP locally (uvicorn, health, abstention, validation, CORS, 413, store-and-reopen, unrouted-path envelope) | Public deployment is out of scope for the local build |
 | Historical-frequency baseline | Implemented and tested (synthetic fixtures only). **Never loaded with real data anywhere in the codebase** | An approved dataset converted into a promoted artifact |
 | Model registry and artifacts | Implemented and tested (ADR-0009, ADR-0013): JSON format `/2`, two-gate promotion, metadata validation, and load-time refusal of an artifact whose declared `cohort_semantics` or `features_used` differ from what this build serves. No artifact exists | A trained artifact that clears evaluation and is explicitly promoted |
-| Group outcomes | Implemented and tested as an **independence baseline only**. It is not a validated model of correlated reservation outcomes | Joint/dependence-aware estimation once booking-level labels exist |
+| Group outcomes | Implemented and tested (synthetic fixtures only, ADR-0003, ADR-0016): exact Poisson-binomial distribution ($P(K = k)$ and $P(K \ge k)$) under independence baseline, and queue-clearing comonotonic bounds under FIFO priority. Group outcomes scored in `score_partition()`. Not yet validated against real group data | Evaluated on an approved dataset with labelled booking groups |
 | Dataset intake pipeline (`loader`, `validator`, `manifest`, CLI) | Implemented and tested | A real candidate file put through it |
 | Historical outcome dataset | **Blocked — none approved.** No candidate has passed the intake checklist | Provenance, licence, labels, privacy and quality reviewed by a named person |
 | Training pipeline | Implemented and tested against synthetic fixtures: a gate that enforces **technical eligibility** (not just structure) and hands on only the rows validation kept, chronological split, cohort fitting keyed by the shared as-of status, candidate artifact writing. **Never run on real data — there is none.** | A reproducible fit on an approved dataset |
-| Temporal evaluation and metrics | Implemented and tested against synthetic fixtures (ADR-0011, ADR-0013, ADR-0014): multiclass Brier, log loss, prevalence-baseline comparison with skill, **target-event scoring for both documented targets**, reliability bands, coverage/abstention accounting, per-segment counts with low-sample flags (including as-of vs booked status segments), deterministic JSON report, **rolling-origin evaluation across multiple cutoffs with per-cutoff refitting and a two-origin floor**. 16 cohort-parity tests prove fit, score and serve query the same key. | A scored run on approved real data |
+| Temporal evaluation and metrics | Implemented and tested against synthetic fixtures (ADR-0011, ADR-0013, ADR-0014, ADR-0016): multiclass Brier, log loss, prevalence-baseline comparison with skill, **target-event scoring for both documented targets**, reliability bands, coverage/abstention accounting, per-segment counts with low-sample flags (including as-of vs booked status segments), deterministic JSON report, **rolling-origin evaluation across multiple cutoffs with per-cutoff refitting and a two-origin floor**, and **group-event scoring for multi-passenger bookings**. 16 cohort-parity tests prove fit, score and serve query the same key. | A scored run on approved real data |
 | Calibration | **Planned, not implemented.** Reports state explicitly that no calibration was fitted. | Calibration fitted on the validation period and measured on a locked test period |
 | Persistence, prediction history | Implemented and tested (ADR-0012, ADR-0015): opt-in SQLite store, reopen by internal id, retention floor enforced, denied-key and PNR-shaped values refused at the write. **Disabled by default.** List route returns metadata-only summaries (no payload); delete route removes one row immediately; absent/expired/deleted ids return the same 404 body. Verified in a browser. | A label-feedback path with its own consent design |
-| Manual-entry web flow | Implemented, tested (113 frontend tests) and **verified end-to-end in a browser** — abstaining and supported paths, CORS preflight, provenance and evidence rendering, keep-this-report, reopen and history page with two-step deletion. | A public deployment and real predictions to display |
-| Frontend tests | Implemented (Vitest + Testing Library): null-safety, abstention wording, error envelope, validation parity, contract rendering, stored-report reopening and its three failure wordings | Live cross-stack contract check against a running backend |
-| Tests and CI | Implemented and verified green on `main` (633 backend tests, 96%+ branch coverage locally, CI jobs observed passing on pushed commits) | Continuous |
+| Manual-entry web flow | Implemented, tested (115 frontend tests) and **verified end-to-end in a browser** — abstaining and supported paths, CORS preflight, provenance and evidence rendering, keep-this-report, reopen, history page with two-step deletion, and confirmed berths distribution grid. | A public deployment and real predictions to display |
+| Frontend tests | Implemented (Vitest + Testing Library): null-safety, abstention wording, error envelope, validation parity, contract rendering, stored-report reopening and its three failure wordings, and group outcome distribution rendering | Live cross-stack contract check against a running backend |
+| Tests and CI | Implemented and verified green on `main` (640 backend tests, 96.21% branch coverage locally, 115 frontend tests, CI jobs observed passing on pushed commits) | Continuous |
 | External live integrations (Phases 8–10) | Planned core long-term capability; not implemented in the current build | Provider-specific ADR plus authorized access (ADR-0008) |
 | Production monitoring and deployment | Planned | A real deployment exists |
 
@@ -39,6 +39,7 @@ Each row states which of these it is: **verified with real data**, **implemented
 
 - Domain models with a versioned status mapping, offset-aware timestamps and stable abstention reasons.
 - Passenger-level and group-level outcome schemas (`CNF`, `RAC`, `WL`, `CANCELLED`, `OTHER`).
+- Multi-passenger group outcomes (ADR-0003, ADR-0016): exact Poisson-binomial distribution convolution for PMF and cumulative berth confirmation, sequential queue-clearing comonotonic upper bound modeling Indian Railways FIFO waitlist queue clearance, and group-level Brier scoring in evaluation.
 - Local dataset intake: CSV/JSON loading with explicit safety checks, row-contract validation with per-reason accounting, deterministic manifests and manifest verification.
 - Chronological splitting that reports inability to evaluate rather than faking one.
 - Baseline training and temporal evaluation (`backend/railconfirm/training/`, ADR-0011, ADR-0013): a dataset gate that verifies the manifest, requires the human approval record, enforces technical eligibility and passes on only the rows validation kept; cohort fitting on the training partition keyed by the one as-of status rule that scoring and serving also use; candidate artifact writing; Brier/log-loss scoring against a prevalence baseline; the target's own event scored alongside the distribution; and a deterministic report that defines every number it publishes and states which features the estimator actually reads.
@@ -47,7 +48,7 @@ Each row states which of these it is: **verified with real data**, **implemented
 - Opt-in local prediction history (`backend/railconfirm/storage/`, ADR-0012): a saved report reopens at `/prediction/[id]` with the model version it was served with, expires after a configured retention window, and refuses a payload carrying a name key or a PNR-shaped value. Off by default, and the response says whether a save actually happened.
 - JSON model artifacts with validated metadata and explicit promotion.
 - Clearly labelled synthetic fixtures for deterministic tests (`backend/tests/fixtures/`).
-- A Next.js frontend written against the shipped API contract, with 113 tests.
+- A Next.js frontend written against the shipped API contract, with 115 tests.
 
 ## What the system does today
 

@@ -194,9 +194,11 @@ class GroupOutcome:
     p_all_cnf: float | None
     p_all_cnf_or_rac: float | None
     p_at_least_one_wl: float | None
-    method: str       # e.g. "independence_baseline", "joint_model", "insufficient_data"
+    method: str       # e.g. "independence_baseline", "queue_dependent", "single_passenger", "insufficient_data"
     assumptions: str  # Explicit description of all assumptions made
     abstention_reason: AbstentionReason | None
+    p_at_least_k_cnf: dict[int, float] | None = None
+    p_exactly_k_cnf: dict[int, float] | None = None
 
 
 # ── Prediction record ──────────────────────────────────────────────────────────

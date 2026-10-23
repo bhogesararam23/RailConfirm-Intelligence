@@ -989,3 +989,64 @@ Changed: `backend/railconfirm/api/app.py`,
   route in the local-first build (CORS allowlist limits which origins). Multi-user history
   would require authentication; that is ADR-0012's stated consequence.
 
+## 2026-10-23 — Dependent group outcomes, Poisson-binomial distribution, queue bounds, and group evaluation
+
+### Scope
+Addressed the group outcome and evaluation gaps identified in roadmap Phase 6 and ADR-0003:
+computing exact multi-passenger outcome distributions ($P(K = k)$ and $P(K \ge k)$),
+modeling sequential queue-clearing comonotonic bounds under Indian Railways FIFO queue rules,
+and evaluating multi-passenger group events in `score_partition()`. Decided in ADR-0016.
+
+### Implemented
+- **Exact Poisson-binomial PMF and tail probabilities (`backend/railconfirm/inference/group.py`):**
+  Added `compute_poisson_binomial_pmf()` implementing exact $O(n^2)$ dynamic programming
+  convolution of passenger marginal probabilities. Extends `compute_group_outcomes()` to populate
+  `p_at_least_k_cnf` and `p_exactly_k_cnf` on `GroupOutcome`.
+- **Sequential queue-clearing comonotonic bounds (`backend/railconfirm/inference/group.py`):**
+  Added `compute_queue_dependent_bounds()` modeling Indian Railways FIFO waitlist queue clearance,
+  yielding the Fréchet-Hoeffding comonotonic upper bound ($P_{\text{all CNF}} = \min_i p_i$,
+  $P(K \ge k) = p_{(k)}$) where lower-priority passengers confirm only if higher-priority
+  passengers confirm. Both methods enforce probability axioms ($\sum P(K=k) = 1.0$,
+  $P(\text{all CNF}) = P(K=n) = P(K \ge n)$) and declare their assumptions.
+- **Group event scoring in offline evaluation (`backend/railconfirm/training/metrics.py`):**
+  Added `GroupScorecard` and group-level scoring in `score_partition()`. When `booking_group_id`
+  is present in the evaluated partition, tracks total, single-passenger, and multi-passenger
+  groups, scores both the independence baseline and queue comonotonic bounds against observed
+  joint outcomes (`all_cnf`, `all_cnf_or_rac`, `at_least_one_wl`) using Brier scores, and
+  evaluates group skill against group prevalence baselines.
+- **Evaluation report formatting (`backend/railconfirm/training/report.py`):**
+  Extended partition summary lines to include group Brier scores and skill when groups are present.
+- **API and Frontend schemas & UI (`backend/railconfirm/api/v1/`, `frontend/src/`):**
+  Exposed `p_at_least_k_cnf` and `p_exactly_k_cnf` on `GroupOutcomeResponse`. Updated
+  `frontend/src/components/prediction/GroupOutcomeCard.tsx` to display confirmed berths distribution
+  grid ($P(\ge k \text{ passengers confirmed})$) for multi-passenger groups and support queue
+  comonotonic method labels.
+
+### Checks run and results
+- `pytest tests/ -q --cov=railconfirm --cov-fail-under=90` → **640 passed** in 94.09s, **96.21%**
+  branch coverage (coverage gate satisfied).
+- `ruff check .` → **All checks passed!**
+- `mypy railconfirm/` → **Success: no issues found in 39 source files**.
+- `npm test -- --run` → **115 passed** across 6 test files.
+- `npx tsc --noEmit` & `npm run lint` → clean (0 errors, 0 warnings).
+- `npm run build` → compiled successfully, 7 static pages generated.
+- `python scripts/check_repository_hygiene.py` → **passed** (22 required files, 210 tracked files scanned).
+
+### Files
+New: `docs/adr/ADR-0016-dependent-group-outcomes-and-group-event-evaluation.md`.
+Changed: `backend/railconfirm/api/v1/predictions.py`,
+`backend/railconfirm/api/v1/schemas.py`,
+`backend/railconfirm/domain/prediction.py`,
+`backend/railconfirm/inference/group.py`,
+`backend/railconfirm/training/metrics.py`,
+`backend/railconfirm/training/report.py`,
+`backend/tests/inference/test_group.py`,
+`backend/tests/training/test_metrics.py`,
+`frontend/src/components/__tests__/contract.test.tsx`,
+`frontend/src/components/prediction/GroupOutcomeCard.tsx`,
+`frontend/src/lib/types.ts`,
+`docs/adr/README.md`,
+`CHANGELOG.md`,
+`docs/PROJECT_STATUS.md`,
+`docs/AGENT_HANDOFF.md`.
+

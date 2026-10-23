@@ -22,11 +22,13 @@ export function GroupOutcomeCard({ group, passengerCount }: GroupOutcomeCardProp
   const methodLabel =
     group.method === 'independence_baseline'
       ? 'Independence baseline (approximation)'
-      : group.method === 'single_passenger'
-        ? 'Single passenger'
-        : group.method === 'insufficient_data'
-          ? 'Not computed'
-          : group.method;
+      : group.method === 'queue_dependent_comonotonic'
+        ? 'Queue-clearing comonotonic bound'
+        : group.method === 'single_passenger'
+          ? 'Single passenger'
+          : group.method === 'insufficient_data'
+            ? 'Not computed'
+            : group.method;
 
   return (
     <div className="rounded-lg border border-blue-200 bg-blue-50/30 p-5 shadow-sm">
@@ -79,6 +81,29 @@ export function GroupOutcomeCard({ group, passengerCount }: GroupOutcomeCardProp
               </div>
             ))}
           </div>
+
+          {passengerCount >= 2 && group.p_at_least_k_cnf && (
+            <div className="rounded-md border border-blue-100 bg-white p-3">
+              <h4 className="text-xs font-semibold text-gray-800">
+                Confirmed berths distribution
+              </h4>
+              <p className="mb-2 text-[11px] text-gray-500">
+                Probability of how many passengers in this booking secure confirmed berths.
+              </p>
+              <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3">
+                {Object.entries(group.p_at_least_k_cnf).map(([k, p]) => (
+                  <div key={k} className="rounded bg-blue-50/50 p-2 text-center">
+                    <span className="block text-[11px] text-gray-600">
+                      At least {k} {Number(k) === 1 ? 'passenger' : 'passengers'}
+                    </span>
+                    <span className="block font-semibold text-blue-900">
+                      {formatProbability(p)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <p className="text-[11px] text-gray-500">
             These three events are not mutually exclusive and do not sum to 100%.

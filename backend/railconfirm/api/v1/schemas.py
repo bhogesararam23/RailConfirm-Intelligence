@@ -273,6 +273,8 @@ class GroupOutcomeResponse(BaseModel):
     assumptions: str
     is_supported: bool
     abstention_reason: str | None = None
+    p_at_least_k_cnf: dict[int, float] | None = None
+    p_exactly_k_cnf: dict[int, float] | None = None
 
 
 class PredictionResponse(BaseModel):

@@ -89,10 +89,12 @@ export interface GroupOutcome {
   p_all_cnf: number | null;
   p_all_cnf_or_rac: number | null;
   p_at_least_one_wl: number | null;
-  method: 'single_passenger' | 'independence_baseline' | 'insufficient_data' | string;
+  method: 'single_passenger' | 'independence_baseline' | 'queue_dependent_comonotonic' | 'insufficient_data' | string;
   assumptions: string;
   is_supported: boolean;
   abstention_reason: AbstentionReason | null;
+  p_at_least_k_cnf?: Record<string | number, number> | null;
+  p_exactly_k_cnf?: Record<string | number, number> | null;
 }
 
 export interface PredictionResponse {

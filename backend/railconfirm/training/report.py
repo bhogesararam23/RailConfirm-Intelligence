@@ -157,10 +157,10 @@ def _fmt(value: float | None) -> str:
 
 
 def _metric_lines(scorecard: Scorecard) -> list[str]:
-    """Two lines per partition: the full distribution and the target's own event."""
+    """Summary lines per partition: distribution, event, and group when present."""
     label = f"{scorecard.partition.capitalize()}:"
     gap = " " * (len(label) + 1)
-    return [
+    lines = [
         f"{label} Brier {_fmt(scorecard.brier)} vs baseline "
         f"{_fmt(scorecard.baseline_brier)} · skill {_fmt(scorecard.brier_skill)} "
         f"· coverage {scorecard.coverage:.1%} ({scorecard.scored_rows}/"
@@ -169,6 +169,20 @@ def _metric_lines(scorecard: Scorecard) -> list[str]:
         f"{_fmt(scorecard.event_baseline_brier)} · skill "
         f"{_fmt(scorecard.event_brier_skill)}",
     ]
+    if scorecard.group is not None:
+        if scorecard.group.multi_passenger_groups > 0:
+            lines.append(
+                f"{gap}group all-CNF Brier {_fmt(scorecard.group.brier_all_cnf)} (queue bound: "
+                f"{_fmt(scorecard.group.queue_brier_all_cnf)}) vs baseline "
+                f"{_fmt(scorecard.group.baseline_brier_all_cnf)} "
+                f"({scorecard.group.scored_groups}/{scorecard.group.multi_passenger_groups} multi-passenger groups)"
+            )
+        else:
+            lines.append(
+                f"{gap}group: {scorecard.group.total_groups} single-passenger bookings "
+                "(no multi-passenger groups to score)"
+            )
+    return lines
 
 
 def describe_split(split: SplitResult) -> dict[str, Any]:

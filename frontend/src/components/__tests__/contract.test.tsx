@@ -307,6 +307,36 @@ function alwaysVisibleAssumptions() {
     // An abstaining group shows no probabilities at all, not zeros.
     expect(text).not.toMatch(/\d+\.\d%/);
   });
+
+  it('renders confirmed berths distribution when p_at_least_k_cnf is provided', () => {
+    render(
+      <GroupOutcomeCard
+        group={{
+          ...group,
+          p_at_least_k_cnf: { 1: 0.9, 2: 0.4 },
+        }}
+        passengerCount={2}
+      />,
+    );
+    expect(screen.getByText(/Confirmed berths distribution/)).toBeInTheDocument();
+    expect(screen.getByText(/At least 1 passenger/)).toBeInTheDocument();
+    expect(screen.getByText(/At least 2 passengers/)).toBeInTheDocument();
+    expect(screen.getByText('90.0%')).toBeInTheDocument();
+    expect(screen.getByText('40.0%')).toBeInTheDocument();
+  });
+
+  it('renders queue-clearing comonotonic bound method label', () => {
+    render(
+      <GroupOutcomeCard
+        group={{
+          ...group,
+          method: 'queue_dependent_comonotonic',
+        }}
+        passengerCount={2}
+      />,
+    );
+    expect(screen.getByText(/Queue-clearing comonotonic bound/)).toBeInTheDocument();
+  });
 }
 
 describe('AbstentionCard', () => {

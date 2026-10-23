@@ -27,6 +27,10 @@ from railconfirm.inference.baseline import (
     FrequencyTableProvenance,
     HistoricalFrequencyBaseline,
 )
+from railconfirm.inference.group import (
+    compute_group_outcomes,
+    compute_queue_dependent_bounds,
+)
 
 PROBABILITY_FLOOR = 1e-12
 DEFAULT_MIN_SEGMENT_ROWS = 25
@@ -67,6 +71,28 @@ class SegmentMetric:
 
 
 @dataclass(frozen=True)
+class GroupScorecard:
+    """Evaluation of joint group-level predictions on held-out bookings."""
+
+    total_groups: int
+    single_passenger_groups: int
+    multi_passenger_groups: int
+    scored_groups: int
+    abstained_groups: int
+    brier_all_cnf: float | None
+    brier_all_cnf_or_rac: float | None
+    brier_at_least_one_wl: float | None
+    queue_brier_all_cnf: float | None
+    queue_brier_all_cnf_or_rac: float | None
+    queue_brier_at_least_one_wl: float | None
+    baseline_brier_all_cnf: float | None
+    brier_skill_all_cnf: float | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class Scorecard:
     """Everything one evaluation pass produced, ready to serialise."""
 
@@ -90,6 +116,7 @@ class Scorecard:
     segments: list[SegmentMetric]
     outcome_distribution: dict[str, int]
     min_segment_rows: int
+    group: GroupScorecard | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -98,6 +125,7 @@ class Scorecard:
             for outcome, bins in self.reliability.items()
         }
         payload["event_reliability"] = [asdict(item) for item in self.event_reliability]
+        payload["group"] = self.group.to_dict() if self.group is not None else None
         return payload
 
     @property
@@ -124,6 +152,7 @@ STRUCTURAL_FIELDS = frozenset(
         "segments",
         "outcome_distribution",
         "min_segment_rows",
+        "group",
     }
 )
 """Scorecard fields that describe the run rather than a measured probability model."""
@@ -297,6 +326,13 @@ def score_partition(
 
     event_classes = TARGET_EVENTS[target]
     statuses = asof_statuses(frame)
+    has_groups = "booking_group_id" in frame.columns
+    group_members: dict[str, list[tuple[PassengerOutcome | None, str | None]]] = {}
+    if has_groups:
+        for gid in frame["booking_group_id"]:
+            if pd.notna(gid) and str(gid).strip():
+                group_members.setdefault(str(gid).strip(), [])
+
     predictions: list[dict[str, float]] = []
     truths: list[dict[str, float]] = []
     event_pairs: list[tuple[float, float]] = []
@@ -310,9 +346,16 @@ def score_partition(
     event_baseline_total = 0.0
 
     for (_, row), asof in zip(frame.iterrows(), statuses, strict=True):
+        gid = (
+            str(row["booking_group_id"]).strip()
+            if has_groups and pd.notna(row.get("booking_group_id"))
+            else None
+        )
         truth = _outcome_vector(parse_status(str(row["final_chart_status"])))
         if not truth:
             abstained += 1
+            if gid and gid in group_members:
+                group_members[gid].append((None, None))
             continue
 
         outcome = estimator.estimate(
@@ -321,6 +364,12 @@ def score_partition(
             class_code=str(row.get("class_code", "")),
             quota_code=str(row.get("quota_code", "")),
         )
+        observed = max(OUTCOME_CLASSES, key=lambda name: truth.get(name, 0.0))
+        if gid and gid in group_members:
+            group_members[gid].append(
+                (outcome if outcome.is_supported() else None, observed)
+            )
+
         if not outcome.is_supported():
             abstained += 1
             continue
@@ -331,7 +380,6 @@ def score_partition(
         brier = _brier_one(hypothesis, truth)
         brier_total += brier
         loss_total += _log_loss_one(hypothesis, truth)
-        observed = max(OUTCOME_CLASSES, key=lambda name: truth.get(name, 0.0))
         outcome_counts[observed] = outcome_counts.get(observed, 0) + 1
 
         event_observed = 1.0 if observed in event_classes else 0.0
@@ -377,6 +425,90 @@ def score_partition(
         event_baseline_total / scored if scored else None
     )
 
+    group_card: GroupScorecard | None = None
+    if has_groups and group_members:
+        total_groups = len(group_members)
+        single_passenger_groups = 0
+        multi_passenger_groups = 0
+        scored_groups = 0
+        abstained_groups = 0
+
+        indep_brier_cnf_sum = 0.0
+        indep_brier_cnf_rac_sum = 0.0
+        indep_brier_wl_sum = 0.0
+        queue_brier_cnf_sum = 0.0
+        queue_brier_cnf_rac_sum = 0.0
+        queue_brier_wl_sum = 0.0
+        baseline_brier_cnf_sum = 0.0
+
+        p_prev_event = _event_probability(prevalence, event_classes)
+
+        for _gid, members in group_members.items():
+            n_passengers = len(members)
+            if n_passengers <= 1:
+                single_passenger_groups += 1
+                continue
+            multi_passenger_groups += 1
+
+            if any(po is None or not po.is_supported() or label is None for po, label in members):
+                abstained_groups += 1
+                continue
+
+            scored_groups += 1
+            po_list = [po for po, _ in members if po is not None]
+            labels = [label for _, label in members if label is not None]
+
+            true_all_cnf = 1.0 if all(lbl in event_classes for lbl in labels) else 0.0
+            true_all_cnf_or_rac = 1.0 if all(lbl in ("CNF", "RAC") for lbl in labels) else 0.0
+            true_at_least_one_wl = 1.0 if any(lbl == "WL" for lbl in labels) else 0.0
+
+            indep = compute_group_outcomes(po_list, method="independence_baseline")
+            p_indep_cnf = indep.p_all_cnf if indep and indep.p_all_cnf is not None else 0.0
+            p_indep_cnf_rac = indep.p_all_cnf_or_rac if indep and indep.p_all_cnf_or_rac is not None else 0.0
+            p_indep_wl = indep.p_at_least_one_wl if indep and indep.p_at_least_one_wl is not None else 0.0
+
+            indep_brier_cnf_sum += (p_indep_cnf - true_all_cnf) ** 2
+            indep_brier_cnf_rac_sum += (p_indep_cnf_rac - true_all_cnf_or_rac) ** 2
+            indep_brier_wl_sum += (p_indep_wl - true_at_least_one_wl) ** 2
+
+            queue = compute_queue_dependent_bounds(po_list)
+            p_queue_cnf = queue.p_all_cnf if queue and queue.p_all_cnf is not None else 0.0
+            p_queue_cnf_rac = queue.p_all_cnf_or_rac if queue and queue.p_all_cnf_or_rac is not None else 0.0
+            p_queue_wl = queue.p_at_least_one_wl if queue and queue.p_at_least_one_wl is not None else 0.0
+
+            queue_brier_cnf_sum += (p_queue_cnf - true_all_cnf) ** 2
+            queue_brier_cnf_rac_sum += (p_queue_cnf_rac - true_all_cnf_or_rac) ** 2
+            queue_brier_wl_sum += (p_queue_wl - true_at_least_one_wl) ** 2
+
+            p_base_group = p_prev_event ** n_passengers
+            baseline_brier_cnf_sum += (p_base_group - true_all_cnf) ** 2
+
+        mean_indep_cnf = indep_brier_cnf_sum / scored_groups if scored_groups else None
+        mean_indep_cnf_rac = indep_brier_cnf_rac_sum / scored_groups if scored_groups else None
+        mean_indep_wl = indep_brier_wl_sum / scored_groups if scored_groups else None
+
+        mean_queue_cnf = queue_brier_cnf_sum / scored_groups if scored_groups else None
+        mean_queue_cnf_rac = queue_brier_cnf_rac_sum / scored_groups if scored_groups else None
+        mean_queue_wl = queue_brier_wl_sum / scored_groups if scored_groups else None
+
+        mean_base_cnf = baseline_brier_cnf_sum / scored_groups if scored_groups else None
+
+        group_card = GroupScorecard(
+            total_groups=total_groups,
+            single_passenger_groups=single_passenger_groups,
+            multi_passenger_groups=multi_passenger_groups,
+            scored_groups=scored_groups,
+            abstained_groups=abstained_groups,
+            brier_all_cnf=_rounded(mean_indep_cnf),
+            brier_all_cnf_or_rac=_rounded(mean_indep_cnf_rac),
+            brier_at_least_one_wl=_rounded(mean_indep_wl),
+            queue_brier_all_cnf=_rounded(mean_queue_cnf),
+            queue_brier_all_cnf_or_rac=_rounded(mean_queue_cnf_rac),
+            queue_brier_at_least_one_wl=_rounded(mean_queue_wl),
+            baseline_brier_all_cnf=_rounded(mean_base_cnf),
+            brier_skill_all_cnf=_skill(mean_indep_cnf, mean_base_cnf),
+        )
+
     return Scorecard(
         partition=partition,
         target=target,
@@ -398,6 +530,7 @@ def score_partition(
         segments=segments,
         outcome_distribution=dict(sorted(outcome_counts.items())),
         min_segment_rows=min_segment_rows,
+        group=group_card,
     )
 
 
