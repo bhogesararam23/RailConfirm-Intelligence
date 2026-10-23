@@ -14,7 +14,8 @@ import json
 import logging
 import time
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, Request, status
@@ -175,6 +176,22 @@ def create_app(
     """
     configure_logging()
 
+    resolved_engine = engine or InferenceEngine()
+    store = prediction_store
+    if store is None and settings.persist_predictions:
+        store = PredictionStore(
+            settings.storage_dir / "predictions.sqlite3",
+            retention_days=settings.prediction_retention_days,
+        )
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        # A lifespan, not a deprecated shutdown-event list: the store is opened for the
+        # life of the application, so its file handle closes with the application.
+        yield
+        if store is not None:
+            store.close()
+
     app = FastAPI(
         title=settings.app_name,
         version=settings.app_version,
@@ -185,18 +202,11 @@ def create_app(
         ),
         docs_url="/docs",
         redoc_url="/redoc",
+        lifespan=lifespan,
     )
 
-    app.state.engine = engine or InferenceEngine()
-    store = prediction_store
-    if store is None and settings.persist_predictions:
-        store = PredictionStore(
-            settings.storage_dir / "predictions.sqlite3",
-            retention_days=settings.prediction_retention_days,
-        )
+    app.state.engine = resolved_engine
     app.state.prediction_store = store
-    if store is not None:
-        app.add_event_handler("shutdown", store.close)
 
     # ── Middleware (outermost last) ────────────────────────────────────────────
     app.add_middleware(MaxBodySizeMiddleware, max_bytes=settings.max_request_bytes)
