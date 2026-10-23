@@ -1,6 +1,6 @@
 # Project status and scope
 
-Last reviewed: 2026-10-23 (after the foundation audit, the frontend rebuild and the training/evaluation pipeline)
+Last reviewed: 2026-10-23 (after the foundation audit, frontend rebuild, training/evaluation pipeline, rolling-origin evaluation, and history listing/deletion)
 
 ## Status
 
@@ -28,10 +28,10 @@ Each row states which of these it is: **verified with real data**, **implemented
 | Training pipeline | Implemented and tested against synthetic fixtures: a gate that enforces **technical eligibility** (not just structure) and hands on only the rows validation kept, chronological split, cohort fitting keyed by the shared as-of status, candidate artifact writing. **Never run on real data — there is none.** | A reproducible fit on an approved dataset |
 | Temporal evaluation and metrics | Implemented and tested against synthetic fixtures (ADR-0011, ADR-0013, ADR-0014): multiclass Brier, log loss, prevalence-baseline comparison with skill, **target-event scoring for both documented targets**, reliability bands, coverage/abstention accounting, per-segment counts with low-sample flags (including as-of vs booked status segments), deterministic JSON report, **rolling-origin evaluation across multiple cutoffs with per-cutoff refitting and a two-origin floor**. 16 cohort-parity tests prove fit, score and serve query the same key. | A scored run on approved real data |
 | Calibration | **Planned, not implemented.** Reports state explicitly that no calibration was fitted. | Calibration fitted on the validation period and measured on a locked test period |
-| Persistence, prediction history | Implemented and tested (ADR-0012): opt-in SQLite store, reopen by internal id, retention floor enforced, denied-key and PNR-shaped values refused at the write. **Disabled by default** — nothing is stored unless both `RAILCONFIRM_PERSIST_PREDICTIONS` and the request's `persist` are true. Verified in a browser: saved report, reopened report, aged-out and unknown ids. | Per-row deletion, and a label-feedback path with its own consent design |
-| Manual-entry web flow | Implemented, tested (93 frontend tests) and **verified end-to-end in a browser against both running servers** — abstaining and supported paths, CORS preflight, provenance and evidence rendering, keep-this-report and reopen flows | A public deployment and real predictions to display |
+| Persistence, prediction history | Implemented and tested (ADR-0012, ADR-0015): opt-in SQLite store, reopen by internal id, retention floor enforced, denied-key and PNR-shaped values refused at the write. **Disabled by default.** List route returns metadata-only summaries (no payload); delete route removes one row immediately; absent/expired/deleted ids return the same 404 body. Verified in a browser. | A label-feedback path with its own consent design |
+| Manual-entry web flow | Implemented, tested (113 frontend tests) and **verified end-to-end in a browser** — abstaining and supported paths, CORS preflight, provenance and evidence rendering, keep-this-report, reopen and history page with two-step deletion. | A public deployment and real predictions to display |
 | Frontend tests | Implemented (Vitest + Testing Library): null-safety, abstention wording, error envelope, validation parity, contract rendering, stored-report reopening and its three failure wordings | Live cross-stack contract check against a running backend |
-| Tests and CI | Implemented and verified green on `main` (611 backend tests, 96.30% branch coverage locally, CI jobs observed passing on pushed commits) | Continuous |
+| Tests and CI | Implemented and verified green on `main` (633 backend tests, 96%+ branch coverage locally, CI jobs observed passing on pushed commits) | Continuous |
 | External live integrations (Phases 8–10) | Planned core long-term capability; not implemented in the current build | Provider-specific ADR plus authorized access (ADR-0008) |
 | Production monitoring and deployment | Planned | A real deployment exists |
 
@@ -47,7 +47,7 @@ Each row states which of these it is: **verified with real data**, **implemented
 - Opt-in local prediction history (`backend/railconfirm/storage/`, ADR-0012): a saved report reopens at `/prediction/[id]` with the model version it was served with, expires after a configured retention window, and refuses a payload carrying a name key or a PNR-shaped value. Off by default, and the response says whether a save actually happened.
 - JSON model artifacts with validated metadata and explicit promotion.
 - Clearly labelled synthetic fixtures for deterministic tests (`backend/tests/fixtures/`).
-- A Next.js frontend written against the shipped API contract, with 93 tests.
+- A Next.js frontend written against the shipped API contract, with 113 tests.
 
 ## What the system does today
 

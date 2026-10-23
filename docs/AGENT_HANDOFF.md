@@ -8,15 +8,15 @@ RailConfirm Intelligence estimates final reservation outcomes for Indian Railway
 
 The repository now contains a **working local-first application core**: a FastAPI backend, a Next.js frontend, a dataset intake pipeline, and a model registry. It contains **no approved dataset, no trained model and no evaluation results**, so every prediction currently returns a structured abstention. That is the designed behaviour, not a stub.
 
-Do not assume any of the following exist, because none do: an accuracy figure, a calibration result, an approved dataset, a promoted artifact, a deployment, or a live data provider. Opt-in local prediction history does exist (ADR-0012) but is disabled by default.
+Do not assume any of the following exist, because none do: an accuracy figure, a calibration result, an approved dataset, a promoted artifact, a deployment, or a live data provider. Opt-in local prediction history exists (ADR-0012): kept reports can be listed and deleted individually (ADR-0015). History is disabled by default.
 
 ## Current state, precisely
 
 | Exists and is tested | Exists but is unverified against real data | Does not exist |
 |---|---|---|
-| Domain contracts, status mapping v1.1.0, temporal integrity rules, abstention reasons, API contract and error envelope (including unrouted paths), dataset loader/validator/manifest/verification, a training gate that enforces **technical eligibility** and passes on only validated rows, chronological splitting, **rolling-origin evaluation with per-cutoff refitting**, one shared as-of status rule across fit/score/serve, artifact registry with promotion gate and load-time cohort-contract check, baseline fitting and target-event evaluation with deterministic reports, opt-in prediction history, frontend written and tested against the shipped contract, CI | Historical-frequency baseline (never loaded with real data), the training and evaluation pipeline (never run on approved data), group outcomes (independence baseline only), prediction history (never enabled by default, so untested against concurrent real users) | Calibration fitting, dependence-aware group model, label feedback on stored reports, approved dataset, promoted artifact |
+| Domain contracts, status mapping v1.1.0, temporal integrity rules, abstention reasons, API contract and error envelope (including unrouted paths), dataset loader/validator/manifest/verification, a training gate that enforces **technical eligibility** and passes on only validated rows, chronological splitting, **rolling-origin evaluation with per-cutoff refitting**, one shared as-of status rule across fit/score/serve, artifact registry with promotion gate and load-time cohort-contract check, baseline fitting and target-event evaluation with deterministic reports, opt-in prediction history with list and per-row deletion, frontend written and tested against the shipped contract, CI | Historical-frequency baseline (never loaded with real data), the training and evaluation pipeline (never run on approved data), group outcomes (independence baseline only), prediction history (never enabled by default, so untested against concurrent real users) | Calibration fitting, dependence-aware group model, label feedback on stored reports, approved dataset, promoted artifact |
 
-611 backend tests at 96.30% branch coverage, 93 frontend tests. CI was green on `main` at the last recorded push — re-check rather than trust this line.
+633 backend tests at 96%+ branch coverage, 113 frontend tests. CI was green on `main` at the last recorded push — re-check rather than trust this line.
 
 ## Read first
 
@@ -26,7 +26,7 @@ Do not assume any of the following exist, because none do: an accuracy figure, a
 4. `docs/ROADMAP.md`
 5. `docs/architecture/API_CONTRACT.md` — matches the shipped surface
 6. `docs/data/DATA_CONTRACT.md` and `docs/data/DATASET_INTAKE_CHECKLIST.md`
-7. ADR index, especially ADR-0007 (local-first boundary), ADR-0008 (future integration phases), ADR-0009 (artifact trust boundaries), ADR-0010 (declared check configurations), ADR-0011 (training gate and target-event scoring), ADR-0012 (prediction history and its retention rules), ADR-0013 (the eligibility-enforced gate and the single as-of cohort rule) and ADR-0014 (rolling-origin evaluation and what a single cutoff cannot show)
+7. ADR index, especially ADR-0007 (local-first boundary), ADR-0008 (future integration phases), ADR-0009 (artifact trust boundaries), ADR-0010 (declared check configurations), ADR-0011 (training gate and target-event scoring), ADR-0012 (prediction history and its retention rules), ADR-0013 (the eligibility-enforced gate and the single as-of cohort rule) and ADR-0014 (rolling-origin evaluation and what a single cutoff cannot show) and ADR-0015 (history listing and per-row deletion)
 8. `docs/research/EVALUATION_PROTOCOL.md` before writing any metric code
 
 ## Working here
@@ -83,8 +83,9 @@ In order, based on the actual repository:
    actually say?" has something to attach to. Design the consent, retention, sampling-bias
    and verification story before writing the route — ADR-0012 lists this as a consequence
    of storage, not as permission to collect.
-6. **Per-row deletion** for history, and any access boundary that would let history be
-   enabled by default. Neither is needed while the feature is off and single-operator.
+6. **Multi-user access boundaries for history**, if history is ever to be enabled by
+   default. Listing and per-row deletion are implemented (ADR-0015); multi-user isolation
+   or authentication is what would be needed before enabling history by default.
 
 ## Non-negotiable constraints
 
