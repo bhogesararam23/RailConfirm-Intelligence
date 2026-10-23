@@ -41,7 +41,19 @@ For a group with final outcomes (Y_1,…,Y_n), group events include:
 - one or more passengers WL;
 - specific group combinations when product value and evidence justify them.
 
-The primary ideal is a calibrated joint distribution over passenger outcomes. Alternatives such as conditional sampling or a structured latent group model may be evaluated. A simple independence product can be implemented as a baseline for comparison, but must be labelled as an assumption-driven baseline and cannot quietly become the primary method.
+The primary ideal is a calibrated joint distribution over passenger outcomes. As established in ADR-0003 and ADR-0016, two models are implemented:
+
+1. **Independence baseline with exact Poisson-binomial distribution:**
+   Computes exact probability mass function $P(K = k)$ and tail probabilities $P(K \ge k)$ for $k \in \{0, \dots, n\}$ using $O(n^2)$ dynamic programming convolution of the passenger Bernoulli marginal probabilities (`compute_poisson_binomial_pmf`). Marked with explicit independence disclaimers in `assumptions`.
+
+2. **Sequential queue-clearing comonotonic bounds (`compute_queue_dependent_bounds`):**
+   Models Indian Railways FIFO queue clearance where passengers on the same booking clear sequentially. A lower-priority passenger confirms only if all higher-priority passengers in the booking confirm, yielding the Fréchet-Hoeffding comonotonic upper bound:
+   - $P_{\text{queue}}(\text{all CNF}) = \min_i P_i(\text{CNF})$
+   - $P_{\text{queue}}(\text{all CNF or RAC}) = \min_i P_i(\text{CNF or RAC})$
+   - $P_{\text{queue}}(\text{at least one WL}) = \max_i P_i(\text{WL})$
+   - For sorted marginals $p_{(1)} \ge \dots \ge p_{(n)}$, $P_{\text{queue}}(K \ge k) = p_{(k)}$ and $P_{\text{queue}}(K = k) = p_{(k)} - p_{(k+1)}$
+
+Under positive queue correlation, true joint confirmation lies between the independence lower bound $\prod p_i$ and the comonotonic upper bound $\min_i p_i$. Both methods enforce probability axioms ($\sum P(K=k) = 1.0$, $P(\text{all CNF}) = P(K=n) = P(K \ge n)$) and are evaluated in `score_partition()` against observed group outcomes.
 
 ## Why marginal probabilities are insufficient
 

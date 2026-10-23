@@ -56,7 +56,7 @@ Reproduce it with `python -m railconfirm.training origins DATASET MANIFEST --min
 
 Fitting or scoring an artifact for a target it was not fitted for is refused rather than tolerated: `evaluate --target` is checked against the artifact's declared target, and `--target` accepts only the targets `TARGET_EVENTS` defines.
 
-Not implemented: calibration fitting, a dependence-aware group model, and evaluation of one *frozen* artifact against successive horizons (the rolling-origin path refits at each cutoff). No number produced by this code has come from approved real data.
+Not implemented: calibration fitting, empirical copula/correlation group models fitted on real data (ADR-0016 implements Poisson-binomial convolution and sequential queue-clearing bounds, scored in `score_partition()`), and evaluation of one *frozen* artifact against successive horizons (the rolling-origin path refits at each cutoff). No number produced by this code has come from approved real data.
 
 ## Baselines and candidates
 
