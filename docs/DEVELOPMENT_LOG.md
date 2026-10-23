@@ -511,3 +511,58 @@ synthetic — but it is evidence that the reporting catches this class of mistak
 4. Dependence-aware group outcomes (ADR-0003) — the engine still uses the labelled
    independence baseline.
 5. Persistence and prediction history (Milestone G), then `/prediction/[id]` in the frontend.
+
+## 2026-10-23 — Dataset search conducted and recorded with evidence
+
+### Scope
+
+Milestone B. The project's one scientific blocker is the absence of a trainable dataset,
+and until today that was stated as a gap without a record of what was actually looked for.
+This session searched, inspected, and wrote the findings into
+`docs/data/CANDIDATE_DATASET_REVIEW.md` and `docs/data/SOURCE_REGISTER.md`. **No dataset
+was downloaded, ingested, manifested or approved.**
+
+### What was verified
+
+- Kaggle `aaryananil/indian-railway-ticket-confirmation` — metadata panel says `MIT`,
+  903,874 bytes, updated 2024-08-14. Its own description states: *"This dataset is
+  synthetically generated and does not represent real data."* Rejected: a licence to use it
+  is not evidence about railways, and this repository already maintains its own labelled
+  synthetic fixtures.
+- Kaggle `bhavyarajdev/indian-railways-schedule-prices-availability-data` — `Apache 2.0`,
+  7,026,565 bytes, updated 2023-12-13; the page says the content was collected by *"web
+  scraping techniques"* from the IRCTC website in October 2023. Rejected for training: it
+  holds schedules, fares and availability snapshots, not per-reservation final-chart labels,
+  and the rights question depends on a third party's scraping that cannot be verified here.
+- Kaggle `sripaadsrinivasan/indian-railways-dataset` — `CC0: Public Domain`, 17,170,333
+  bytes; three JSON files (Stations, Trains, Schedules) credited to DataMeet. Reference
+  metadata only — no outcome labels — so at best it would sharpen station and train
+  validation, not unlock training.
+- Its origin, `github.com/datameet/railways` — `gh api` reports `license: null`, contents are
+  `README.md`, `stations.json`, `trains.json`, `schedules.json`, last pushed **2016-08-08**.
+  The README does carry a `#### License` heading linking to a CC0 page, so the contributors
+  asserted CC0, but GitHub sees no licence file and the assertion is by individuals
+  describing data gathered from Indian Railways, not a rights holder. The collection-method
+  note the README links (`sajjad.in/2016/08/…`) failed to fetch on 2026-10-23, so the
+  gathering method could not be checked at all. Under review, not ingested.
+- `https://www.data.gov.in/resource?…q=railway+reservation` returned **HTTP 403** to an
+  unauthenticated automated fetch. This environment has no portal API key, so the national
+  catalogue was not read. Recorded as a next step requiring a browser session or a key,
+  not as a finding about its contents.
+
+### What this changes about the plan
+
+A trainable row needs the booked status **and** the verified final-chart outcome for the same
+reservation, with journey and observation timestamps. Nothing found carries both. The two
+realistic sources are a licensed data agreement with a railway/CRIS holder, or prospective
+user-contributed observations with explicit consent — the latter is a product decision with
+consent, retention and sampling-bias work attached, not a scraper. Training therefore stays
+blocked, and `python -m railconfirm.training fit` will keep refusing until a named approval
+exists. The honest consequence for scheduling: model-quality milestones cannot be sequenced by
+writing more code; they are gated on a rights-and-data decision only the maintainer can make.
+
+### Checks run
+
+Documentation only. `python scripts/check_repository_hygiene.py` → passed (required docs
+present, relative links resolve). No code changed, so the backend and frontend suites were
+not re-run; the last recorded green CI for `main` is run `39890962780` at 461 tests.

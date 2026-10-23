@@ -8,7 +8,7 @@ The repository has a working local-first application core, but **no prediction i
 
 Milestone A (audit and harden the existing code) is complete: the domain, inference, API and data layers were reviewed against observed behaviour and eleven defects were fixed with regression tests. Several of the fixes removed ways the system could present an unsupported claim as a trustworthy one — an evidence-free probability from a malformed frequency table, an unverified status family mapped to the nearest familiar category, a split whose test set was empty while reporting success, and a validator that called a dataset valid because one row parsed.
 
-Nothing is blocked by a missing dependency. The blocker is a dataset: no candidate has cleared `docs/data/DATASET_INTAKE_CHECKLIST.md`, so training, evaluation and calibration have no eligible input and the product abstains by design.
+Nothing is blocked by a missing dependency. The blocker is a dataset: no candidate has cleared `docs/data/DATASET_INTAKE_CHECKLIST.md`, so training, evaluation and calibration have no eligible input and the product abstains by design. The 2026-10-23 candidate search (`docs/data/CANDIDATE_DATASET_REVIEW.md`) found nothing carrying both a booked status and a verified final-chart label under a licence that permits training — one widely-published "ticket confirmation" dataset is self-declared synthetic, the schedule/fare candidates have no outcome labels, and the licence-clean metadata (stations, trains, routes) cannot produce them.
 
 ## Area status
 

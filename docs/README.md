@@ -57,6 +57,7 @@ Start here if this is your first time working on RailConfirm Intelligence.
 - [Research plan](research/RESEARCH_PLAN.md)
 - [Evaluation protocol](research/EVALUATION_PROTOCOL.md)
 - [Data source register](data/SOURCE_REGISTER.md)
+- [Candidate dataset review](data/CANDIDATE_DATASET_REVIEW.md)
 - [Data acquisition](data/DATA_ACQUISITION.md)
 - [Dataset intake checklist](data/DATASET_INTAKE_CHECKLIST.md)
 - [Data contract](data/DATA_CONTRACT.md)
