@@ -3,15 +3,17 @@ import type { NormalizedStatus } from '@/lib/types';
 
 interface StatusBadgeProps {
   status: NormalizedStatus;
-  /** Override the label text (e.g. to show raw status alongside normalized) */
+  /** Show the raw source string next to the normalized label. */
   rawLabel?: string;
   size?: 'sm' | 'md';
 }
 
 /**
- * Color-coded badge for normalized ticket status.
- * Always uses text labels in addition to color — never relies on color alone.
- * Includes an ARIA label for assistive technology.
+ * Text-first badge for a normalized ticket status.
+ *
+ * Colour always accompanies text. `role="status"` was removed: it is a live-region
+ * announcement, and a status label that never changes should not interrupt a screen
+ * reader every time the list re-renders.
  */
 export function StatusBadge({ status, rawLabel, size = 'md' }: StatusBadgeProps) {
   const display = getStatusDisplay(status);
@@ -19,8 +21,7 @@ export function StatusBadge({ status, rawLabel, size = 'md' }: StatusBadgeProps)
 
   return (
     <span
-      role="status"
-      aria-label={display.ariaLabel}
+      aria-label={`${display.ariaLabel}${rawLabel ? `, reported as ${rawLabel}` : ''}`}
       className={[
         'inline-flex items-center gap-1 rounded border font-medium',
         display.colorClass,
@@ -31,7 +32,9 @@ export function StatusBadge({ status, rawLabel, size = 'md' }: StatusBadgeProps)
     >
       {display.label}
       {rawLabel && rawLabel !== display.shortLabel && (
-        <span className="opacity-60 text-xs ml-1">({rawLabel})</span>
+        <span aria-hidden="true" className="ml-1 text-xs opacity-60">
+          ({rawLabel})
+        </span>
       )}
     </span>
   );

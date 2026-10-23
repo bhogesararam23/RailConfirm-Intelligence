@@ -25,7 +25,24 @@ export default function DataGovernancePage() {
             <strong>Zero Secrets in Git:</strong> No API tokens, personal records, or unapproved data dumps are committed to this repository.
           </li>
           <li>
-            <strong>No Private Data Transmission:</strong> The current build operates locally. Your manual queries stay within your own local browser and backend.
+            <strong>Where your input goes:</strong> this build makes no third-party
+            calls — no live PNR lookup, no external news or weather feed, and no hosted
+            inference (ADR-0007). The journey and statuses you enter are sent to the
+            configured backend, and nowhere else. With the default local configuration
+            that backend is on your own machine; if <code>NEXT_PUBLIC_API_URL</code> is
+            pointed at a remote server, your input leaves this device, and the predictor
+            page shows the address it is sending to.
+          </li>
+          <li>
+            <strong>Nothing is stored yet:</strong> there is no database and no
+            prediction history in the current build, so a submitted request is not
+            retained by the application. That is a property of the code today, not a
+            promise about future releases — persistence will need its own retention and
+            deletion design.
+          </li>
+          <li>
+            <strong>Zero secrets in Git:</strong> no API tokens, personal records or
+            unapproved data dumps are committed to this repository.
           </li>
         </ul>
       </section>
@@ -33,21 +50,29 @@ export default function DataGovernancePage() {
       <section className="space-y-3">
         <h2 className="text-lg font-semibold text-gray-900">Dataset Intake Checklist</h2>
         <p className="text-sm leading-relaxed text-gray-700">
-          A candidate data file found online is not automatically approved for model training. Every dataset must satisfy our documented intake checklist:
+          A data file found online is not an approved training dataset. Every candidate
+          has to satisfy the documented intake process, and the licence and privacy
+          decision is made by a named person — the validation tooling explicitly refuses
+          to record approval itself.
         </p>
-        <div className="rounded-md border border-gray-200 bg-gray-50 p-4 text-xs text-gray-700 space-y-1">
-          <p>&bull; Documented source publisher, license, and permitted commercial/research use.</p>
-          <p>&bull; Clear verification of final outcome labels (final-chart status).</p>
-          <p>&bull; Absence of raw PNRs or personal passenger details.</p>
-          <p>&bull; Cryptographic checksum (SHA-256) and versioned YAML manifest.</p>
-          <p>&bull; Temporal integrity: zero leakage of future chart outcomes into prediction features.</p>
+        <div className="space-y-1 rounded-md border border-gray-200 bg-gray-50 p-4 text-xs text-gray-700">
+          <p>&bull; Documented source publisher, licence and permitted research/commercial use.</p>
+          <p>&bull; Clear verification of how final-chart outcome labels were observed.</p>
+          <p>&bull; Absence of raw PNRs and personal passenger details.</p>
+          <p>&bull; SHA-256 checksum with a deterministic, reviewable manifest.</p>
+          <p>&bull; Temporal integrity: no future outcome leaking into prediction features.</p>
+          <p>&bull; A recorded decision: candidate, restricted, quarantined, approved or rejected.</p>
         </div>
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-gray-900">Current Dataset Status</h2>
+        <h2 className="text-lg font-semibold text-gray-900">Current dataset status</h2>
         <p className="text-sm leading-relaxed text-gray-700">
-          No external historical dataset is currently approved for production inference. Synthetic fixtures are maintained strictly for testing and validation of domain logic.
+          <strong>No dataset has been approved for training or evaluation yet.</strong>{' '}
+          The intake pipeline exists — loader, validator, manifest generation and
+          verification — but nothing has passed review. The estimates this product can
+          produce are therefore abstentions, and the synthetic fixtures in the test
+          suite exist to check the software, never to demonstrate real-world accuracy.
         </p>
       </section>
     </div>

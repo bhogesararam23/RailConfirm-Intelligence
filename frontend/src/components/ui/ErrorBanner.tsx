@@ -1,36 +1,51 @@
 interface ErrorBannerProps {
   message: string;
   code?: string | null;
+  requestId?: string | null;
   onDismiss?: () => void;
 }
 
 /**
- * Inline error banner for API/network errors.
- * Announces itself to assistive technology via role="alert".
+ * Inline banner for a failed request.
+ *
+ * `kind`-specific wording comes from the caller's message; the request id is shown
+ * because it is the only way to tie what the user saw to a server-side log line, and
+ * it carries no booking information.
  */
-export function ErrorBanner({ message, code, onDismiss }: ErrorBannerProps) {
+export function ErrorBanner({ message, code, requestId, onDismiss }: ErrorBannerProps) {
   return (
     <div
       role="alert"
-      aria-live="assertive"
-      className="rounded-lg border border-red-300 bg-red-50 p-4 flex items-start gap-3"
+      className="flex items-start gap-3 rounded-lg border border-red-300 bg-red-50 p-4"
     >
-      <span aria-hidden="true" className="text-red-500 text-xl mt-0.5">
+      <span aria-hidden="true" className="mt-0.5 text-xl text-red-500">
         ✕
       </span>
       <div className="flex-1 space-y-1">
-        <p className="font-semibold text-red-800 text-sm">Something went wrong</p>
+        <p className="text-sm font-semibold text-red-800">The request did not complete</p>
         <p className="text-sm text-red-700">{message}</p>
-        {code && (
-          <p className="text-xs text-red-500 font-mono">Error code: {code}</p>
+        {(code || requestId) && (
+          <p className="text-xs text-red-600">
+            {code && (
+              <>
+                Code: <span className="font-mono">{code}</span>
+              </>
+            )}
+            {code && requestId && ' · '}
+            {requestId && (
+              <>
+                Request id: <span className="font-mono">{requestId}</span>
+              </>
+            )}
+          </p>
         )}
       </div>
       {onDismiss && (
         <button
           type="button"
           onClick={onDismiss}
-          aria-label="Dismiss error"
-          className="text-red-400 hover:text-red-600 focus:outline-none focus:ring-2 focus:ring-red-400 rounded"
+          aria-label="Dismiss this error message"
+          className="rounded text-red-400 hover:text-red-600 focus:outline-none focus:ring-2 focus:ring-red-400"
         >
           <span aria-hidden="true">✕</span>
         </button>

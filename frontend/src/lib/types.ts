@@ -1,29 +1,11 @@
-// Journey input
-export interface JourneyInput {
-  train_number: string; // 4-6 digit string
-  journey_date: string; // YYYY-MM-DD
-  boarding_station: string; // Station code (uppercase)
-  destination_station: string; // Station code (uppercase)
-  class_code: string; // e.g. "SL", "3A", "2A", "1A"
-  quota_code: string; // e.g. "GN", "TQ"
-}
+// Types mirroring backend/railconfirm/api/v1/schemas.py.
+//
+// These must stay in step with the server. The backend is the source of truth:
+// docs/architecture/API_CONTRACT.md lists every field, and
+// backend/tests/api/test_contract.py asserts the OpenAPI surface. If a field is
+// absent here, the backend does not send it.
 
-// Passenger input - preserve original vs latest separately
-export interface PassengerInput {
-  original_status: string; // As booked
-  current_status: string; // Latest observed
-  current_status_observed_at?: string; // ISO-8601 or undefined (user may not know)
-  status_time_unknown?: boolean; // Explicit unknown-time state
-}
-
-// Prediction request
-export interface PredictionRequest {
-  journey: JourneyInput;
-  prediction_at: string; // ISO-8601 timestamp
-  passengers: PassengerInput[];
-}
-
-// Normalized status (from backend)
+/** Broad normalized status categories produced by the versioned status mapping. */
 export type NormalizedStatus =
   | 'CNF'
   | 'RAC'
@@ -33,75 +15,162 @@ export type NormalizedStatus =
   | 'UNKNOWN'
   | 'CENSORED';
 
-// Passenger outcome
+/** Prediction targets the API accepts. Each names a different outcome moment. */
+export type PredictionTarget = 'final_chart_cnf' | 'final_chart_cnf_or_rac';
+
+/** Registry resolution state, mirrored from ArtifactStatus in the backend. */
+export type RegistryStatus =
+  | 'no_active_version'
+  | 'artifact_missing'
+  | 'artifact_invalid'
+  | 'not_promoted'
+  | 'data_not_approved'
+  | 'ready';
+
+/** Evidence coverage: all passengers supported, some, or none. */
+export type EvidenceCoverage = 'sufficient' | 'partial' | 'insufficient';
+
+export interface JourneyInput {
+  train_number: string; // 4–6 digits
+  journey_date: string; // YYYY-MM-DD
+  boarding_station: string; // 2–10 uppercase letters/digits
+  destination_station: string;
+  class_code: string;
+  quota_code: string;
+}
+
+export interface PassengerInput {
+  original_status: string;
+  current_status: string;
+  /**
+   * ISO-8601 **with a UTC offset**, or omitted when the time is unknown. A naive
+   * timestamp is rejected by the backend: without an offset it cannot be compared
+   * against the prediction cutoff.
+   */
+  current_status_observed_at?: string | null;
+}
+
+export interface PredictionRequest {
+  journey: JourneyInput;
+  prediction_at: string; // ISO-8601 with offset, before journey_date
+  target?: PredictionTarget;
+  passengers: PassengerInput[]; // 1–6 entries
+}
+
+/**
+ * Per-passenger outcome. When `is_supported` is false every probability is null;
+ * when true all five are non-null and sum to 1. A client must not turn a null
+ * into 0 — "no estimate" and "zero chance" are different claims.
+ */
 export interface PassengerOutcome {
   passenger_id: string;
+  original_status: string;
+  original_status_normalized: NormalizedStatus;
+  current_status: string;
+  current_status_normalized: NormalizedStatus;
   p_cnf: number | null;
   p_rac: number | null;
   p_wl: number | null;
   p_cancelled: number | null;
   p_other: number | null;
   is_supported: boolean;
-  abstention_reason?: string;
-  observed_status: {
-    raw: string;
-    normalized: NormalizedStatus;
-    position?: number;
-    wl_category?: string;
-  };
+  abstention_reason: AbstentionReason | null;
+  /** Evidence cohort and sample size, e.g. "cohort=SL/GN/WL n=105 exact_status_match=true". */
+  basis: string | null;
+  parse_warnings: string[];
 }
 
-// Group outcome
 export interface GroupOutcome {
   p_all_cnf: number | null;
   p_all_cnf_or_rac: number | null;
   p_at_least_one_wl: number | null;
-  method: string;
+  method: 'single_passenger' | 'independence_baseline' | 'insufficient_data' | string;
   assumptions: string;
   is_supported: boolean;
-  abstention_reason?: string;
+  abstention_reason: AbstentionReason | null;
 }
 
-// Full prediction response
 export interface PredictionResponse {
   prediction_id: string;
+  target: PredictionTarget;
   target_definition: string;
   prediction_at: string;
   created_at: string;
   model_version: string;
+  registry_status: RegistryStatus;
   feature_schema_version: string;
-  evidence_coverage: 'sufficient' | 'insufficient' | 'partial';
+  evidence_coverage: EvidenceCoverage;
+  /** True when at least one passenger has an estimate. See evidence_coverage for the rest. */
   is_supported: boolean;
+  passenger_count: number;
   passenger_outcomes: PassengerOutcome[];
-  group_outcome?: GroupOutcome;
+  group_outcome: GroupOutcome | null;
   limitations: string[];
   warnings: string[];
+  outcome_classes: string;
 }
 
-// API error shape (as received from server JSON)
-export interface APIErrorShape {
-  error: string;
+export interface HealthResponse {
+  status: string;
+  model_version: string;
+  data_version: string;
+  app_version: string;
+  model_available: boolean;
+  registry_status: RegistryStatus;
+  limits: Record<string, number | string>;
+}
+
+/** One field-level problem in a failed request. */
+export interface ErrorDetail {
   code: string;
-  detail?: string;
+  message: string;
+  field: string | null;
 }
 
-// Abstention reason display messages
-export const ABSTENTION_MESSAGES: Record<string, string> = {
-  no_trained_model:
-    'No prediction model is available yet. The system will return estimates when a validated model has been trained on approved data.',
-  unsupported_status:
-    'This ticket status category is not yet supported by the prediction model.',
-  unsupported_class:
-    'This travel class is not yet covered by the prediction model.',
-  insufficient_sample:
-    'There is insufficient historical data for this ticket category to produce a reliable estimate.',
+/** The documented error envelope for every handled API error. */
+export interface ApiErrorBody {
+  error: string;
+  details: ErrorDetail[];
+  request_id: string | null;
+}
+
+export type AbstentionReason =
+  | 'unknown_status'
+  | 'unsupported_status'
+  | 'unsupported_class'
+  | 'unsupported_quota'
+  | 'no_trained_model'
+  | 'no_approved_data'
+  | 'model_artifact_invalid'
+  | 'insufficient_sample'
+  | 'invalid_input';
+
+/**
+ * Display text for each abstention reason. Every value the backend can send must
+ * appear here: a missing entry silently falls back to text describing a
+ * different problem, which tells the user the wrong reason.
+ */
+export const ABSTENTION_MESSAGES: Record<AbstentionReason, string> = {
   unknown_status:
-    'The entered ticket status could not be recognized. Please check the status code.',
+    'The ticket status you entered has no verified meaning yet, so it cannot be classified. Check the code, or leave it for review.',
+  unsupported_status:
+    'This status is recognised but sits outside the population this estimate covers — a cancelled or censored booking is no longer competing for a berth.',
+  unsupported_class:
+    'This travel class is not covered by the available evidence.',
+  unsupported_quota:
+    'This booking quota is not covered by the available evidence.',
+  no_trained_model:
+    'No validated model has been promoted for this target, so the system will not invent a percentage.',
+  no_approved_data:
+    'No historical dataset has been approved for this purpose yet, so there is no evidence base to estimate from.',
+  model_artifact_invalid:
+    'A model was configured but failed validation, so it is not being used. This is reported rather than falling back silently.',
+  insufficient_sample:
+    'Too few matching historical records exist for this category to report a probability honestly.',
   invalid_input:
-    'The input could not be validated. Please check all fields.',
+    'The request could not be turned into a valid prediction input. Check the reported fields.',
 };
 
-// Class codes
 export const CLASS_CODES = {
   '1A': 'First AC (1A)',
   '2A': 'Second AC (2A)',
@@ -114,7 +183,6 @@ export const CLASS_CODES = {
   FC: 'First Class (FC)',
 } as const;
 
-// Quota codes
 export const QUOTA_CODES = {
   GN: 'General (GN)',
   TQ: 'Tatkal (TQ)',
@@ -123,7 +191,13 @@ export const QUOTA_CODES = {
   DF: 'Defence (DF)',
   SS: 'Senior Citizen (SS)',
   HP: 'Handicapped (HP)',
+  PH: 'Physically Handicapped (PH)',
+  YU: 'Youth (YU)',
+  DU: 'Duty (DU)',
 } as const;
 
 export type ClassCode = keyof typeof CLASS_CODES;
 export type QuotaCode = keyof typeof QUOTA_CODES;
+
+/** Mirrors MAX_PASSENGERS_PER_REQUEST on the server. */
+export const MAX_PASSENGERS = 6;

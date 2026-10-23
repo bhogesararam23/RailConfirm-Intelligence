@@ -1,64 +1,95 @@
 'use client';
 
-import { useState, useCallback } from 'react';
-import { submitPrediction, APIError } from '@/lib/api';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ApiFailure, submitPrediction } from '@/lib/api';
 import type { PredictionRequest, PredictionResponse } from '@/lib/types';
 
-type PredictionState = 'idle' | 'loading' | 'success' | 'error';
+export type PredictionState = 'idle' | 'loading' | 'success' | 'error';
 
-interface UsePredictionReturn {
+export interface PredictionFailure {
+  message: string;
+  kind: ApiFailure['kind'];
+  status: number | null;
+  code: string | null;
+  requestId: string | null;
+  /** Server field paths the request failed on, already mapped to form keys. */
+  fieldErrors: Record<string, string>;
+}
+
+export interface UsePredictionReturn {
   state: PredictionState;
   result: PredictionResponse | null;
-  error: string | null;
-  errorCode: string | null;
+  failure: PredictionFailure | null;
   submit: (request: PredictionRequest) => Promise<void>;
   reset: () => void;
 }
 
 /**
- * Hook that manages the full lifecycle of a prediction submission:
- * idle → loading → success | error → idle (via reset).
+ * Submits a prediction and holds exactly one in-flight request.
  *
- * Error messages are user-friendly; technical codes are available separately
- * for display context (e.g., "no_trained_model" maps to an abstention card).
+ * `requestSeq` ignores a response that arrives after the user reset or superseded
+ * the request, which otherwise repaints a stale result over a cleared form.
  */
 export function usePrediction(): UsePredictionReturn {
   const [state, setState] = useState<PredictionState>('idle');
   const [result, setResult] = useState<PredictionResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [errorCode, setErrorCode] = useState<string | null>(null);
+  const [failure, setFailure] = useState<PredictionFailure | null>(null);
+  const requestSeq = useRef(0);
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      requestSeq.current += 1;
+    };
+  }, []);
 
   const submit = useCallback(async (request: PredictionRequest) => {
+    const seq = ++requestSeq.current;
     setState('loading');
     setResult(null);
-    setError(null);
-    setErrorCode(null);
+    setFailure(null);
 
     try {
       const response = await submitPrediction(request);
+      if (!mounted.current || seq !== requestSeq.current) return;
       setResult(response);
       setState('success');
-    } catch (err) {
-      if (err instanceof APIError) {
-        setError(err.message);
-        setErrorCode(err.code);
-      } else if (err instanceof Error) {
-        setError(err.message);
-        setErrorCode('NETWORK_ERROR');
+    } catch (error) {
+      if (!mounted.current || seq !== requestSeq.current) return;
+      if (error instanceof ApiFailure) {
+        setFailure({
+          message: error.message,
+          kind: error.kind,
+          status: error.status,
+          code: error.code,
+          requestId: error.requestId,
+          fieldErrors: error.fieldErrors,
+        });
       } else {
-        setError('An unexpected error occurred. Please try again.');
-        setErrorCode('UNKNOWN');
+        setFailure({
+          message:
+            error instanceof Error
+              ? error.message
+              : 'The request could not be completed.',
+          kind: 'network',
+          status: null,
+          code: 'UNEXPECTED_ERROR',
+          requestId: null,
+          fieldErrors: {},
+        });
       }
       setState('error');
     }
   }, []);
 
   const reset = useCallback(() => {
+    requestSeq.current += 1;
     setState('idle');
     setResult(null);
-    setError(null);
-    setErrorCode(null);
+    setFailure(null);
   }, []);
 
-  return { state, result, error, errorCode, submit, reset };
+  return { state, result, failure, submit, reset };
 }

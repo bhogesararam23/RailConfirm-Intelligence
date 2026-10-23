@@ -1,3 +1,4 @@
+import { MAX_PASSENGERS } from './types';
 import type { JourneyInput, PassengerInput } from './types';
 
 export interface ValidationResult {
@@ -5,116 +6,165 @@ export interface ValidationResult {
   errors: Record<string, string>;
 }
 
+// Mirrors backend/railconfirm/domain/validation.py. Keeping the two in step is the
+// point: a rule the client enforces differently from the server either blocks valid
+// input or lets invalid input through to a 422 the user cannot connect to a field.
 const TRAIN_NUMBER_RE = /^\d{4,6}$/;
-const STATION_CODE_RE = /^[A-Z]{1,10}$/;
+const STATION_CODE_RE = /^[A-Z][A-Z0-9]{1,9}$/;
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_STATUS_LENGTH = 120;
 
 /**
- * Validates journey-level fields.
- * Returns a ValidationResult with an errors map keyed by field name.
+ * True when an ISO-8601 string carries a UTC offset.
+ *
+ * The backend rejects a naive timestamp because an assumed zone shifts a lead time
+ * by up to twelve hours, which is the resolution at which "was this known before
+ * the chart?" is decided. A browser's datetime-local input produces no offset, so
+ * the form must add the user's real one before sending.
  */
+export function hasUtcOffset(value: string): boolean {
+  if (!value) return false;
+  return /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value);
+}
+
+/**
+ * Convert a datetime-local value ("2026-10-21T08:00") into an offset-aware ISO
+ * string using the viewer's actual zone. Returns null for an empty or unparseable
+ * input rather than guessing a zone.
+ */
+export function toOffsetIso(localValue: string): string | null {
+  const trimmed = localValue.trim();
+  if (!trimmed) return null;
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) return null;
+  // ISO string with the machine offset, e.g. 2026-10-21T08:00:00+05:30
+  const local = new Date(parsed.getTime() - parsed.getTimezoneOffset() * 60000);
+  const iso = local.toISOString();
+  const offsetMinutes = -parsed.getTimezoneOffset();
+  const sign = offsetMinutes >= 0 ? '+' : '-';
+  const absolute = Math.abs(offsetMinutes);
+  const hh = String(Math.floor(absolute / 60)).padStart(2, '0');
+  const mm = String(absolute % 60).padStart(2, '0');
+  return `${iso.slice(0, 19)}${sign}${hh}:${mm}`;
+}
+
+/** Today's date as YYYY-MM-DD, in the viewer's zone. */
+export function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 export function validateJourney(
   journey: Partial<JourneyInput>,
+  predictionAt: string,
 ): ValidationResult {
   const errors: Record<string, string> = {};
 
-  // train_number
-  if (!journey.train_number || journey.train_number.trim() === '') {
+  const trainNumber = (journey.train_number ?? '').trim();
+  if (!trainNumber) {
     errors.train_number = 'Train number is required.';
-  } else if (!TRAIN_NUMBER_RE.test(journey.train_number.trim())) {
+  } else if (!TRAIN_NUMBER_RE.test(trainNumber)) {
     errors.train_number = 'Train number must be 4–6 digits.';
   }
 
-  // journey_date
-  if (!journey.journey_date || journey.journey_date.trim() === '') {
-    errors.journey_date = 'Journey date is required.';
-  } else {
-    const d = new Date(journey.journey_date);
-    if (isNaN(d.getTime())) {
-      errors.journey_date = 'Journey date is not a valid date.';
-    } else {
-      const twoYearsAgo = new Date();
-      twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
-      if (d < twoYearsAgo) {
-        errors.journey_date =
-          'Journey date is more than 2 years in the past. Historical queries are limited to 2 years.';
-      }
+  if (!journey.journey_date || !ISO_DATE_RE.test(journey.journey_date)) {
+    errors.journey_date = 'Journey date must be a calendar date as YYYY-MM-DD.';
+  }
+
+  for (const key of ['boarding_station', 'destination_station'] as const) {
+    const value = (journey[key] ?? '').trim();
+    if (!value) {
+      errors[key] = `${key === 'boarding_station' ? 'Boarding' : 'Destination'} station code is required.`;
+    } else if (!STATION_CODE_RE.test(value.toUpperCase())) {
+      errors[key] = 'Station code must be 2–10 characters, starting with a letter (e.g. NDLS, MAS).';
     }
   }
 
-  // boarding_station
-  if (!journey.boarding_station || journey.boarding_station.trim() === '') {
-    errors.boarding_station = 'Boarding station code is required.';
-  } else if (!STATION_CODE_RE.test(journey.boarding_station.trim())) {
-    errors.boarding_station =
-      'Station code must be 1–10 uppercase letters (e.g. NDLS, MAS).';
+  const boarding = (journey.boarding_station ?? '').trim().toUpperCase();
+  const destination = (journey.destination_station ?? '').trim().toUpperCase();
+  if (boarding && destination && boarding === destination && !errors.destination_station) {
+    errors.destination_station = 'Destination must differ from the boarding station.';
   }
 
-  // destination_station
-  if (
-    !journey.destination_station ||
-    journey.destination_station.trim() === ''
-  ) {
-    errors.destination_station = 'Destination station code is required.';
-  } else if (!STATION_CODE_RE.test(journey.destination_station.trim())) {
-    errors.destination_station =
-      'Station code must be 1–10 uppercase letters (e.g. NDLS, MAS).';
-  } else if (
-    journey.boarding_station &&
-    journey.destination_station.trim() ===
-      journey.boarding_station.trim()
-  ) {
-    errors.destination_station =
-      'Destination station must differ from boarding station.';
-  }
+  if (!journey.class_code) errors.class_code = 'Travel class is required.';
+  if (!journey.quota_code) errors.quota_code = 'Quota is required.';
 
-  // class_code
-  if (!journey.class_code || journey.class_code.trim() === '') {
-    errors.class_code = 'Travel class is required.';
-  }
-
-  // quota_code
-  if (!journey.quota_code || journey.quota_code.trim() === '') {
-    errors.quota_code = 'Quota is required.';
+  // The server requires an offset-aware prediction timestamp earlier than the
+  // journey date; the client can say which of the two is wrong.
+  if (!predictionAt) {
+    errors.prediction_at = 'Prediction time is required.';
+  } else if (!hasUtcOffset(predictionAt)) {
+    errors.prediction_at =
+      'Prediction time must include a UTC offset. Choose the date and time; the offset is added automatically.';
+  } else if (journey.journey_date && ISO_DATE_RE.test(journey.journey_date)) {
+    const predictionDay = predictionAt.slice(0, 10);
+    if (predictionDay >= journey.journey_date) {
+      errors.prediction_at =
+        'Prediction time must fall before the journey date. From the travel day onward the outcome is no longer a forecast.';
+    }
   }
 
   return { isValid: Object.keys(errors).length === 0, errors };
 }
 
-/**
- * Validates passenger rows.
- * Returns errors keyed as `passengers[i].fieldName`.
- */
-export function validatePassengers(
-  passengers: PassengerInput[],
-): ValidationResult {
+export function validatePassengers(passengers: PassengerInput[]): ValidationResult {
   const errors: Record<string, string> = {};
 
   if (passengers.length === 0) {
     errors.passengers = 'At least one passenger is required.';
     return { isValid: false, errors };
   }
+  if (passengers.length > MAX_PASSENGERS) {
+    errors.passengers = `At most ${MAX_PASSENGERS} passengers are supported in one request.`;
+  }
 
-  passengers.forEach((p, i) => {
-    if (!p.original_status || p.original_status.trim() === '') {
-      errors[`passengers[${i}].original_status`] =
-        `Passenger ${i + 1}: Original status (as booked) is required.`;
+  passengers.forEach((passenger, index) => {
+    const label = `Passenger ${index + 1}`;
+    for (const key of ['original_status', 'current_status'] as const) {
+      const value = passenger[key];
+      if (!value || value.trim() === '') {
+        errors[`passengers[${index}].${key}`] =
+          `${label}: ${key === 'original_status' ? 'status as booked' : 'current status'} is required.`;
+      } else if (value.length > MAX_STATUS_LENGTH) {
+        errors[`passengers[${index}].${key}`] =
+          `${label}: status must be ${MAX_STATUS_LENGTH} characters or fewer.`;
+      }
     }
-    if (!p.current_status || p.current_status.trim() === '') {
-      errors[`passengers[${i}].current_status`] =
-        `Passenger ${i + 1}: Current/latest status is required.`;
-    }
-    // If time is provided but status_time_unknown is not set, validate the timestamp format
-    if (
-      p.current_status_observed_at &&
-      !p.status_time_unknown
-    ) {
-      const ts = new Date(p.current_status_observed_at);
-      if (isNaN(ts.getTime())) {
-        errors[`passengers[${i}].current_status_observed_at`] =
-          `Passenger ${i + 1}: Observation time is not a valid date/time.`;
+
+    const observed = passenger.current_status_observed_at;
+    if (observed) {
+      if (!hasUtcOffset(observed)) {
+        errors[`passengers[${index}].current_status_observed_at`] =
+          `${label}: observation time must include a UTC offset.`;
+      } else if (Number.isNaN(Date.parse(observed))) {
+        errors[`passengers[${index}].current_status_observed_at`] =
+          `${label}: observation time is not a valid date and time.`;
       }
     }
   });
 
   return { isValid: Object.keys(errors).length === 0, errors };
+}
+
+/**
+ * Server field paths (dotted, relative to the body) mapped onto the keys this
+ * form uses, so a 422 marks the input the user actually has to fix.
+ */
+export function serverFieldToLocalKey(field: string): string | null {
+  const match = field.match(/^passengers\.(\d+)\.(.+)$/);
+  if (match) {
+    return `passengers[${match[1]}].${match[2]}`;
+  }
+  const stripped = field.replace(/^journey\./, '');
+  const known = [
+    'train_number',
+    'journey_date',
+    'boarding_station',
+    'destination_station',
+    'class_code',
+    'quota_code',
+    'prediction_at',
+    'target',
+    'passengers',
+  ];
+  return known.includes(stripped) ? stripped : null;
 }

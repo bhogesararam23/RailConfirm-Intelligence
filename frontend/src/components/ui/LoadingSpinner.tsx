@@ -4,12 +4,13 @@ interface LoadingSpinnerProps {
 }
 
 /**
- * Accessible loading spinner with an ARIA live region announcement.
+ * Spinner used inside a button while a request is in flight.
+ *
+ * The label is announced once, by the `role="status"` container. Earlier versions
+ * also carried an sr-only copy and an `aria-live` child, so a screen reader heard
+ * the same message three times per state change.
  */
-export function LoadingSpinner({
-  label = 'Loading…',
-  size = 'md',
-}: LoadingSpinnerProps) {
+export function LoadingSpinner({ label = 'Loading…', size = 'md' }: LoadingSpinnerProps) {
   const sizeMap = {
     sm: 'h-4 w-4 border-2',
     md: 'h-6 w-6 border-2',
@@ -17,12 +18,8 @@ export function LoadingSpinner({
   };
 
   return (
-    <div
-      role="status"
-      aria-label={label}
-      className="flex items-center gap-2"
-    >
-      <div
+    <span role="status" className="flex items-center gap-2">
+      <span
         aria-hidden="true"
         className={[
           'animate-spin rounded-full border-gray-300 border-t-brand-600',
@@ -30,9 +27,6 @@ export function LoadingSpinner({
         ].join(' ')}
       />
       <span className="sr-only">{label}</span>
-      <span className="text-sm text-gray-600" aria-live="polite">
-        {label}
-      </span>
-    </div>
+    </span>
   );
 }
