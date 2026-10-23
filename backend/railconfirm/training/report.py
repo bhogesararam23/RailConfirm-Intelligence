@@ -81,6 +81,14 @@ METRIC_DEFINITIONS: dict[str, str] = {
     "event_reliability": (
         "Reliability bands for the target's event probability."
     ),
+    "segment_calibration": (
+        "For each slice (class, quota, booked status, as-of status): the mean predicted "
+        "event probability over its scored rows, the observed event rate in the same rows, "
+        "and `gap` = observed minus predicted, with the row count and a low_sample flag. "
+        "Positive gap means the cohort confirmed more often than it was told to. A "
+        "population can look aligned while offsetting cohorts are not, which is what these "
+        "rows exist to expose; a segment below the row floor carries no claim."
+    ),
 }
 
 
@@ -224,6 +232,34 @@ def describe_split(split: SplitResult) -> dict[str, Any]:
     }
 
 
+def _segment_calibration_line(label: str, scorecard: Scorecard) -> str:
+    """Name the widest gap a segment actually has enough rows to support.
+
+    The partition-level score is not evidence about a cohort: two segments wrong in opposite
+    directions average to a well-calibrated headline. So the report states the worst
+    *informative* segment, and says plainly when there is none.
+    """
+    informative = [item for item in scorecard.segment_calibration if not item.low_sample]
+    if not scorecard.segment_calibration:
+        return (
+            f"{label}: no segment produced a calibration measurement, because nothing was "
+            "scored."
+        )
+    if not informative:
+        return (
+            f"{label}: no segment holds {scorecard.min_segment_rows} rows, so subgroup "
+            "calibration cannot be claimed in either direction; the gaps are published with "
+            "their counts and flagged low_sample."
+        )
+    worst = max(informative, key=lambda item: abs(item.gap))
+    return (
+        f"{label}: the widest segment gap is {worst.gap:+.6f} in "
+        f"{worst.dimension}={worst.value} over {worst.rows} rows (predicted "
+        f"{worst.mean_predicted:.6f}, observed {worst.observed_rate:.6f}); the partition "
+        "average can hide cohorts that disagree with it."
+    )
+
+
 def build_report(
     *,
     metadata: ModelArtifactMetadata,
@@ -292,6 +328,15 @@ def build_report(
                 f"{scorecard.abstained_rows} rows abstained and are excluded from the "
                 "scores rather than counted as wrong."
             )
+        conclusions.append(_segment_calibration_line(label, scorecard))
+
+    limitations.append(
+        "Subgroup calibration is reported as observed-minus-predicted per segment with the "
+        "rows behind it, and no per-segment correction is fitted: one slope is applied to "
+        "every cohort, so a segment can be misaligned while its partition looks aligned. "
+        f"Segments under {validation.min_segment_rows} rows are flagged low_sample and "
+        "carry no claim in either direction."
+    )
 
     thin = [
         segment
@@ -302,6 +347,14 @@ def build_report(
         limitations.append(
             f"{len(thin)} segment results rest on fewer than "
             f"{validation.min_segment_rows} rows and are marked low_sample."
+        )
+
+    if metadata.calibrated:
+        limitations.append(
+            "The calibration layer is one slope and intercept fitted on the population as a "
+            "whole. Applying it to a segment does not calibrate that segment, so the "
+            "per-segment gaps published here are the correction's residual error, not a "
+            "claim that it holds cohort by cohort."
         )
 
     if not metadata.calibrated:
@@ -335,11 +388,6 @@ def build_report(
             f"{calibration.validation_after.event_brier}; on the locked test the same "
             f"correction moved {calibration.test_before.event_brier} -> "
             f"{calibration.test_after.event_brier}, which is {verdict}."
-        )
-        limitations.append(
-            "Calibration is measured per partition overall. Subgroup calibration — by "
-            "class, quota or booked status — is not evaluated here, and the protocol "
-            "forbids claiming calibration inside a subgroup without counts behind it."
         )
 
     return EvaluationReport(

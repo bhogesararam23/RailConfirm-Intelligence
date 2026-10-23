@@ -12,7 +12,7 @@ not support the claim is labelled rather than quietly averaged in.
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -38,6 +38,12 @@ from railconfirm.inference.group import (
 
 PROBABILITY_FLOOR = 1e-12
 DEFAULT_MIN_SEGMENT_ROWS = 25
+MIN_SEGMENT_CALIBRATION_ROWS = 25
+"""Rows a slice needs before its observed-minus-predicted gap can carry a claim.
+
+A cohort of three rows that all confirmed looks like a 33-point miscalibration and means
+nothing, so the flag travels with the number and the report is only allowed to speak about
+segments that clear it."""
 RELIABILITY_BINS = 10
 
 TARGET_EVENTS: dict[str, tuple[str, ...]] = {
@@ -72,6 +78,28 @@ class SegmentMetric:
     rows: int
     brier: float
     low_sample: bool
+
+
+@dataclass(frozen=True)
+class SegmentCalibration:
+    """How well one slice's predicted event rate matches what actually happened to it.
+
+    This is the measurement a population-wide calibration layer cannot make for itself: the
+    averaged correction can be right while every cohort inside it is wrong in offsetting
+    directions. Nothing here fits a per-segment correction — the slope is fitted once for the
+    population — so what is published is the gap, its count, and a flag that says whether the
+    count can carry the claim."""
+
+    dimension: str
+    value: str
+    rows: int
+    mean_predicted: float
+    observed_rate: float
+    gap: float
+    low_sample: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 @dataclass(frozen=True)
@@ -117,6 +145,11 @@ class Scorecard:
     event_brier_skill: float | None
     event_reliability: list[ReliabilityBin]
     reliability: dict[str, list[ReliabilityBin]]
+    segment_calibration: list[SegmentCalibration]
+    """Observed minus predicted for each slice, with counts and a low-sample flag.
+
+    A population-wide calibration number can be exactly right while every cohort in it is
+    wrong in offsetting directions, so the breakdown is published rather than implied."""
     segments: list[SegmentMetric]
     outcome_distribution: dict[str, int]
     min_segment_rows: int
@@ -280,6 +313,42 @@ def _reliability(
         )
         for outcome in OUTCOME_CLASSES
     }
+
+
+def segment_calibration(
+    rows: Sequence[ScoredRow],
+    *,
+    min_rows: int = MIN_SEGMENT_CALIBRATION_ROWS,
+) -> list[SegmentCalibration]:
+    """Observed-minus-predicted for every slice, with the count that backs it.
+
+    Only scored rows arrive here, so an abstention contributes no segment: a refused
+    prediction has no probability to be misaligned. The values are the ones the request was
+    handed, which means a calibrated run reports the gap *after* its correction — the number
+    a passenger saw — rather than the table's raw output beside it.
+    """
+    grouped: dict[tuple[str, str], list[ScoredRow]] = {}
+    for row in rows:
+        for dimension, value in row.slices:
+            grouped.setdefault((dimension, value), []).append(row)
+
+    items: list[SegmentCalibration] = []
+    for (dimension, value), members in sorted(grouped.items()):
+        count = len(members)
+        mean_predicted = round(sum(member.event_predicted for member in members) / count, 6)
+        observed_rate = round(sum(member.event_observed for member in members) / count, 6)
+        items.append(
+            SegmentCalibration(
+                dimension=dimension,
+                value=value,
+                rows=count,
+                mean_predicted=mean_predicted,
+                observed_rate=observed_rate,
+                gap=round(observed_rate - mean_predicted, 6),
+                low_sample=count < min_rows,
+            )
+        )
+    return items
 
 
 def _slices(
@@ -538,6 +607,9 @@ def score_partition(
         event_brier_skill=_skill(mean_event_brier, mean_event_baseline),
         event_reliability=_bands(event_pairs, bins=reliability_bins),
         reliability=_reliability(predictions, truths, bins=reliability_bins),
+        segment_calibration=segment_calibration(
+            rows, min_rows=max(min_segment_rows, 1)
+        ),
         segments=segments,
         outcome_distribution=dict(sorted(outcome_counts.items())),
         min_segment_rows=min_segment_rows,
