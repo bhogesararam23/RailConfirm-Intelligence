@@ -20,6 +20,7 @@ from typing import Any
 from railconfirm.data.preprocessing import FEATURE_COLUMNS, SplitResult
 from railconfirm.inference.artifacts import ModelArtifactMetadata
 from railconfirm.training.calibration import CalibrationEvidence
+from railconfirm.training.decay import FROZEN_EVALUATION_METHOD, FrozenDecayResult
 from railconfirm.training.fitter import FitSummary
 from railconfirm.training.metrics import TARGET_EVENTS, Scorecard
 from railconfirm.training.origins import RollingOriginResult
@@ -29,6 +30,10 @@ ORIGIN_REPORT_SCHEMA_VERSION = "1.0.0"
 """Separate from ``REPORT_SCHEMA_VERSION``: a rolling-origin report describes many
 cutoffs, not one train/validation/test run, and a reader must be able to tell which
 shape the bytes are."""
+
+DECAY_REPORT_SCHEMA_VERSION = "1.0.0"
+"""Its own version because its payload is one artifact judged repeatedly, which neither
+of the other two shapes describes."""
 
 METRIC_DEFINITIONS: dict[str, str] = {
     "brier": (
@@ -599,6 +604,263 @@ def _origin_conclusions(result: RollingOriginResult) -> list[str]:
 
 
 def write_origin_report(report: RollingOriginReport, path: Path) -> Path:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(report.to_json(), encoding="utf-8")
+    return target
+
+
+DECAY_METRIC_DEFINITIONS: dict[str, str] = {
+    **METRIC_DEFINITIONS,
+    "prevalence": (
+        "The frozen block's outcome shares — the population the artifact was fitted on, "
+        "computed once from the dates at or before its declared last fitted date. Every "
+        "horizon's baseline derives from this same distribution, because a baseline "
+        "recomputed per horizon drifts toward the answer it is judging."
+    ),
+    "event_brier_drift": (
+        "Last horizon event Brier minus the first horizon's, in horizon order. Positive "
+        "means the frozen table did worse as the calendar moved away from its fitted "
+        "period; it is a difference of two measured means, not a tested trend."
+    ),
+    "coverage_drift": (
+        "Last horizon coverage minus the first horizon's. A fall means the fixed cohort "
+        "table abstains on more of the later rows — a statement about the table's reach, "
+        "not about whether its numbers were right."
+    ),
+}
+
+
+@dataclass
+class FrozenDecayReport:
+    """One artifact, the horizons it was judged on, and what moved between them."""
+
+    report_schema_version: str
+    generated_on: str
+    evaluation_method: str
+    target: str
+    target_event_classes: list[str]
+    dataset: dict[str, Any]
+    artifact: dict[str, Any]
+    prevalence: dict[str, float]
+    calibration: dict[str, Any] | None
+    plan: dict[str, Any]
+    summary: dict[str, Any]
+    horizons: list[dict[str, Any]]
+    metric_definitions: dict[str, str]
+    limitations: list[str] = field(default_factory=list)
+    conclusions: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
+
+    def summary_lines(self) -> str:
+        lines = [
+            "=== Frozen-artifact decay report ===",
+            (
+                f"{self.evaluation_method} · target {self.target} "
+                f"(event: {'/'.join(self.target_event_classes)}) · "
+                f"generated {self.generated_on}"
+            ),
+            (
+                f"Artifact {self.artifact['version']} fitted "
+                f"{self.artifact['fitted_from']}..{self.artifact['fitted_to']} "
+                f"({self.artifact['cohorts']} cohorts, threshold "
+                f"{self.artifact['min_sample_threshold']}, laplace "
+                f"{self.artifact['laplace_alpha']})"
+            ),
+            (
+                f"Dataset {self.dataset['dataset_id']} (sha256 "
+                f"{str(self.dataset['sha256'])[:12]}…, {self.dataset['rows']} rows)"
+            ),
+            f"Calibration: {self.calibration['method'] if self.calibration else 'none'}",
+            "",
+            "Horizons:",
+        ]
+        for horizon in self.horizons:
+            score = horizon["score"]
+            window = horizon["horizon"]
+            lines.append(
+                f"  {window['scored_start']}..{window['scored_end']} "
+                f"({window['scored_rows']} rows): Brier {_fmt(score['brier'])} vs "
+                f"{_fmt(score['baseline_brier'])} · event {_fmt(score['event_brier'])} vs "
+                f"{_fmt(score['event_baseline_brier'])} · coverage "
+                f"{score['coverage']:.1%} ({score['scored_rows']}/{score['rows']})"
+            )
+        summary = self.summary
+        lines += [
+            "",
+            (
+                f"Drift: event Brier {_fmt(summary['first_event_brier'])} -> "
+                f"{_fmt(summary['last_event_brier'])} "
+                f"({_fmt(summary['event_brier_drift'])}), coverage "
+                f"{_fmt(summary['first_coverage'])} -> "
+                f"{_fmt(summary['last_coverage'])} ({_fmt(summary['coverage_drift'])})"
+            ),
+            (
+                f"Horizons beating the frozen base rate: "
+                f"{summary['horizons_beating_event_baseline']}/"
+                f"{summary['horizons_with_event_scores']} (event), "
+                f"{summary['horizons_beating_baseline']}/"
+                f"{summary['horizons_with_scores']} (distribution)"
+            ),
+            "",
+            "Conclusions:",
+        ]
+        lines += [f"  - {item}" for item in self.conclusions]
+        lines += ["", "Limitations:"]
+        lines += [f"  - {item}" for item in self.limitations]
+        return "\n".join(lines)
+
+
+def build_decay_report(
+    result: FrozenDecayResult,
+    *,
+    dataset_id: str,
+    dataset_sha256: str,
+    dataset_rows: int,
+    generated_on: str,
+) -> FrozenDecayReport:
+    """Assemble the decay report, with conclusions derived from what was measured."""
+    payload = result.to_dict()
+    limitations = [
+        "The cohort table, its smoothing settings, its prevalence baseline and any "
+        "calibration layer are the artifact's own and were never refitted, so this "
+        "measures one artifact's decay rather than how the fitting procedure behaves.",
+        (
+            f"The prevalence baseline comes from the {result.prevalence_rows} fittable rows "
+            f"this file holds up to the cutoff {result.cutoff}. It is the fitted population "
+            "as this file can still show it, not a re-read of the snapshot the artifact was "
+            "built from, and a different snapshot would move the reference rather than the "
+            "table."
+        ),
+        (
+            f"The {result.horizon_count} horizons are scored by the same frozen table, so "
+            "they are not independent evaluations of it, and no multiplicity correction is "
+            "applied."
+        ),
+        (
+            "Drift is the difference between the first and last horizon means. Horizon row "
+            "counts and outcome mixes differ, so a movement here describes these windows and "
+            "is not a tested trend in the artifact."
+        ),
+        (
+            "Rows the estimator abstained on are excluded from the scores and counted "
+            "separately; a horizon with no score is a coverage fact, not a lost forecast."
+        ),
+        "RailConfirm is an independent research tool and not an official IRCTC service.",
+    ]
+    if result.artifact_is_synthetic or result.dataset_is_synthetic:
+        limitations.insert(
+            0,
+            "Fitted and scored on rows that declare is_synthetic: pipeline verification "
+            "only, never evidence about railway behaviour.",
+        )
+    if result.calibration is not None:
+        limitations.append(
+            f"The artifact's calibration layer ({result.calibration.method}) was fitted on "
+            "the period the artifact declares and is applied unchanged to every horizon "
+            "here, so drift in the corrected numbers says the correction was fitted to one "
+            "window — it does not show the correction is wrong."
+        )
+    else:
+        limitations.append(
+            "No calibration layer is applied: the artifact carries none, so these scores "
+            "describe the uncorrected estimator."
+        )
+
+    return FrozenDecayReport(
+        report_schema_version=DECAY_REPORT_SCHEMA_VERSION,
+        generated_on=generated_on,
+        evaluation_method=FROZEN_EVALUATION_METHOD,
+        target=result.target,
+        target_event_classes=list(TARGET_EVENTS[result.target]),
+        dataset={
+            "dataset_id": dataset_id,
+            "sha256": dataset_sha256,
+            "rows": dataset_rows,
+        },
+        artifact=payload["artifact"],
+        prevalence=payload["prevalence"],
+        calibration=payload["calibration"],
+        plan=payload["plan"],
+        summary=payload["summary"],
+        horizons=payload["horizons"],
+        metric_definitions=dict(DECAY_METRIC_DEFINITIONS),
+        limitations=limitations,
+        conclusions=_decay_conclusions(result),
+    )
+
+
+def _decay_conclusions(result: FrozenDecayResult) -> list[str]:
+    """What the horizons actually said, in the order they happened."""
+    conclusions: list[str] = []
+    total = result.horizon_count
+    scored = result.horizons_with_scores
+    silent = total - scored
+    if silent:
+        conclusions.append(
+            f"{silent} of {total} horizons produced no score at all: every row there "
+            "abstained, and an abstention is not a failed forecast."
+        )
+    if not scored:
+        conclusions.append(
+            f"No horizon produced a score: all {result.rows_seen} rows across "
+            f"{total} horizons abstained, so this run measures the frozen table's reach and "
+            "says nothing about its accuracy."
+        )
+        return conclusions
+
+    conclusions.append(
+        f"Across {scored} scored horizons the target event Brier ran from "
+        f"{result.first_event_brier:.6f} in the window nearest the cutoff to "
+        f"{result.last_event_brier:.6f} in the furthest, a drift of "
+        f"{result.event_brier_drift:+.6f}."
+    )
+    spread = result.event_brier_spread
+    if spread and spread[1] > spread[0]:
+        conclusions.append(
+            f"Event Brier ranged {spread[0]:.6f} to {spread[1]:.6f} across horizons; the "
+            "spread describes instability against one frozen reference and is not a tested "
+            "trend."
+        )
+    beating = result.horizons_beating_event_baseline
+    if beating == result.horizons_with_event_scores:
+        conclusions.append(
+            f"All {beating} scored horizons beat the frozen prevalence baseline for the "
+            f"target event ({'/'.join(TARGET_EVENTS[result.target])})."
+        )
+    elif beating == 0:
+        conclusions.append(
+            f"No scored horizon beat the frozen baseline for the target event "
+            f"({'/'.join(TARGET_EVENTS[result.target])}): against the population it was "
+            "fitted on, this table does not separate the outcomes in any window after it."
+        )
+    else:
+        conclusions.append(
+            f"{beating} of {result.horizons_with_event_scores} scored horizons beat the "
+            "frozen target-event baseline, so the headline claim holds in some later "
+            "windows and not others."
+        )
+    coverage = result.coverage_drift
+    if coverage is not None and coverage < 0:
+        conclusions.append(
+            f"Coverage fell from {result.first_coverage:.1%} to "
+            f"{result.last_coverage:.1%}: the frozen table abstains on more of the later "
+            "rows, which is a reach problem before it is an accuracy one."
+        )
+    elif coverage is not None and coverage > 0:
+        conclusions.append(
+            f"Coverage rose from {result.first_coverage:.1%} to "
+            f"{result.last_coverage:.1%} across horizons."
+        )
+    return conclusions
+
+
+def write_decay_report(report: FrozenDecayReport, path: Path) -> Path:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(report.to_json(), encoding="utf-8")

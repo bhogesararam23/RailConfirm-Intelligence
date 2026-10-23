@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
+from datetime import date
 from typing import Any
 
 import pandas as pd
@@ -684,3 +685,307 @@ def _rows(count: int) -> str:
 
 def _origins(count: int) -> str:
     return "1 origin" if count == 1 else f"{count} origins"
+
+
+def _horizons(count: int) -> str:
+    return "1 horizon" if count == 1 else f"{count} horizons"
+
+
+def _dates(count: int) -> str:
+    return f"{count} date" if count == 1 else f"{count} dates"
+
+
+# ── Frozen-artifact decay windows ──────────────────────────────────────────────
+
+MIN_HORIZONS = 2
+"""One horizon is what :func:`chronological_split`'s test block already is. Calling a
+single future window "decay" would claim a trend from one measurement."""
+
+
+@dataclass(frozen=True)
+class HorizonWindow:
+    """One scored block after the cutoff, judged by the same frozen training block."""
+
+    index: int
+    scored: pd.DataFrame
+    scored_dates: tuple[str, ...]
+    train_dates: tuple[str, ...]
+    train_rows: int
+    cutoff: str
+    gap_days: int
+
+    @property
+    def scored_rows(self) -> int:
+        return int(len(self.scored))
+
+    def describe(self) -> str:
+        return (
+            f"horizon {self.index}: scored {self.scored_dates[0]}..{self.scored_dates[-1]} "
+            f"({self.scored_rows} rows, {_dates(len(self.scored_dates))}) against the frozen "
+            f"{self.train_dates[0]}..{self.train_dates[-1]} "
+            f"({self.train_rows} rows, {_dates(len(self.train_dates))})"
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "index": self.index,
+            "train_start": self.train_dates[0],
+            "train_end": self.train_dates[-1],
+            "train_dates": len(self.train_dates),
+            "train_rows": self.train_rows,
+            "cutoff": self.cutoff,
+            "scored_start": self.scored_dates[0],
+            "scored_end": self.scored_dates[-1],
+            "scored_dates": len(self.scored_dates),
+            "scored_rows": self.scored_rows,
+            "gap_days": self.gap_days,
+        }
+
+
+@dataclass(frozen=True)
+class FrozenHorizonPlan:
+    """One frozen training block plus the successive horizons it is judged on."""
+
+    train: pd.DataFrame
+    train_dates: tuple[str, ...]
+    cutoff: str
+    horizons: tuple[HorizonWindow, ...]
+    eligible: bool
+    reasons: tuple[str, ...]
+    date_column: str
+    horizon_dates: int
+    step_dates: int
+    gap_days: int
+    min_scored_rows: int
+    min_horizons: int
+
+    @property
+    def train_rows(self) -> int:
+        return int(len(self.train))
+
+    def describe(self) -> str:
+        return (
+            f"frozen block {self.train_dates[0]}..{self.train_dates[-1]} "
+            f"({self.train_rows} rows, {_dates(len(self.train_dates))}), then "
+            f"{len(self.horizons)} horizons of {_dates(self.horizon_dates)} each"
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "eligible": self.eligible,
+            "reasons": list(self.reasons),
+            "date_column": self.date_column,
+            "cutoff": self.cutoff,
+            "train_start": self.train_dates[0] if self.train_dates else None,
+            "train_end": self.train_dates[-1] if self.train_dates else None,
+            "train_dates": len(self.train_dates),
+            "train_rows": self.train_rows,
+            "horizon_dates": self.horizon_dates,
+            "step_dates": self.step_dates,
+            "gap_days": self.gap_days,
+            "min_scored_rows": self.min_scored_rows,
+            "min_horizons": self.min_horizons,
+            "horizon_count": len(self.horizons),
+            "horizons": [window.to_dict() for window in self.horizons],
+        }
+
+
+def frozen_horizon_windows(
+    df: pd.DataFrame,
+    *,
+    date_column: str = DATE_COLUMN,
+    fitted_to: str,
+    horizon_dates: int = DEFAULT_HORIZON_DATES,
+    step_dates: int = DEFAULT_STEP_DATES,
+    gap_days: int = 0,
+    min_scored_rows: int = 1,
+    min_horizons: int = MIN_HORIZONS,
+) -> FrozenHorizonPlan:
+    """Plan the horizons one already-fitted table is scored against, without refitting.
+
+    ``fitted_to`` is the last date the artifact declares it was fitted on: everything up to
+    it is frozen, and every horizon after it is judged by that same table. That is the
+    difference from :func:`rolling_origin_windows`, which refits at each cutoff and so
+    measures the fitting procedure rather than a promoted artifact's decay.
+
+    Fewer than ``min_horizons`` usable horizons returns **no windows**, with the reasons:
+    one future block is what a single train/validation/test split already provides, and a
+    decay curve drawn through one point is a claim about stability that nothing was measured.
+    A booking whose dates fall on both sides of the cutoff is refused outright, because the
+    frozen table already contains that outcome and would be scoring itself.
+    """
+    if date_column not in df.columns:
+        raise DatasetValidationError(
+            f"Cannot plan frozen horizons without '{date_column}'."
+        )
+    for name, value in (
+        ("horizon_dates", horizon_dates),
+        ("step_dates", step_dates),
+        ("min_scored_rows", min_scored_rows),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise DatasetValidationError(
+                f"{name} must be a positive integer, got {value!r}."
+            )
+    if isinstance(min_horizons, bool) or not isinstance(min_horizons, int):
+        raise DatasetValidationError(
+            f"min_horizons must be an integer of at least {MIN_HORIZONS}, "
+            f"got {min_horizons!r}."
+        )
+    if min_horizons < MIN_HORIZONS:
+        raise DatasetValidationError(
+            f"min_horizons={min_horizons} asks for fewer than {MIN_HORIZONS} horizons, "
+            "which is a single holdout under another name."
+        )
+    if gap_days < 0:
+        raise DatasetValidationError("gap_days cannot be negative.")
+    if step_dates < horizon_dates:
+        raise DatasetValidationError(
+            f"step_dates={step_dates} is below horizon_dates={horizon_dates}, which "
+            "would overlap two scored horizons and count the same outcome in both."
+        )
+    try:
+        cutoff = date.fromisoformat(str(fitted_to).strip())
+    except ValueError as exc:
+        raise DatasetValidationError(
+            f"fitted_to must be an ISO-8601 date, got {fitted_to!r}: the artifact's own "
+            "last fitted date is what separates frozen data from decay evidence."
+        ) from exc
+
+    plan_kwargs: dict[str, Any] = {
+        "date_column": date_column,
+        "horizon_dates": horizon_dates,
+        "step_dates": step_dates,
+        "gap_days": gap_days,
+        "min_scored_rows": min_scored_rows,
+        "min_horizons": min_horizons,
+    }
+    empty_train = df.iloc[0:0].copy()
+
+    def refused(cutoff_text: str, reasons: Sequence[str]) -> FrozenHorizonPlan:
+        return FrozenHorizonPlan(
+            train=_drop_helper(empty_train),
+            train_dates=(),
+            cutoff=cutoff_text,
+            horizons=(),
+            eligible=False,
+            reasons=tuple(reasons),
+            **plan_kwargs,
+        )
+
+    work = df.copy()
+    work["_partition_date"] = _parse_dates(work[date_column], date_column)
+    work = (
+        work.assign(_original_index=work.index)
+        .sort_values(["_partition_date", "_original_index"], kind="mergesort")
+        .reset_index(drop=True)
+    )
+    cutoff_text = cutoff.isoformat()
+    dates = [pd.Timestamp(value) for value in sorted(work["_partition_date"].unique())]
+
+    train_dates = [value for value in dates if value.date() <= cutoff]
+    if not train_dates:
+        return refused(
+            cutoff_text,
+            [
+                f"The artifact's fitted period ends {cutoff_text}, before this file begins "
+                f"on {dates[0].date().isoformat()}. Decay is measured against the population "
+                "the table was fitted on; a file that starts after it can show what the table "
+                "predicts, not how well it was ever fitted.",
+            ],
+        )
+    forward = [value for value in dates if value.date() > cutoff]
+    if not forward:
+        return refused(
+            cutoff_text,
+            [
+                f"No dates after the cutoff {cutoff_text}: the file ends at "
+                f"{dates[-1].date().isoformat()}, so there is nothing the frozen table has "
+                "not already seen.",
+            ],
+        )
+
+    group_dates: dict[str, set[pd.Timestamp]] = {}
+    if GROUP_COLUMN in work.columns:
+        pairs = work[[GROUP_COLUMN, "_partition_date"]].drop_duplicates()
+        for group, seen in zip(
+            pairs[GROUP_COLUMN].tolist(), pairs["_partition_date"].tolist(), strict=True
+        ):
+            group_dates.setdefault(str(group), set()).add(pd.Timestamp(seen))
+
+    train = work[work["_partition_date"].isin(train_dates)]
+    frozen_dates = tuple(value.date().isoformat() for value in train_dates)
+    separation = (forward[0] - train_dates[-1]).days
+    if separation <= gap_days:
+        return refused(
+            cutoff_text,
+            [
+                f"The first horizon starts {separation} day(s) after the cutoff "
+                f"{cutoff_text}, inside the {gap_days}-day gap required to keep "
+                "near-boundary records out of the evaluation.",
+            ],
+        )
+
+    horizons: list[HorizonWindow] = []
+    reasons: list[str] = []
+    start = 0
+    while start + horizon_dates <= len(forward):
+        scored_dates = forward[start : start + horizon_dates]
+        start += step_dates
+        scored = work[work["_partition_date"].isin(scored_dates)]
+        if len(scored) < min_scored_rows:
+            reasons.append(
+                f"Horizon {len(horizons)}: the scored window holds {_rows(len(scored))}, "
+                f"below the required {min_scored_rows}."
+            )
+            break
+
+        if group_dates:
+            frozen_set = set(train_dates)
+            crossing = sorted(
+                group
+                for group, seen in group_dates.items()
+                if seen & frozen_set and seen & set(scored_dates)
+            )
+            if crossing:
+                reasons.append(
+                    f"{len(crossing)} {GROUP_COLUMN} values appear both in the frozen block "
+                    f"and in horizon {len(horizons)} (for example {crossing[:5]}); their "
+                    "outcome is already inside the table being judged, so the frozen table "
+                    "would be scoring itself."
+                )
+                break
+
+        horizons.append(
+            HorizonWindow(
+                index=len(horizons),
+                scored=_drop_helper(scored),
+                scored_dates=tuple(value.date().isoformat() for value in scored_dates),
+                train_dates=frozen_dates,
+                train_rows=int(len(train)),
+                cutoff=cutoff_text,
+                gap_days=gap_days,
+            )
+        )
+
+    if not reasons and len(horizons) < min_horizons:
+        reasons.append(
+            f"Only {_horizons(len(horizons))} usable after {cutoff_text} from "
+            f"{len(dates)} distinct {date_column} values. A single future block is what "
+            f"``chronological_split`` already provides; measuring decay needs at least "
+            f"{min_horizons}, so no horizon was scored rather than reporting one point as "
+            "a trend."
+        )
+        horizons = []
+
+    if reasons:
+        return refused(cutoff_text, reasons)
+    return FrozenHorizonPlan(
+        train=_drop_helper(train),
+        train_dates=frozen_dates,
+        cutoff=cutoff_text,
+        horizons=tuple(horizons),
+        eligible=True,
+        reasons=(),
+        **plan_kwargs,
+    )

@@ -3,6 +3,7 @@
     python -m railconfirm.training fit      --dataset … --manifest … --out models/candidate_v1.json
     python -m railconfirm.training evaluate --dataset … --manifest … --artifact …
     python -m railconfirm.training origins  --dataset … --manifest … --min-train-dates 3
+    python -m railconfirm.training decay    --dataset … --manifest … --artifact …
 
 Exit codes: 0 success, 1 refused or failed, 2 usage error.
 
@@ -14,6 +15,11 @@ without the other.
 ``origins`` evaluates the fitting procedure rather than an artifact: it refits the
 cohort table at each cutoff and scores only the horizon that follows, and refuses to
 run at all when the data cannot support at least two cutoffs.
+
+``decay`` is the other question: it takes one artifact, freezes its table, its settings
+and any calibration layer, and scores each successive horizon after the period it
+declares it was fitted on. One horizon past that cutoff is a holdout, so the command
+refuses unless the calendar supports at least two.
 """
 
 from __future__ import annotations
@@ -41,6 +47,8 @@ from railconfirm.training.calibration import (
     fit_and_measure,
 )
 from railconfirm.training.dataset import load_approved_dataset
+from railconfirm.training.decay import describe_result as describe_decay
+from railconfirm.training.decay import run_frozen_decay
 from railconfirm.training.fitter import (
     fit_baseline,
     fit_cohorts,
@@ -56,8 +64,10 @@ from railconfirm.training.metrics import (
 )
 from railconfirm.training.origins import describe_result, run_rolling_origins
 from railconfirm.training.report import (
+    build_decay_report,
     build_origin_report,
     build_report,
+    write_decay_report,
     write_origin_report,
     write_report,
 )
@@ -153,6 +163,46 @@ def build_parser() -> argparse.ArgumentParser:
         help="YYYY-MM-DD recorded in the report; required so output is reproducible",
     )
     origins.add_argument("--allow-synthetic-for-testing", action="store_true")
+
+    decay = subparsers.add_parser(
+        "decay",
+        help="score one frozen artifact on each successive horizon, refitting nothing",
+    )
+    decay.add_argument("dataset", type=Path)
+    decay.add_argument("manifest", type=Path)
+    decay.add_argument(
+        "--artifact",
+        type=Path,
+        required=True,
+        help="the artifact whose decay is measured; its fitted period is the cutoff",
+    )
+    decay.add_argument(
+        "--target",
+        default="final_chart_cnf",
+        choices=sorted(TARGET_EVENTS),
+        help="must agree with the target the artifact declares",
+    )
+    decay.add_argument(
+        "--horizon-dates",
+        type=int,
+        default=DEFAULT_HORIZON_DATES,
+        help="dates in each scored horizon",
+    )
+    decay.add_argument(
+        "--step-dates",
+        type=int,
+        default=DEFAULT_STEP_DATES,
+        help="dates the horizon advances by; must be at least --horizon-dates",
+    )
+    decay.add_argument("--gap-days", type=int, default=0)
+    decay.add_argument("--min-scored-rows", type=int, default=1)
+    decay.add_argument("--report", type=Path, default=None)
+    decay.add_argument(
+        "--generated-on",
+        default=None,
+        help="YYYY-MM-DD recorded in the report; required so output is reproducible",
+    )
+    decay.add_argument("--allow-synthetic-for-testing", action="store_true")
 
     return parser
 
@@ -450,10 +500,53 @@ def _origins(args: argparse.Namespace) -> int:
     return 0
 
 
+def _decay(args: argparse.Namespace) -> int:
+    """Score one frozen artifact forward through time, with nothing refitted.
+
+    The cutoff is the artifact's own ``trained_to``, so the dates it was counted from can
+    never be scored as if they were evidence about it.
+    """
+    dataset = _dataset(args)
+    print(_describe_intake(dataset))
+    if dataset.eligibility_relaxed:
+        print(
+            "Eligibility thresholds were NOT met; running only because this is a "
+            "labelled synthetic pipeline test."
+        )
+    artifact = load_artifact(
+        args.artifact,
+        expected_version=args.artifact.stem,
+        expected_target=args.target,
+        max_bytes=4_194_304,
+    )
+    result = run_frozen_decay(
+        dataset,
+        artifact,
+        horizon_dates=args.horizon_dates,
+        step_dates=args.step_dates,
+        gap_days=args.gap_days,
+        min_scored_rows=args.min_scored_rows,
+    )
+    print(describe_decay(result))
+    if args.report is not None:
+        report = build_decay_report(
+            result,
+            dataset_id=dataset.dataset_id,
+            dataset_sha256=dataset.sha256,
+            dataset_rows=dataset.report.total_rows,
+            generated_on=_require_generated_on(args),
+        )
+        path = write_decay_report(report, args.report)
+        print()
+        print(report.summary_lines())
+        print(f"\nReport written to {path}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    handlers = {"fit": _fit, "evaluate": _evaluate, "origins": _origins}
+    handlers = {"fit": _fit, "evaluate": _evaluate, "origins": _origins, "decay": _decay}
     try:
         return handlers[args.command](args)
     except (
