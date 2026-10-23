@@ -656,3 +656,27 @@ real server, which is the reason this repository asks for both.
 3. Per-row deletion and any authenticated access boundary, both deferred until history could
    be enabled by default or exposed beyond one machine.
 4. Rolling-origin evaluation, calibration fitting, dependence-aware group outcomes.
+
+### Follow-up: CI caught what local mypy could not
+
+The first push of this work (`0bfcd54`) failed CI run `39899559995` at the type-check step:
+
+```
+railconfirm/api/app.py:199: error: "FastAPI" has no attribute "add_event_handler"  [attr-defined]
+```
+
+The same tree passed `mypy` locally. The difference is the resolved library, not the
+checker: local `fastapi 0.135.1` / `starlette 0.52.1` still expose the deprecated
+shutdown-event API in their type surface, while the newer starlette CI installs no longer
+does. ADR-0010 keeps runtime libraries on ranges deliberately, so this is that decision's
+cost arriving on schedule rather than a new problem.
+
+Fixed forward in `4c867bf` by using the supported mechanism — an async `lifespan` attached
+to the application closes the store — which exists in both versions. Behaviour is
+unchanged; the deprecated call is gone rather than suppressed with an ignore comment,
+because an ignore would go stale the moment the local environment catches up.
+
+CI run `39899994841` on `4c867bf`: **success** — backend 502 passed at 95.86% branch
+coverage, ruff and mypy clean; frontend 93 passed, type-check, lint and build clean;
+documentation and hygiene job clean. The one remaining pytest warning is upstream
+(`StarletteDeprecationWarning` from `fastapi.testclient`'s own import), not from this code.
