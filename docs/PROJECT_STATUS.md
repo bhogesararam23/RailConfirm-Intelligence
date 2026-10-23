@@ -1,41 +1,58 @@
 # Project status and scope
 
-Last reviewed: 2026-10-21
+Last reviewed: 2026-10-23 (after the Milestone A foundation audit)
 
 ## Status
 
-The repository has completed its foundational engineering implementation (Phases 1–5 vertical slice) in local-first mode under ADR-0007. Application code, deterministic domain and API test suites, dataset validation pipeline, and interactive Next.js web application are implemented and verified. The system intentionally operates in abstention mode (`no_trained_model`) until a candidate historical dataset passes the intake checklist. External live data integrations remain planned core capabilities of the long-term product in roadmap Phases 8–10 (ADR-0008).
+The repository has a working local-first application core, but **no prediction is currently produced and no result has been validated against real railway data.** That is the honest state, and the code is built so that it is the visible state rather than a hidden one.
+
+Milestone A (audit and harden the existing code) is complete: the domain, inference, API and data layers were reviewed against observed behaviour and eleven defects were fixed with regression tests. Several of the fixes removed ways the system could present an unsupported claim as a trustworthy one — an evidence-free probability from a malformed frequency table, an unverified status family mapped to the nearest familiar category, a split whose test set was empty while reporting success, and a validator that called a dataset valid because one row parsed.
+
+Nothing is blocked by a missing dependency. The blocker is a dataset: no candidate has cleared `docs/data/DATASET_INTAKE_CHECKLIST.md`, so training, evaluation and calibration have no eligible input and the product abstains by design.
+
+## Area status
+
+Each row states which of these it is: **verified with real data**, **implemented and tested (synthetic fixtures only)**, **implemented but not fully tested**, **planned**, **blocked**.
 
 | Area | Status | Exit condition |
 |---|---|---|
-| Product brief and requirements | Initial baseline implemented | Continuous review against user testing |
-| User journeys and MVP acceptance | Implemented (Phases 1–5 vertical slice) | Core local manual-input flow verified |
-| Architecture and API contracts | Implemented and verified | Versioned FastAPI routes and Next.js client |
-| Domain contracts and status parsing | Implemented and tested (43 tests passing) | Versioned mapping (v1.0.0); unknown codes mapped to UNKNOWN |
-| Local dataset intake pipeline | Implemented (`loader`, `validator`, `manifest`) | Evaluated candidate dataset passing checklist |
-| Historical outcome dataset | No approved dataset yet; candidate intake ready | Provenance and final-chart labels validated |
-| Baseline predictor | Implemented (Laplace smoothing; abstains if unapproved) | Reproducible run on approved historical data |
-| ML model | Deferred until approved dataset available | Chronological evaluation demonstrates utility over baseline |
-| Calibration | Deferred until approved dataset available | Calibration measured on held-out future journeys |
-| Manual-entry web flow | Implemented and verified (Next.js 14 + Tailwind) | Input and structured result flow working end-to-end |
-| External data integrations | Planned core long-term capability; not implemented in current build | Delivered in roadmap Phases 8–10 with source-specific ADRs |
-| Verified news/event/context feeds | Planned core long-term capability; not connected | Source review and incremental value on temporal holdout |
-| Tests and CI | Implemented (43 pytest tests, 84% coverage, ruff, mypy, Next.js build, .github/workflows/ci.yml) | Automated execution on push to GitHub |
-| Production monitoring | Planned for deployment release | Error rates, drift, and calibration monitoring |
+| Product brief, requirements, journeys | Implemented and tested (synthetic fixtures only) — documentation, so "tested" means reviewed | Validated against real user testing |
+| Domain contracts and status parsing | Implemented and tested (synthetic fixtures only), mapping v1.1.0 | Authoritative verification of each status family; `CK`/`CKWL` remain `UNKNOWN` until a source is recorded |
+| Temporal integrity rules (as-of timestamps, leakage refusal) | Implemented and tested | Sub-second and multi-timezone evidence handling when a real source defines it |
+| Prediction API (`POST /v1/predictions/manual`, `GET /v1/health`) | Implemented and tested, verified over real HTTP locally (uvicorn, health, abstention, validation, CORS, 413) | Public deployment is out of scope for the local build |
+| Historical-frequency baseline | Implemented and tested (synthetic fixtures only). **Never loaded with real data anywhere in the codebase** | An approved dataset converted into a promoted artifact |
+| Model registry and artifacts | Implemented and tested (ADR-0009): JSON format, two-gate promotion, metadata validation. No artifact exists | A trained artifact that clears evaluation and is explicitly promoted |
+| Group outcomes | Implemented and tested as an **independence baseline only**. It is not a validated model of correlated reservation outcomes | Joint/dependence-aware estimation once booking-level labels exist |
+| Dataset intake pipeline (`loader`, `validator`, `manifest`, CLI) | Implemented and tested | A real candidate file put through it |
+| Historical outcome dataset | **Blocked — none approved.** No candidate has passed the intake checklist | Provenance, licence, labels, privacy and quality reviewed by a named person |
+| Training pipeline | **Planned, not implemented.** No training module exists | Reproducible fit on approved training-period records only |
+| Temporal evaluation and metrics | **Planned, not implemented.** The splitter exists; nothing computes Brier, log loss or calibration | Chronological holdout evaluation with published split boundaries |
+| Calibration | **Planned, not implemented** | Calibration fitted on validation period, measured on locked test data |
+| Persistence, prediction history | **Planned, not implemented.** Nothing is stored; `docs/technical/STORAGE_MODEL.md` describes a design that does not exist yet | A privacy-safe local store with retention rules |
+| Manual-entry web flow | Implemented but **not verified end-to-end in a browser.** Its TypeScript types were written against an imagined response shape, so observed statuses are never displayed and abstention reasons can be mislabelled | A frontend whose types match the backend, exercised through the real API |
+| Frontend tests | **Planned, not implemented.** No test framework is configured | Contract and state tests running in CI |
+| Tests and CI | Implemented and verified green on `main` (384 backend tests, 96% branch coverage, CI jobs observed passing on pushed commits) | Continuous |
+| External live integrations (Phases 8–10) | Planned core long-term capability; not implemented in the current build | Provider-specific ADR plus authorized access (ADR-0008) |
+| Production monitoring and deployment | Planned | A real deployment exists |
 
-## In scope (Current build)
+## In scope (current build)
 
-- Domain models with versioned status mapping (`v1.0.0`).
-- Passenger-level and group-level outcome schemas (CNF, RAC, WL, CANCELLED, OTHER).
-- Local dataset intake pipeline (`railconfirm.data`) with SHA-256 manifest generation.
-- Full FastAPI backend (`POST /v1/predictions/manual`, `GET /v1/health`) with structured abstention when no model is active.
-- Full Next.js frontend with accessible UI, forms, status badges, and prediction report.
+- Domain models with a versioned status mapping, offset-aware timestamps and stable abstention reasons.
+- Passenger-level and group-level outcome schemas (`CNF`, `RAC`, `WL`, `CANCELLED`, `OTHER`).
+- Local dataset intake: CSV/JSON loading with explicit safety checks, row-contract validation with per-reason accounting, deterministic manifests and manifest verification.
+- Chronological splitting that reports inability to evaluate rather than faking one.
+- FastAPI backend with structured abstention, a documented error envelope, CORS, request bounds and privacy-aware access logging.
+- JSON model artifacts with validated metadata and explicit promotion.
 - Clearly labelled synthetic fixtures for deterministic tests (`backend/tests/fixtures/`).
-- Automated tests passing with zero dependencies on third-party runtime APIs.
+- A Next.js frontend that compiles, type-checks and lints.
+
+## What the system does today
+
+Every manual prediction returns a structured abstention with `no_trained_model` and `registry_status: no_active_version`, because nothing is promoted and no approved dataset exists. A `200` response with `p_cnf: null` and a reason code is the correct product behaviour here, and it is what the tests assert. If you see a probability, either a promoted artifact was created deliberately or something is wrong.
 
 ## Not part of the current local-first build
 
-- Third-party runtime APIs, live PNR lookup/polling, live news/event feeds, and hosted inference are not implemented now. They remain planned core product capabilities in roadmap Phases 8–10. See ADR-0008.
+Third-party runtime APIs, live PNR lookup or polling, live news/event feeds and hosted inference are not implemented now. They remain planned core product capabilities in roadmap Phases 8–10 (see ADR-0008), deferred rather than removed.
 
 ## Out of scope until separately approved
 
@@ -58,3 +75,9 @@ A prediction feature is not complete because the UI renders a percentage. It is 
 5. Calibration and subgroup limitations are documented.
 6. Error and unavailable-data states are handled.
 7. User-facing copy does not overstate certainty.
+
+Items 4 and 5 cannot be met today and are not claimed anywhere. Items 1–3 and 6–7 are met by the current code.
+
+## Claim discipline
+
+No accuracy figure, benchmark, calibration result, deployment status or CI history is recorded in this repository unless the run that produced it exists and is named. `CHANGELOG.md` and `docs/DEVELOPMENT_LOG.md` distinguish what was executed from what was written.

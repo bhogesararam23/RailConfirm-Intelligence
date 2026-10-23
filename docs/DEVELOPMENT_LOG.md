@@ -219,3 +219,125 @@ Consolidated continuous integration workflow, configured backend developer tooli
 ### Remaining work
 - Observe GitHub Actions CI execution upon remote push to `origin/main`.
 - Intake and evaluate candidate historical dataset under `docs/data/DATASET_INTAKE_CHECKLIST.md`.
+
+## 2026-10-23 — Milestone A: audit and harden the implemented foundation
+
+### Scope
+
+Reviewed the implemented domain, inference, API and data layers against observed
+behaviour rather than the previous session's reports, fixed every concrete defect
+found, and made CI checks mean the same thing locally and remotely. Eleven commits
+pushed to `origin/main`, ending at `7126d4e`.
+
+### Defects confirmed and fixed
+
+Each was reproduced against the code before it was changed. Probe scripts ran
+outside the repository and were deleted.
+
+1. `HistoricalFrequencyBaseline` smoothed any dictionary it was given. A cohort
+   keyed `{"CONFIRMED": 100}` returned `p_cnf 0.2, p_rac 0.2, p_wl 0.2` as a
+   *supported* estimate; negative counts raised an unhandled `ValueError` mid-request;
+   `{"CNF": "30"}` raised `TypeError`; lowercase fitted cohort keys never matched,
+   so a loaded table abstained while appearing usable.
+2. `ModelRegistry.has_model()` returned True for any existing `<version>.pkl`. The
+   engine then reported that version while every passenger abstained with
+   `no_trained_model`, so a broken artifact looked like an untrained one. Pickle was
+   the container, which executes code on load.
+3. `parse_status` mapped `CK` to `WL/CKWL` on an inline comment admitting the
+   semantics "need verification". No reference existed anywhere in the repository.
+4. No timezone was enforced anywhere: a naive `prediction_at` was accepted and
+   echoed; `prediction_at` after the journey date was accepted; a status observed
+   after `prediction_at` was used as evidence for that timestamp.
+5. An empty passenger list reported `evidence_coverage: sufficient` because `all()`
+   over an empty list is true. A partly supported request reported `insufficient`.
+   `CENSORED` and `CANCELLED` statuses produced supported probabilities (`p_cnf 0.73`).
+6. `validate_dataset` reported valid on one parsed row of 500. `str(pd.NA)` renders
+   `"<NA>"` so empty cells passed the required-value test; duplicates only warned;
+   contradictory labels were undetected; dates were never parsed; `unknown_final_status`
+   rows reconciled as neither valid nor rejected.
+7. `chronological_split` returned every row as `train` with empty val/test for one or
+   two distinct dates, and at exactly three dates gave `train` 6 rows and `test` none.
+   Non-ISO dates sorted lexicographically, putting `01/02/2026` in `train` next to
+   `2025-12-31` while `2026-01-01` went to test.
+8. `extract_features` fabricated position `0`, turned unparseable dates into
+   `lead_days = 0` via `fillna`, and clamped post-departure observations to `0`.
+9. The loader trusted pandas: a row wider than the header **loses its surplus
+   fields**, a short row is NaN-padded, a duplicate column becomes `a.1`, a blank one
+   becomes `Unnamed: 1`. Confirmed against pandas 2.3.3.
+10. `generate_manifest` stamped `datetime.now()`, so two runs over one file produced
+    different bytes; nothing could verify a manifest against its dataset; only
+    `sha256` of ~60 template keys matched.
+11. The API had no CORS middleware at all, so the frontend could not reach the
+    backend; only a `pydantic.ValidationError` handler was registered while FastAPI
+    raises `RequestValidationError` for bodies, so every 422 returned an undocumented
+    shape; the 500 handler returned `str(exc)`, which can contain submitted statuses.
+
+### Correction to the 2026-10-21 entry
+
+That entry records "Verified all relative documentation links resolving correctly"
+and "Scanned repository for `.env` files and unredacted 10-digit PNR strings;
+confirmed zero private data". Both were wrong as executed. The link check missed
+`ci/README.md` pointing at `ci/github-actions-ci.yml`, deleted when the workflow
+landed; the hygiene scan is broken by its shell pipeline (`grep … | head -5` inside
+`if …; then` tests `head`, which exits 0 on empty input, so the step could never
+fail). Neither claim was re-verified at the time. Both are now actual checks in
+`scripts/check_repository_hygiene.py`, and the failure mode was demonstrated: a
+reintroduced broken link produced exit 1, restoring it produced exit 0.
+
+### Checks run and results
+
+- `pytest tests/` → **384 passed**. Grew from 43 at session start.
+- `pytest --cov=railconfirm` → **96%** (statements and branches; branch coverage now
+  enabled in `pyproject.toml`). Previously reported 84% was statements only.
+- `ruff check railconfirm/ tests/` → all checks passed, against an explicitly
+  declared rule set.
+- `mypy` → no issues in 29 source files, against `pyproject.toml` configuration.
+- `python scripts/check_repository_hygiene.py` → exit 0; 168 tracked files scanned.
+- **Real HTTP verification, not only TestClient:** `uvicorn railconfirm.api.app:app`
+  on `127.0.0.1:8123` — `/v1/health` 200 with `model_available: false` and
+  `registry_status: no_active_version`; `POST /v1/predictions/manual` 200 with
+  structured abstention; naive `prediction_at` → 422 with dotted field path;
+  identical stations → 422; oversize body → 413 `REQUEST_TOO_LARGE`; CORS preflight
+  allowed for `http://localhost:3000` and refused for an unlisted origin; `/docs` 200;
+  OpenAPI listing exactly the four request fields.
+- **Promotion gate verified end to end** with a temporary artifact created *outside*
+  the repository: file present without `RAILCONFIRM_ACTIVE_MODEL_VERSION` served
+  nothing (`no_active_version`); with it activated the same request returned
+  `p_cnf 0.6454` for the SL/GN/WL cohort, `basis cohort=SL/GN/WL n=105
+  exact_status_match=true`, and a passenger whose cohort was absent abstained so
+  coverage came back `partial`. The temporary file was deleted; no synthetic artifact
+  claiming approved real data was left in the tree.
+- **GitHub Actions observed:** runs 39862139214, 39864368103, 39871983243 and 39876116132
+  succeeded on pushed commits. Runs 39865661797, 39868053637, 39874595819, 39875188482
+  and 39875632374 failed, each on a real defect in my own change (an undeclared Ruff
+  rule set, then two platform-dependent test assumptions, then a mypy-version
+  disagreement). All were fixed forward; no history was rewritten and no check was
+  weakened to get green. `main` is green at `7126d4e`.
+
+### Decisions
+
+- ADR-0009: JSON artifacts, two-gate promotion, split abstention reasons, validated
+  frequency tables, unverified status families kept unknown.
+- ADR-0010: declared lint/type rule sets, dev tools pinned to verified versions
+  (`ruff~=0.16.9`, `mypy~=1.19.1`), and a hygiene gate that can actually fail.
+  The ADR's original claim that version *ranges* were sufficient was corrected in a
+  later commit after CI proved otherwise, and the correction is recorded in the ADR
+  rather than quietly rewritten.
+
+### Data and model evidence
+
+No approved dataset exists. No training, evaluation or calibration has been run,
+because there is nothing eligible to run them on. No accuracy or calibration figure
+appears anywhere in the repository.
+
+### Remaining work
+
+1. Frontend contract mismatch: `frontend/src/lib/types.ts` describes an
+   `observed_status` object the backend never returns, so observed statuses are not
+   displayed, `(x || 0) * 100` renders a fabricated `0.0%` for a null probability,
+   `p_cancelled` is never rendered so the probability bar cannot sum to 100%, and the
+   error shape does not match. No frontend test framework exists.
+2. Group outcomes remain an independence baseline; dependence-aware estimation needs booking labels.
+3. Dataset intake: find and review a real candidate; nothing has been approved.
+4. Training, evaluation and calibration pipelines: not implemented.
+5. Persistence and prediction history: not implemented; nothing is stored today.

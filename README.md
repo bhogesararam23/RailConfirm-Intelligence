@@ -4,7 +4,7 @@ An evidence-driven Indian Railways ticket confirmation probability predictor for
 
 RailConfirm is developed as both an open research project and a web application. The goal is not to produce a percentage that looks arbitrarily precise; the goal is to estimate meaningful probabilities, evaluate them against real outcomes, and be transparent about where the model does and does not have sufficient evidence.
 
-> **Current status (Phases 1–5 local-first release):** Core application stack, API contracts, domain validation, dataset intake pipeline, and Next.js user interface are implemented and verified. The system intentionally operates in abstention mode (`no_trained_model`) until a candidate historical dataset passes the intake checklist. External live data integrations remain planned core capabilities of the long-term product in roadmap Phases 8–10 (ADR-0008).
+> **Current status:** A local-first application core exists and is tested — FastAPI backend, Next.js frontend, domain contracts, dataset intake pipeline and a validated model registry (384 backend tests, 96% branch coverage, CI green). **No prediction is produced yet and nothing has been validated against real railway data,** because no candidate dataset has cleared the intake checklist and no artifact is promoted. The system therefore returns a structured abstention (`no_trained_model`, `registry_status: no_active_version`) to every request, which is the intended behaviour rather than a placeholder. The frontend's types were written against an imagined response shape and are the main known gap; see `docs/PROJECT_STATUS.md`. External live data integrations remain planned core capabilities in roadmap Phases 8–10 (ADR-0008).
 
 ## Quickstart (Local Development)
 
@@ -25,52 +25,67 @@ source .venv/bin/activate       # On Linux/macOS
 
 pip install -e ".[dev]"
 
-# Run test suite (40 tests, all passing without live API dependencies)
-pytest tests/ -v
+# Test suite (384 tests, no live API dependencies) with coverage floor
+pytest tests/ --cov=railconfirm --cov-fail-under=90
+
+# Lint and type-check, both configured in pyproject.toml
+ruff check railconfirm/ tests/
+mypy
 
 # Start the API server
-uvicorn railconfirm.api.app:create_app --factory --host 127.0.0.1 --port 8000 --reload
+uvicorn railconfirm.api.app:app --host 127.0.0.1 --port 8000
 ```
 
-The API runs at `http://127.0.0.1:8000`. Interactive OpenAPI documentation is available at `http://127.0.0.1:8000/docs`.
+The API runs at `http://127.0.0.1:8000`. Interactive OpenAPI documentation is at
+`http://127.0.0.1:8000/docs`.
 
 ### 2. Run the Next.js Frontend
 
 ```bash
 cd frontend
 
-# Install dependencies
-npm install
-
-# Type-check and production build
+npm ci
 npm run type-check
-npm run build
-
-# Start development server
+npm run lint
 npm run dev
 ```
 
-Open `http://localhost:3000` to interact with the local application.
+The frontend is served on `http://localhost:3000` by default, which the backend's CORS
+allowlist permits. Port 3000 is a local Grafana on the maintainer's machine, so if you
+move the dev server, list the new origin in `RAILCONFIRM_CORS_ALLOWED_ORIGINS` —
+requests from an unlisted origin are blocked at preflight and the UI reports it as an
+unreachable backend.
+
+### 3. Dataset intake tooling
+
+```bash
+cd backend
+python -m railconfirm.data validate path/to/dataset.csv     # exit 1 when not eligible
+python -m railconfirm.data manifest path/to/dataset.csv \
+  --dataset-id my-set --title "My set" --retrieved-on 2026-10-18
+python -m railconfirm.data verify ../data/manifests/my-set.yaml path/to/dataset.csv
+cd ..
+python scripts/check_repository_hygiene.py                  # docs links, secrets, PNR-shaped data
+```
 
 ## Core Features Implemented
 
 - **Domain Model & Normalization (`backend/railconfirm/domain/`):**
-  - Indian Railways status mapping (`v1.0.0`) distinguishing CNF, RAC, and specific waitlist categories (GNWL, RLWL, PQWL, TQWL, RQWL, DPWL).
-  - Unrecognized codes are normalized to `UNKNOWN` and never silently coerced into WL.
-  - Strict journey validation (4–6 digit train numbers, distinct origin/destination).
+  - Indian Railways status mapping (`v1.1.0`) distinguishing CNF, RAC, and specific waitlist categories (GNWL, RLWL, PQWL, TQWL, RQWL, DPWL).
+  - Unrecognized codes are normalized to `UNKNOWN` and never silently coerced into WL. `CK` and `CKWL` are deliberately unmapped pending verification.
+  - Offset-aware timestamps required: a naive `prediction_at`, a prediction at or after the journey date, or evidence newer than the prediction timestamp is refused.
   - Privacy by design: no passenger names or raw PNRs stored or required.
 - **Prediction Engine & Group Baselines (`backend/railconfirm/inference/`):**
-  - Abstention-first engine returning explicit reason codes (`no_trained_model`, `unknown_status`, `insufficient_sample`).
-  - Historical frequency baseline with Laplace smoothing.
-  - Multi-passenger group joint outcome estimation with explicit assumption warnings.
+  - Abstention-first engine with reason codes that name the closed gate (`no_trained_model`, `model_artifact_invalid`, `no_approved_data`, `unknown_status`, `unsupported_status`, `insufficient_sample`).
+  - Historical frequency baseline with Laplace smoothing, validated cohort tables and required provenance. It is not wired to any real dataset.
+  - Multi-passenger group outcomes computed under an explicitly labelled independence assumption — a baseline, not a validated dependence model.
+- **Model Registry (`backend/railconfirm/inference/registry.py`):** JSON artifacts with metadata validation and two-gate promotion; a file appearing in `models/` activates nothing (ADR-0009).
 - **Local Dataset Intake Pipeline (`backend/railconfirm/data/`):**
-  - Loader and schema validator enforcing `docs/data/DATASET_INTAKE_CHECKLIST.md`.
-  - Cryptographic SHA-256 dataset manifest generator.
-  - Chronological dataset partitioner preventing temporal data leakage.
-- **Modern Local-First Web Interface (`frontend/`):**
-  - Journey details and dynamic passenger rows (1–6 passengers).
-  - Clear separation between original booking status and latest observed status.
-  - Accessible, textual status indicators and evidence disclaimers.
+  - Loader with explicit CSV/JSON structure checks and a size bound.
+  - Validator separating structural validity, technical eligibility and approval, with per-reason row accounting.
+  - Deterministic SHA-256 manifests that follow `DATASET_MANIFEST_TEMPLATE.yaml`, plus verification that re-hashes and recounts the dataset.
+  - Chronological splitting that reports an inability to evaluate rather than returning an empty test set.
+- **Web Interface (`frontend/`):** journey details, dynamic passenger rows (1–6), textual status indicators, evidence disclaimers. **Not yet matched to the API contract** — see the status note above.
 
 ## Principles
 
