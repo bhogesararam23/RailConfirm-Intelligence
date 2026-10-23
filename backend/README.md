@@ -217,15 +217,16 @@ backend/
       metrics.py          — Distribution and target-event scoring, group-event card
       calibration.py      — Platt slope/intercept fitting with refusal conditions
       origins.py          — Rolling-origin refit and per-cutoff scoring
+      decay.py            — One frozen artifact scored on each successive horizon
       report.py           — Byte-reproducible JSON evaluation reports
-      __main__.py         — `fit`, `evaluate` and `origins` commands
+      __main__.py         — `fit`, `evaluate`, `origins` and `decay` commands
   tests/
     domain/               — Status, journey, passenger, prediction tests
     inference/            — Baseline, group, calibration, registry and engine tests
     api/                  — Prediction, health and history endpoint tests
-    data/                 — Loader, validator, preprocessing and rolling-origin tests
+    data/                 — Loader, validator, preprocessing, rolling-origin and decay-window tests
     storage/              — Opt-in history tests
-    training/             — Gate, fitter, metrics, calibration, cohort-parity and report tests
+    training/             — Gate, fitter, metrics, calibration, cohort-parity, decay and report tests
     support/              — Shared synthetic artifact and dataset fixtures
     fixtures/             — Clearly labelled SYNTHETIC test fixtures only
 ```
@@ -341,6 +342,11 @@ python -m railconfirm.training origins data/processed/dataset.csv data/manifests
   --min-train-dates 4 --horizon-dates 2 --step-dates 2 \
   --report reports/origins.json --generated-on 2026-10-23
 
+# score one frozen artifact on each horizon after its own fitted period (decay, ADR-0018)
+python -m railconfirm.training decay data/processed/dataset.csv data/manifests/set.yaml \
+  --artifact models/baseline_v1.json --horizon-dates 2 --step-dates 2 \
+  --report reports/decay.json --generated-on 2026-10-23
+
 # fit the baseline and add a logistic calibration layer measured on the locked test
 python -m railconfirm.training fit data/processed/dataset.csv data/manifests/set.yaml \
   --version baseline_v2 --out models/baseline_v2.json \
@@ -412,10 +418,17 @@ Eligibility thresholds were NOT met; fitted only because this is a labelled synt
   each scorecard records `calibration_applied`, so a reader cannot mistake a calibrated score
   for the raw table's. Both report and artifact state that calibration was measured across the
   population, not within a cohort subgroup.
-- Not implemented: scoring one *frozen* artifact against successive horizons (the `origins`
-  path refits the baseline at each cutoff and carries no calibration layer across them), and
-  subgroup calibration. The report states that no calibration was fitted whenever the
-  artifact says so.
+- Frozen-artifact decay (`decay`, ADR-0018) answers a different question from `origins`. The
+  cutoff is the artifact's own `trained_to` — never a caller's flag, because a chosen cutoff
+  lets the fitted period be scored as evidence about itself — and the cohorts, smoothing
+  settings and calibration block are the artifact's, applied unchanged to every horizon.
+  One prevalence baseline is computed from the fittable rows up to the cutoff and reused for
+  all of them, because a baseline recomputed per horizon drifts toward the answer it is
+  judging. The run refuses below two usable horizons, refuses when a booking spans the
+  cutoff, counts horizons that abstained everywhere separately from horizons that lost, and
+  reports first-to-last drift plus the spread rather than a mean that hides the ordering.
+- Not implemented: calibration measured within a cohort subgroup, and any number computed
+  from approved real data. The reports state both limits in their own words.
 
 ## Limitations
 

@@ -1189,3 +1189,116 @@ Changed: `backend/railconfirm/domain/prediction.py`, `inference/artifacts.py`, `
 - Calibration is fitted on one window and is not carried across rolling origins; subgroup
   calibration is not measured; and no frozen artifact has been scored against successive horizons.
 
+## 2026-10-24 — Frozen-artifact decay: one table, judged further out (ADR-0018)
+
+### Scope
+ADR-0014 and ADR-0017 both ended with the same sentence: nothing here scores one *frozen*
+artifact against successive horizons. `origins` refits the cohort table and its prevalence
+baseline at every cutoff, which measures the fitting procedure. A promoted model in service is
+the opposite situation — the table does not move, the calendar does. Built that measurement and
+recorded the decision in ADR-0018.
+
+### What the single-cutoff number was hiding
+Before writing anything, the same estimator was scored two ways on the balanced synthetic
+fixture. One cutoff reports `test event Brier 0.239487` against a `0.24` base rate: a win by
+0.0005, and the kind of number a report would carry as "beats the baseline". Scored as three
+successive two-date horizons against the same frozen table and the same frozen baseline, the
+identical estimator produces `0.243482, 0.240300, 0.239411` and beats the base rate in **one of
+the three**. Nothing about the arithmetic changed; the single number simply kept the ordering
+secret. That is the reason this command exists before any real data does.
+
+### Implemented
+- `backend/railconfirm/data/preprocessing.py` — `frozen_horizon_windows()`,
+  `FrozenHorizonPlan`, `HorizonWindow`, `MIN_HORIZONS = 2`. Whole-date horizons after the
+  cutoff, `step_dates >= horizon_dates` so no outcome is scored twice, and **no windows at
+  all** when fewer than two usable horizons exist. A `booking_group_id` spanning the cutoff
+  refuses the entire plan rather than dropping rows from the side under test. Exported from
+  `railconfirm.data`.
+- `backend/railconfirm/training/decay.py` — `run_frozen_decay()`, `FrozenDecayResult`,
+  `HorizonScore`, `frozen_decay_estimator()`, `describe_result()`. The cutoff comes from
+  `metadata.trained_to`; the cohorts, threshold, smoothing and calibration block are the
+  artifact's and are passed to `score_partition()` unchanged; the prevalence baseline is
+  computed once from the fittable rows at or before the cutoff. Refusals: an artifact with no
+  declared period, a plan the file cannot support, a frozen block with nothing fittable, a
+  target with no defined event, and an artifact whose `cohort_semantics` or `features_used`
+  differ from what this build serves.
+- `backend/railconfirm/training/report.py` — `FrozenDecayReport`, `build_decay_report()`,
+  `_decay_conclusions()`, `write_decay_report()`, `DECAY_REPORT_SCHEMA_VERSION`, and
+  `DECAY_METRIC_DEFINITIONS` adding `prevalence`, `event_brier_drift` and `coverage_drift` to
+  the scorecard definitions. Limitations state that the table and baseline were never refitted,
+  where the baseline came from, that the horizons are not independent evaluations, and that a
+  calibration block was fitted to one window. Conclusions are derived from the measured values,
+  and a run where nothing was scored says so without using a word that could read as positive.
+- `backend/railconfirm/training/__main__.py` — the `decay` subcommand
+  (`--artifact`, `--horizon-dates`, `--step-dates`, `--gap-days`, `--min-scored-rows`,
+  `--report`, `--generated-on`, `--target` checked against the artifact's declared target), and
+  the module docstring now names three evaluation questions rather than two.
+
+### Live runs (labelled synthetic fixtures in the OS temp directory, nothing committed)
+```
+$ python -m railconfirm.training fit synthetic-balanced.csv … --version decay_v1 \
+    --train-frac 0.5 --val-frac 0.25 --min-sample-threshold 5 --allow-synthetic-for-testing
+Wrote candidate artifact …decay_v1.json · Used 120 of 120 training rows · Cohorts: 4 · exit 0
+
+$ python -m railconfirm.training decay synthetic-balanced.csv … --artifact decay_v1.json \
+    --horizon-dates 2 --step-dates 2 --report decay-report.json --generated-on 2026-10-24 …
+Frozen artifact decay_v1 (2026-04-01..2026-04-06, 4 cohorts, cutoff 2026-04-06)
+  horizon 0 (2026-04-07..2026-04-08): Brier 0.489622 vs 0.480000, event 0.243482 vs 0.240000, coverage 100.0%
+  horizon 1 (2026-04-09..2026-04-10): Brier 0.482206 vs 0.480000, event 0.240300 vs 0.240000, coverage 100.0%
+  horizon 2 (2026-04-11..2026-04-12): Brier 0.480027 vs 0.480000, event 0.239411 vs 0.240000, coverage 100.0%
+Drift across 3 horizons (3 scored): event Brier 0.243482 -> 0.239411 (-0.004071), coverage 1.000000 -> 1.000000
+  event beat the frozen base rate in 1/3 scored horizons
+exit 0
+
+$ python -m railconfirm.training decay … --artifact cal_v1.json --horizon-dates 2 --step-dates 2 …
+Frozen artifact cal_v1 (2026-04-01..2026-04-08, 4 cohorts, cutoff 2026-04-08)
+  horizon 0 (2026-04-09..2026-04-10): event 0.239898 vs 0.240000, coverage 100.0%
+  horizon 1 (2026-04-11..2026-04-12): event 0.239487 vs 0.240000, coverage 100.0%
+  event beat the frozen base rate in 2/2 scored horizons
+exit 0
+
+$ python -m railconfirm.training decay … --horizon-dates 4 --step-dates 4 …   # 6 dates left
+Refused: Cannot measure decay for artifact decay_v1 from synthetic-balanced-fixture:
+  - Only 1 horizon usable after 2026-04-06 from 12 distinct journey_date values. A single
+    future block is what ``chronological_split`` already provides; measuring decay needs at
+    least 2, so no horizon was scored rather than reporting one point as a trend.
+exit 1, and no report written
+```
+The calibrated run is the cross-check worth recording: its two horizons are the same rows the
+earlier `fit --calibrate` measured as validation and locked test, and the numbers come out
+identically (`0.239898`, `0.239487`). That is the correction being applied by one code path,
+not a second implementation agreeing by luck.
+
+### Checks run and results
+- `python -m pytest tests/ -q --cov=railconfirm --cov-fail-under=90` → **802 passed** in 257.62s,
+  total coverage **96.17%** (exit 0). New this session: 39 planner tests
+  (`tests/data/test_frozen_horizons.py`) and 35 decay tests (`tests/training/test_decay.py`).
+- `ruff check railconfirm/ tests/` → **All checks passed!** (after `--fix` reorganised the new
+  test module's imports; three import-order findings, zero remaining).
+- `mypy` → **Success: no issues found in 42 source files** (the first pass flagged
+  `Sequence[str]` with `.append` in `describe_result`; the accumulator is now a `list[str]`).
+- `python scripts/check_repository_hygiene.py` → **passed** (22 required files, 218 tracked
+  files scanned for links, secrets and unlabelled ticket data), run after the documentation
+  edits including this entry.
+- Frontend gates re-run after the change: `npm test -- --run` → **115 passed** across 6 test
+  files; `npm run type-check` clean; `npm run lint` → **No ESLint warnings or errors**;
+  `npm run build` → compiled successfully, 7 static pages. No frontend file was touched by
+  this work, so these are confirmation runs rather than regression tests of new UI.
+
+### Files
+New: `backend/railconfirm/training/decay.py`, `backend/tests/data/test_frozen_horizons.py`,
+`backend/tests/training/test_decay.py`,
+`docs/adr/ADR-0018-frozen-artifact-decay-across-successive-horizons.md`.
+Changed: `backend/railconfirm/data/preprocessing.py`, `backend/railconfirm/data/__init__.py`,
+`backend/railconfirm/training/report.py`, `backend/railconfirm/training/__main__.py`,
+`README.md`, `backend/README.md`, `CHANGELOG.md`, `docs/PROJECT_STATUS.md`,
+`docs/AGENT_HANDOFF.md`, `docs/adr/README.md`, `docs/research/EVALUATION_PROTOCOL.md`,
+`docs/DEVELOPMENT_LOG.md`.
+
+### Unresolved
+- Subgroup calibration is still unmeasured, and `decay` does not change that: it shows whether
+  one population-wide correction holds later, not whether it holds inside a class or quota.
+- Both temporal commands now need a dataset long enough to give two windows, which the current
+  intake minimum of four distinct journey dates only barely supports. That is an intake
+  requirement to raise with the reviewer, not a reason to relax a refusal.
+

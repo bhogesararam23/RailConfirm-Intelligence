@@ -39,11 +39,24 @@ Every split result carries `PartitionSummary` counts — rows, distinct dates, d
 - **Two origins minimum.** A plan that yields fewer than `MIN_ORIGINS = 2` usable origins is not eligible and returns **no windows**, with a reason naming the date count. One cutoff is what `chronological_split` already measures; reporting it under a plural name would turn a single draw into a temporal claim.
 - **`step_dates >= horizon_dates` is required.** Overlapping horizons would score the same outcome twice. Because every earlier horizon sits inside every later training block, one rule — no booking on both sides of a cutoff — also guarantees no booking is scored by two origins.
 - **Bookings that straddle a cutoff block the plan**, exactly as in the single-cutoff split.
-- **Each origin refits.** `run_rolling_origins` calls `fit_cohorts` on that window's training block, builds the estimator from those cohorts and scores the horizon with `score_partition`, so the baseline prevalence always comes from the origin's own past. Consequences the report states: the method line is `refit-per-origin, score-the-next-horizon` (this measures the fitting procedure across time, not one frozen artifact's decay), per-origin baselines differ by construction, and overlapping windows mean the origins are **not independent evaluations** — no multiplicity correction is applied.
+- **Each origin refits.** `run_rolling_origins` calls `fit_cohorts` on that window's training block, builds the estimator from those cohorts and scores the horizon with `score_partition`, so the baseline prevalence always comes from the origin's own past. Consequences the report states: the method line is `refit-per-origin, score-the-next-horizon` (this measures the fitting procedure across time; one frozen artifact's decay is ADR-0018's separate question and its own command), per-origin baselines differ by construction, and overlapping windows mean the origins are **not independent evaluations** — no multiplicity correction is applied.
 - **Origins that produced no score are counted separately from origins that lost.** A horizon where every row abstained contributes no Brier, and the conclusions are written against `origins_with_scores`, not against the origin count.
 - **Instability is the output.** Conclusions report how many scoring origins beat their baseline (all / none / some), the Brier range and the coverage range across origins. `--report` is byte-reproducible and requires `--generated-on`.
 
 Reproduce it with `python -m railconfirm.training origins DATASET MANIFEST --min-train-dates 3 --horizon-dates 1 --step-dates 1 --allow-synthetic-for-testing`.
+
+### Implemented frozen-artifact decay behaviour
+
+Rolling origins refit, so they measure the fitting procedure. `frozen_horizon_windows(df, fitted_to=…, horizon_dates=1, step_dates=1, gap_days=0)` answers the other question — one table, fixed, judged further and further from the period it was counted from (ADR-0018):
+
+- **The cutoff is the artifact's own `trained_to`.** A caller cannot choose it, because a chosen cutoff lets dates the table was counted from be reported as evidence about it. An artifact that declares no fitted period is refused before any arithmetic.
+- **Two horizons minimum.** `MIN_HORIZONS = 2`, and a plan that cannot give two returns **no windows**, with the reason. One future block is a holdout, and a decay curve drawn through one point is a stability claim nothing measured.
+- **Nothing refits between horizons.** The cohorts, `min_sample_threshold`, `laplace_alpha` and any `calibration` block come from the artifact and are used unchanged on every horizon, through `build_estimator()` — the same loading gate the registry serves through — so a decay number and a served number describe one estimator.
+- **One frozen prevalence baseline.** It is computed once from the fittable rows at or before the cutoff. Recomputing it per horizon would move the yardstick toward the answer being judged; the report states which rows produced it and that it is this file's reading of the fitted population rather than the original snapshot.
+- **A booking spanning the cutoff invalidates the run.** Its outcome is already inside the table being judged, and the planner refuses the whole plan rather than dropping rows from the side under test.
+- **Drift is an ordering.** The result publishes first and last horizon values, their difference and the spread, and counts horizons that scored at all separately from horizons that lost to the frozen baseline. Coverage drift is reported as a reach fact, not an accuracy one.
+
+Reproduce it with `python -m railconfirm.training decay DATASET MANIFEST --artifact models/<version>.json --horizon-dates 2 --step-dates 2 --allow-synthetic-for-testing`. On the labelled synthetic fixture the same estimator that a single cutoff reports as event Brier 0.239487 against a 0.24 base rate scores 0.243482, 0.240300, 0.239411 across three two-date horizons and beats the frozen base rate in one of the three — the ordering is the finding, which is why the mean is not published as the headline.
 
 ### Implemented scoring
 
@@ -56,7 +69,7 @@ Reproduce it with `python -m railconfirm.training origins DATASET MANIFEST --min
 
 Fitting or scoring an artifact for a target it was not fitted for is refused rather than tolerated: `evaluate --target` is checked against the artifact's declared target, and `--target` accepts only the targets `TARGET_EVENTS` defines.
 
-Not implemented: empirical copula/correlation group models fitted on real data (ADR-0016 implements Poisson-binomial convolution and sequential queue-clearing bounds, scored in `score_partition()`), and evaluation of one *frozen* artifact against successive horizons (the rolling-origin path refits at each cutoff). No number produced by this code has come from approved real data.
+Not implemented: empirical copula/correlation group models fitted on real data (ADR-0016 implements Poisson-binomial convolution and sequential queue-clearing bounds, scored in `score_partition()`), and calibration measured within a cohort subgroup (ADR-0017 fits and scores one population-wide correction; ADR-0018 now shows whether that correction holds in later windows, not whether it holds inside a class or quota). No number produced by this code has come from approved real data.
 
 ## Baselines and candidates
 
