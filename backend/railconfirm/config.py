@@ -70,6 +70,18 @@ class Settings(BaseSettings):
     # Directory where model artifacts are stored (also Git-ignored by default).
     models_dir: Path = Path("models")
 
+    # Where the opt-in prediction history lives.
+    storage_dir: Path = Path("data/storage")
+
+    # ── Prediction history ─────────────────────────────────────────────────────
+    # Storing a report needs this switch *and* the caller's `persist` flag. A local
+    # tool that quietly accumulated ticket data would contradict its own privacy
+    # claim, so the default writes nothing at all.
+    persist_predictions: bool = False
+
+    # How long a stored report survives before a purge may remove it.
+    prediction_retention_days: int = 30
+
     # ── Inference ──────────────────────────────────────────────────────────────
     # Minimum sample threshold below which the baseline abstains.
     min_sample_threshold: int = 30
@@ -86,10 +98,20 @@ class Settings(BaseSettings):
     # Version tag for the currently loaded dataset.
     data_version: str = "none"
 
-    @field_validator("data_dir", "models_dir", mode="after")
+    @field_validator("data_dir", "models_dir", "storage_dir", mode="after")
     @classmethod
     def _anchor_directories(cls, value: Path) -> Path:
         return anchor_path(value)
+
+    @field_validator("prediction_retention_days", mode="after")
+    @classmethod
+    def _require_retention_floor(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError(
+                "RAILCONFIRM_PREDICTION_RETENTION_DAYS must be at least 1: history "
+                "without a retention floor is an accumulation of ticket data."
+            )
+        return value
 
     @field_validator("log_level", mode="after")
     @classmethod

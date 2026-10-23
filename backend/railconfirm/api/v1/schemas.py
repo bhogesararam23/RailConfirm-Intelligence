@@ -190,6 +190,15 @@ class PredictionRequest(BaseModel):
         min_length=1,
         max_length=MAX_PASSENGERS_PER_REQUEST,
     )
+    persist: bool = Field(
+        default=False,
+        description=(
+            "Ask the server to keep this report so it can be reopened later at "
+            "`/v1/predictions/{prediction_id}`. Honoured only when the server has "
+            "history enabled; `stored` in the response says whether it happened, and "
+            "a refusal appears in `limitations`."
+        ),
+    )
 
     @field_validator("prediction_at")
     @classmethod
@@ -321,6 +330,25 @@ class PredictionResponse(BaseModel):
             "population or include explicit OTHER/UNKNOWN categories."
         ),
     )
+    stored: bool = Field(
+        default=False,
+        description=(
+            "True only when this report was actually written to the server's history. "
+            "A request with `persist: true` against a server that keeps no history "
+            "returns `stored: false` with the reason in `limitations`."
+        ),
+    )
+    report_url: str | None = Field(
+        default=None,
+        description="Path to reopen this stored report, e.g. '/v1/predictions/<id>'.",
+    )
+    retention_expires_at: datetime | None = Field(
+        default=None,
+        description=(
+            "Offset-aware moment after which a stored report stops being retrievable. "
+            "None when nothing was stored."
+        ),
+    )
 
 
 # ── Error response ─────────────────────────────────────────────────────────────
@@ -361,4 +389,11 @@ class HealthResponse(BaseModel):
     limits: dict[str, int | str] = Field(
         default_factory=dict,
         description="Operational limits in force, for troubleshooting.",
+    )
+    prediction_history: dict[str, bool | int | str] = Field(
+        default_factory=dict,
+        description=(
+            "Whether this server keeps prediction reports, for how long, and how many "
+            "are stored. Empty when history is disabled — nothing is written by default."
+        ),
     )

@@ -21,6 +21,14 @@ import { AbstentionCard } from '@/components/ui/AbstentionCard';
 import { ProbabilityBar } from '@/components/ui/ProbabilityBar';
 import type { GroupOutcome, PassengerOutcome, PredictionResponse } from '@/lib/types';
 
+// Link needs a router context that does not exist under jsdom; a plain anchor keeps
+// the assertion about the href, which is the part the contract defines.
+vi.mock('next/link', () => ({
+  default: ({ href, children }: { href: string; children: React.ReactNode }) => (
+    <a href={href}>{children}</a>
+  ),
+}));
+
 const supportedOutcome: PassengerOutcome = {
   passenger_id: '8f4a0f4c-0000-0000-0000-000000000001',
   original_status: 'GNWL/45',
@@ -64,6 +72,11 @@ const group: GroupOutcome = {
   abstention_reason: null,
 };
 
+const secondSupportedOutcome: PassengerOutcome = {
+  ...supportedOutcome,
+  passenger_id: '8f4a0f4c-0000-0000-0000-000000000002',
+};
+
 const response = (overrides: Partial<PredictionResponse> = {}): PredictionResponse => ({
   prediction_id: 'a1b2c3d4-0000-0000-0000-000000000009',
   target: 'final_chart_cnf',
@@ -81,6 +94,9 @@ const response = (overrides: Partial<PredictionResponse> = {}): PredictionRespon
   limitations: ['RailConfirm is an independent research tool and not an official IRCTC service.'],
   warnings: [],
   outcome_classes: 'CNF, RAC, WL, CANCELLED, OTHER — mutually exclusive and exhaustive.',
+  stored: false,
+  report_url: null,
+  retention_expires_at: null,
   ...overrides,
 });
 
@@ -187,7 +203,7 @@ describe('PredictionResult', () => {
       <PredictionResult
         result={response({
           passenger_count: 2,
-          passenger_outcomes: [supportedOutcome, supportedOutcome],
+          passenger_outcomes: [supportedOutcome, secondSupportedOutcome],
           group_outcome: group,
         })}
         onReset={vi.fn()}
@@ -207,12 +223,49 @@ describe('PredictionResult', () => {
     expect(container.textContent).toContain('1 of 1 passenger has an estimate.');
   });
 
+  it('offers a reopen link only when the backend kept the report', () => {
+    const kept = render(
+      <PredictionResult
+        result={response({
+          stored: true,
+          report_url: '/v1/predictions/a1b2c3d4-0000-0000-0000-000000000009',
+          retention_expires_at: '2026-12-17T02:30:00Z',
+        })}
+        onReset={vi.fn()}
+      />,
+    );
+    const link = kept.getByRole('link', { name: 'this report' });
+    expect(link).toHaveAttribute('href', '/prediction/a1b2c3d4-0000-0000-0000-000000000009');
+    expect(kept.container.textContent).toContain('Kept on this machine.');
+    expect(kept.container.textContent).toContain('retrievable until');
+    kept.unmount();
+
+    const notKept = render(<PredictionResult result={response()} onReset={vi.fn()} />);
+    expect(notKept.queryByRole('link', { name: 'this report' })).not.toBeInTheDocument();
+    expect(notKept.container.textContent).not.toContain('Kept on this machine.');
+  });
+
+  it('never claims a report was kept from the request alone', () => {
+    // A caller that asked to persist but was refused must not see a saved banner.
+    const refused = response({
+      stored: false,
+      report_url: null,
+      retention_expires_at: null,
+      limitations: [
+        'This server keeps no prediction history (RAILCONFIRM_PERSIST_PREDICTIONS is not enabled), so the report was not stored.',
+      ],
+    });
+    const { container } = render(<PredictionResult result={refused} onReset={vi.fn()} />);
+    expect(container.textContent).not.toContain('Kept on this machine.');
+    expect(container.textContent).toContain('keeps no prediction history');
+  });
+
   it('uses the plural form for a group', () => {
     const { container } = render(
       <PredictionResult
         result={response({
           passenger_count: 2,
-          passenger_outcomes: [supportedOutcome, supportedOutcome],
+          passenger_outcomes: [supportedOutcome, secondSupportedOutcome],
           group_outcome: group,
         })}
         onReset={vi.fn()}

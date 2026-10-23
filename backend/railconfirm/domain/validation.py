@@ -159,4 +159,7 @@ class ReasonCode:
     UNSUPPORTED_STATUS = "unsupported_status"
     INSUFFICIENT_SAMPLE = "insufficient_sample"
     INVALID_INPUT = "invalid_input"
+    NOT_FOUND = "not_found"
+    HISTORY_DISABLED = "history_disabled"
+    STORAGE_UNAVAILABLE = "storage_unavailable"
     INTERNAL_ERROR = "INTERNAL_ERROR"

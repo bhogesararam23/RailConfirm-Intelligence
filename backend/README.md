@@ -136,10 +136,28 @@ timestamp so it can be pasted and still work.
 
 The full field list, request constraints and error envelope are in `docs/architecture/API_CONTRACT.md`.
 
+### `GET /v1/predictions/{prediction_id}`
+
+Reopens a report the server kept (ADR-0012). Storage needs both
+`RAILCONFIRM_PERSIST_PREDICTIONS=true` and `"persist": true` on the original request; the
+response's `stored` field says what actually happened. Nothing is recomputed on reopen, so
+the numbers arrive with the `model_version`, `registry_status` and limitations they were
+served with.
+
+| Result | When |
+|---|---|
+| `200` | A stored report exists for the id and is inside its retention window |
+| `404 not_found` | No such id, or it aged out |
+| `404 history_disabled` | This server keeps no history |
+
+An id shaped like a PNR is answered with `not_found` and a message saying reports are
+reopened by the id the server returned. This endpoint does not look tickets up.
+
 ### `GET /v1/health`
 
 Returns API health, the configured version identifiers, whether a validated and
-promoted artifact could serve a prediction, and the limits in force.
+promoted artifact could serve a prediction, the limits in force, and whether this server
+keeps prediction history.
 
 ```json
 {
@@ -174,10 +192,13 @@ backend/
       exceptions.py       — Domain exception hierarchy
     api/
       app.py              — FastAPI application factory
+      problems.py         — Endpoint-level problems carried into the error envelope
       v1/
-        predictions.py    — POST /v1/predictions/manual
+        predictions.py    — POST /v1/predictions/manual, GET /v1/predictions/{id}
         health.py         — GET /v1/health
         schemas.py        — Request/response Pydantic models
+    storage/
+      predictions.py      — Opt-in SQLite history: retention, denied-key refusal
     inference/
       engine.py           — Abstention-first dispatch
       artifacts.py        — JSON model artifact format and validation
@@ -213,6 +234,9 @@ All configuration uses environment variables with the `RAILCONFIRM_` prefix. Cop
 | `RAILCONFIRM_MIN_SAMPLE_THRESHOLD` | `30` | Smallest cohort the baseline will report an estimate for |
 | `RAILCONFIRM_MAX_ARTIFACT_BYTES` | `4194304` | Largest artifact the registry will read |
 | `RAILCONFIRM_DATA_VERSION` | `none` | Dataset version reported by `/v1/health` |
+| `RAILCONFIRM_STORAGE_DIR` | `data/storage` | Git-ignored directory for the opt-in history file |
+| `RAILCONFIRM_PERSIST_PREDICTIONS` | `false` | Whether this server keeps reports at all; a request still has to ask |
+| `RAILCONFIRM_PREDICTION_RETENTION_DAYS` | `30` | How long a kept report stays retrievable; minimum 1 |
 
 Relative paths are resolved against the repository root, not the current working directory, so the same artifact is loaded whichever way the server is started.
 

@@ -14,9 +14,9 @@ Do not assume any of the following exist, because none do: an accuracy figure, a
 
 | Exists and is tested | Exists but is unverified against real data | Does not exist |
 |---|---|---|
-| Domain contracts, status mapping v1.1.0, temporal integrity rules, abstention reasons, API contract and error envelope, dataset loader/validator/manifest/verification, chronological splitting, artifact registry and promotion gate, baseline fitting and target-event evaluation with deterministic reports, frontend written and tested against the shipped contract, CI | Historical-frequency baseline (never loaded with real data), the training and evaluation pipeline (never run on approved data), group outcomes (independence baseline only) | Calibration fitting, rolling-origin evaluation, dependence-aware group model, persistence, prediction history, approved dataset, promoted artifact |
+| Domain contracts, status mapping v1.1.0, temporal integrity rules, abstention reasons, API contract and error envelope (including unrouted paths), dataset loader/validator/manifest/verification, chronological splitting, artifact registry and promotion gate, baseline fitting and target-event evaluation with deterministic reports, opt-in prediction history, frontend written and tested against the shipped contract, CI | Historical-frequency baseline (never loaded with real data), the training and evaluation pipeline (never run on approved data), group outcomes (independence baseline only), prediction history (never enabled by default, so untested against concurrent real users) | Calibration fitting, rolling-origin evaluation, dependence-aware group model, label feedback on stored reports, approved dataset, promoted artifact |
 
-461 backend tests at 95.78% branch coverage, 74 of them on the training pipeline; 81 frontend tests. CI was green on `main` at the last recorded push — re-check rather than trust this line.
+502 backend tests at 95.91% branch coverage, 93 frontend tests. CI was green on `main` at the last recorded push — re-check rather than trust this line.
 
 ## Read first
 
@@ -26,7 +26,7 @@ Do not assume any of the following exist, because none do: an accuracy figure, a
 4. `docs/ROADMAP.md`
 5. `docs/architecture/API_CONTRACT.md` — matches the shipped surface
 6. `docs/data/DATA_CONTRACT.md` and `docs/data/DATASET_INTAKE_CHECKLIST.md`
-7. ADR index, especially ADR-0007 (local-first boundary), ADR-0008 (future integration phases), ADR-0009 (artifact trust boundaries), ADR-0010 (declared check configurations) and ADR-0011 (training gate and target-event scoring)
+7. ADR index, especially ADR-0007 (local-first boundary), ADR-0008 (future integration phases), ADR-0009 (artifact trust boundaries), ADR-0010 (declared check configurations), ADR-0011 (training gate and target-event scoring) and ADR-0012 (prediction history and its retention rules)
 8. `docs/research/EVALUATION_PROTOCOL.md` before writing any metric code
 
 ## Working here
@@ -47,7 +47,14 @@ cd frontend && npm ci && npm test && npm run type-check && npm run lint && npm r
 Run the app locally: `uvicorn railconfirm.api.app:app --port 8000` from `backend/`, then
 `npm run dev` from `frontend/`. The backend allows CORS only from origins listed in
 `RAILCONFIRM_CORS_ALLOWED_ORIGINS`; `:3000` is the default and is a Grafana on the
-maintainer's machine, so pick a different frontend port and list that origin.
+maintainer's machine, so pick a different frontend port and list that origin. The frontend
+inlines `NEXT_PUBLIC_API_URL` at build time, so export it before starting `next dev` and
+restart it after changing the backend port.
+
+Prediction history is off by default. To exercise `/prediction/[id]`, start the backend with
+`RAILCONFIRM_PERSIST_PREDICTIONS=true` (and a `RAILCONFIRM_STORAGE_DIR` outside the repository
+if you do not want `data/storage/` to appear locally) and send `"persist": true` — the
+checkbox on the form does that. `GET /v1/health` shows which state the server is in.
 
 ## Highest-value next tasks
 
@@ -67,8 +74,12 @@ In order, based on the actual repository:
    description today; `calibrated` is always false and the report says so.
 4. **Dependence-aware group outcomes** (ADR-0003). The engine still multiplies under an
    independence assumption and labels it; group-event metrics are not scored.
-5. **Persistence** only when a real product behaviour needs it. Nothing is stored today,
-   which is why `/prediction/[id]` is not implemented.
+5. **Label feedback on stored reports.** History now exists, so "what did the chart
+   actually say?" has something to attach to. Design the consent, retention, sampling-bias
+   and verification story before writing the route — ADR-0012 lists this as a consequence
+   of storage, not as permission to collect.
+6. **Per-row deletion** for history, and any access boundary that would let history be
+   enabled by default. Neither is needed while the feature is off and single-operator.
 
 ## Non-negotiable constraints
 
@@ -79,6 +90,7 @@ In order, based on the actual repository:
 - Do not claim group outcomes from independent multiplication as validated.
 - Show a structured abstention when no validated model or source is available; never return `200 OK` with a fabricated probability.
 - Keep synthetic fixtures labelled and out of any real-world performance claim.
+- Do not make storage happen by one switch. A report is kept only when the server enables history *and* the request asks; do not default `RAILCONFIRM_PERSIST_PREDICTIONS` on, do not store by default in tests that a reader might mistake for the product, and never widen `DENIED_KEYS` without a recorded privacy decision.
 - Update the changelog and session log; create a sequential ADR for material decisions.
 - Prefer meaningful commits; never manufacture commit count.
 - Report a command's actual exit code and output. A local green run is not evidence about CI: they resolve different package versions, which is why `pyproject.toml` now pins the tools.

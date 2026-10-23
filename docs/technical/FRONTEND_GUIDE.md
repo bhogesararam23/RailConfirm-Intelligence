@@ -7,16 +7,23 @@ Status: behaviour and UX contract, with an implementation note on what `frontend
 Implemented:
 
 - `/` — manual prediction entry and the report for that request.
+- `/prediction/[id]` — a report the user chose to keep, reopened by the internal id the
+  API returned. It renders the stored response and must not recompute anything: a reopened
+  report is evidence about what was said then, so it carries the model version, registry
+  state and limitations it was served with, plus the moment it stops being retrievable.
+  Three outcomes need distinct copy, because they call for different actions: never
+  stored, aged out of retention, and this server keeps no history at all.
 - `/about/methodology` — target, data and uncertainty explanation.
 - `/about/data` — source and data-use boundaries.
 
 Not implemented, deliberately:
 
-- `/prediction/[id]` — a saved, versioned report needs persistence, and nothing is
-  stored in the current build. Until a prediction outlives its request, a route that
-  looked it up would be decoration, so the report lives on `/` and disappears on reset.
 - `/tracking/[trackingId]` — belongs to roadmap Phases 8–10; must stay unavailable
   until authorized tracking exists.
+
+Saving is opt-in twice over (ADR-0012): the server must have history enabled and the
+request must ask to be kept. The form therefore states that the response says whether the
+report was actually kept, rather than implying the checkbox controls storage on its own.
 
 Do not put PNRs or raw private source identifiers in browser paths or query strings.
 

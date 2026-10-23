@@ -279,6 +279,32 @@ def test_error_envelope_carries_the_request_id(client: TestClient):
     assert response.headers["X-Request-ID"] == "trace-42"
 
 
+def test_an_unrouted_path_answers_with_the_envelope_not_starlette(client: TestClient):
+    """The contract says every error is an envelope; a 404 is the commonest error.
+
+    `/v1/predictions/{id}` is a real route, so an unrouted path has to sit outside
+    it — otherwise this asserts the history endpoint rather than the router.
+    """
+    response = client.get("/v1/reportings")
+    assert response.status_code == 404
+    body = response.json()
+    assert set(body) >= {"error", "details", "request_id"}
+    assert body["details"][0]["code"] == "not_found"
+    assert "detail" not in body
+
+
+def test_a_wrong_method_answers_with_the_envelope_too(client: TestClient):
+    response = client.delete("/v1/health")
+    assert response.status_code == 405
+    body = response.json()
+    assert set(body) >= {"error", "details", "request_id"}
+    assert body["details"][0]["code"] == "invalid_input"
+
+
+def test_health_reports_no_history_by_default(client: TestClient):
+    assert client.get("/v1/health").json()["prediction_history"] == {}
+
+
 def test_health_reports_registry_state_and_limits(client: TestClient):
     body = client.get("/v1/health").json()
     assert body["status"] == "ok"
@@ -349,6 +375,11 @@ def test_openapi_documents_the_verified_fields(client: TestClient):
     ref = request_body["content"]["application/json"]["schema"]["$ref"]
     name = ref.rsplit("/", 1)[-1]
     props = schema["components"]["schemas"][name]["properties"]
-    assert set(props) == {"journey", "prediction_at", "target", "passengers"}
+    assert set(props) == {"journey", "prediction_at", "target", "passengers", "persist"}
     assert "basis" in schema["components"]["schemas"]["PassengerOutcomeResponse"]["properties"]
-    assert "registry_status" in schema["components"]["schemas"]["PredictionResponse"]["properties"]
+    response_props = schema["components"]["schemas"]["PredictionResponse"]["properties"]
+    assert "registry_status" in response_props
+    for field in ("stored", "report_url", "retention_expires_at"):
+        assert field in response_props, field
+    assert "/v1/predictions/{prediction_id}" in schema["paths"]
+    assert "prediction_history" in schema["components"]["schemas"]["HealthResponse"]["properties"]

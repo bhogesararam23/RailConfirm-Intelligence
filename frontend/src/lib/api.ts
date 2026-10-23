@@ -171,6 +171,24 @@ export function checkHealth(timeoutMs = REQUEST_TIMEOUT_MS): Promise<HealthRespo
   return requestJson<HealthResponse>('/v1/health', { method: 'GET' }, timeoutMs);
 }
 
+/**
+ * Reopen a report the backend kept.
+ *
+ * A 404 here has three different meanings — never stored, past retention, or this
+ * server keeps no history — and the backend's error code says which, so the caller
+ * must not guess.
+ */
+export function fetchStoredPrediction(
+  predictionId: string,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+): Promise<PredictionResponse> {
+  return requestJson<PredictionResponse>(
+    `/v1/predictions/${encodeURIComponent(predictionId)}`,
+    { method: 'GET' },
+    timeoutMs,
+  );
+}
+
 /** The origin this client will call, for display and for the privacy statement. */
 export function configuredApiUrl(): string {
   return resolveApiBase();

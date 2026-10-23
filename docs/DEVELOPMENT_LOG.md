@@ -566,3 +566,93 @@ writing more code; they are gated on a rights-and-data decision only the maintai
 Documentation only. `python scripts/check_repository_hygiene.py` → passed (required docs
 present, relative links resolve). No code changed, so the backend and frontend suites were
 not re-run; the last recorded green CI for `main` is run `39890962780` at 461 tests.
+
+## 2026-10-23 — Opt-in prediction history, and the defects only a running app shows
+
+### Scope
+
+Milestone G: persistence and prediction history, so `/prediction/[id]` — documented in the
+frontend guide from the beginning and previously decoration — has something behind it.
+Decided in ADR-0012. The design constraint that shaped everything: this is the one feature
+that can store submitted ticket data, so it must be impossible to enable by accident.
+
+New: `backend/railconfirm/storage/`, `backend/tests/storage/`,
+`backend/tests/api/test_prediction_history.py`,
+`frontend/src/app/prediction/[id]/page.tsx`,
+`frontend/src/components/prediction/StoredPredictionReport.tsx`,
+`docs/adr/ADR-0012-…`.
+Changed: `api/app.py`, `api/problems.py` (new), `api/dependencies.py`, `api/v1/predictions.py`,
+`api/v1/health.py`, `api/v1/schemas.py`, `config.py`, `domain/validation.py`, the frontend
+types/client/form/result, `.gitignore`, `.env.example`, and the status, contract, storage,
+security, frontend-guide and README documents.
+
+### How it works
+
+Two independent switches. `RAILCONFIRM_PERSIST_PREDICTIONS` (default false) decides whether
+a server keeps history at all; `"persist": true` on the request decides whether one report
+goes in. The response answers with `stored`, `report_url` and `retention_expires_at`, so the
+client never has to infer a save from its own request. `GET /v1/predictions/{id}` returns the
+stored response verbatim — nothing is recomputed, because a reopened report is evidence about
+what was said then. Retention hides before it deletes: an expired id stops resolving
+immediately, and `purge_expired()` removes the rows. `DENIED_KEYS` plus a PNR-shaped-value
+scan run at the write, so a future field cannot begin storing a name or a PNR quietly. A
+10-digit id on the reopen route is refused outright: that endpoint must not become a ticket
+tracker by convenience.
+
+### Five defects, all found by running it
+
+`pytest` was green for every one of these. They surfaced when the real browser talked to the
+real server, which is the reason this repository asks for both.
+
+1. **Every real save was refused.** The store required `recorded_at >= prediction_at`. The
+   form defaults the as-of moment to 24 hours ahead — a legitimate question — so the browser
+   got `stored: false` and a refusal on every attempt. That ordering was my invention, not a
+   product rule: the domain already validates `prediction_at` against the journey date and
+   the observation times, which is where the leakage rule actually lives. Removed; retention
+   runs from the save; a test now pins the future-as-of case.
+2. **An unrouted path answered `{"detail":"Not Found"}`** instead of the documented
+   `{error, details[], request_id}` envelope, making a contract sentence false for the
+   commonest client mistake. A `StarletteHTTPException` handler now routes 404/405/5xx
+   through the same envelope.
+3. **`SQLite objects created in a thread can only be used in that same thread.`** The factory
+   opens the store at startup; FastAPI serves on other threads. One shared connection behind
+   a lock with `check_same_thread=False`, plus a six-thread write test.
+4. **A naive timestamp was converted before it was checked** — `astimezone()` assumes local
+   time for a naive value, which is the guess the store exists to refuse. Awareness is now
+   checked first.
+5. **`retention_expires_at` differed between the save and the reopen** (microseconds in
+   memory, seconds on disk). Values are normalised through the format they are read back in.
+
+### Checks run and results
+
+- `python -m pytest tests/ -q --cov=railconfirm --cov-fail-under=90` → **502 passed**,
+  coverage **95.91%**; `ruff check` and `mypy` clean (38 source files).
+- `npm test` → **93 passed** (5 files); `npm run type-check`, `npm run lint` clean;
+  `npm run build` compiles and lists `/prediction/[id]` as a dynamic route.
+- `python scripts/check_repository_hygiene.py` → passed.
+- **Real HTTP** (`uvicorn` on `127.0.0.1:8033`, history enabled, retention 7 days): a request
+  without `persist` → `stored: false`, nothing written; with `persist` → `stored: true`,
+  `report_url`, expiry; reopen → every reported field identical to what was served; unsaved
+  id → `404 not_found`; PNR-shaped id → `404 not_found` with the "not by a PNR" message;
+  health → `{'enabled': True, 'retention_days': 7, 'stored_reports': 1}`. A second server
+  process on the same file reopened the first one's report, which is the check that the
+  database, not the process, is the record.
+- **Real browser** (`next dev` on `localhost:3123`): ticked "Keep this report", submitted,
+  and the result page rendered "Kept on this machine. Reopen it later at this report —
+  retrievable until 30 Oct 2026, 09:20 IST". Following the link showed the stored report with
+  the "as it was served" banner, `no_model_v0`, `no_active_version` and the abstention reason.
+  An invented id rendered "Report not available" with the never-stored-or-aged-out wording and
+  the request id, plus Try again / Start a new estimate.
+- The first browser attempt is how defect 1 was found: the page showed no saved banner because
+  the backend had refused the save, and the reason was in the response's `limitations`.
+
+### Remaining work
+
+1. Intake a real candidate dataset — unchanged, still the scientific blocker
+   (`docs/data/CANDIDATE_DATASET_REVIEW.md` records the 2026-10-23 search).
+2. A label-feedback route: history makes "what did the chart actually say?" possible, but
+   collecting that needs its own consent, retention and sampling-bias design (ADR-0012 lists
+   it as a consequence, not as a next step to code up now).
+3. Per-row deletion and any authenticated access boundary, both deferred until history could
+   be enabled by default or exposed beyond one machine.
+4. Rolling-origin evaluation, calibration fitting, dependence-aware group outcomes.

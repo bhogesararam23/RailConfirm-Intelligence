@@ -104,7 +104,8 @@ repository is approved, so no fit has ever run on real data.
   - Validator separating structural validity, technical eligibility and approval, with per-reason row accounting.
   - Deterministic SHA-256 manifests that follow `DATASET_MANIFEST_TEMPLATE.yaml`, plus verification that re-hashes and recounts the dataset.
   - Chronological splitting that reports an inability to evaluate rather than returning an empty test set.
-- **Web Interface (`frontend/`):** journey and target entry, dynamic passenger rows (1–6), observed and estimated status shown separately, null-safe probability rendering with all five outcome classes, evidence cohort and sample size, per-reason abstention text, provenance block, skip link and labelled controls.
+- **Web Interface (`frontend/`):** journey and target entry, dynamic passenger rows (1–6), observed and estimated status shown separately, null-safe probability rendering with all five outcome classes, evidence cohort and sample size, per-reason abstention text, provenance block, skip link and labelled controls. `/prediction/[id]` reopens a report the user chose to keep, as it was served.
+- **Prediction history (`backend/railconfirm/storage/`, ADR-0012):** off by default and opt-in per request. When both switches are on, the served report is kept in one local SQLite file with a retention window, and reopening it returns the numbers and model version it was produced with. The write refuses a payload carrying a passenger-name key or a PNR-shaped value.
 
 ## Principles
 

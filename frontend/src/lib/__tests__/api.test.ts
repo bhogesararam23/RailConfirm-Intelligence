@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiFailure, checkHealth, configuredApiUrl, isLoopbackApi, submitPrediction } from '@/lib/api';
+import {
+  ApiFailure,
+  checkHealth,
+  configuredApiUrl,
+  fetchStoredPrediction,
+  isLoopbackApi,
+  submitPrediction,
+} from '@/lib/api';
 import type { PredictionRequest } from '@/lib/types';
 
 const request: PredictionRequest = {
@@ -123,6 +130,40 @@ describe('checkHealth', () => {
       }),
     );
     await expect(checkHealth()).resolves.toMatchObject({ model_available: false });
+  });
+});
+
+describe('fetchStoredPrediction', () => {
+  const id = 'a1b2c3d4-0000-0000-0000-000000000009';
+
+  it('requests the stored report by its internal id', async () => {
+    fetchMock().mockResolvedValue(jsonResponse(200, { prediction_id: id, stored: true }));
+    await expect(fetchStoredPrediction(id)).resolves.toMatchObject({ stored: true });
+    const [url, init] = fetchMock().mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe(`${configuredApiUrl()}/v1/predictions/${id}`);
+    expect(init.method).toBe('GET');
+  });
+
+  it('keeps the backend code that distinguishes the three kinds of missing report', async () => {
+    fetchMock().mockResolvedValue(
+      jsonResponse(404, {
+        error: 'This server keeps no prediction history.',
+        details: [{ code: 'history_disabled', message: 'history disabled' }],
+        request_id: 'req-7',
+      }),
+    );
+    const failure = await fetchStoredPrediction(id).catch((error) => error);
+    expect(failure.kind).toBe('http');
+    expect(failure.status).toBe(404);
+    expect(failure.code).toBe('history_disabled');
+    expect(failure.requestId).toBe('req-7');
+  });
+
+  it('encodes an id that contains path characters', async () => {
+    fetchMock().mockResolvedValue(jsonResponse(404, { error: 'no', details: [] }));
+    await fetchStoredPrediction('a/b').catch(() => undefined);
+    const [url] = fetchMock().mock.calls[0] as unknown as [string];
+    expect(url).toBe(`${configuredApiUrl()}/v1/predictions/a%2Fb`);
   });
 });
 

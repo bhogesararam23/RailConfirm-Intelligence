@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import Link from 'next/link';
 import type { PredictionResponse } from '@/lib/types';
 import { PassengerOutcomeCard } from './PassengerOutcomeCard';
 import { GroupOutcomeCard } from './GroupOutcomeCard';
@@ -76,6 +77,22 @@ export function PredictionResult({ result, onReset }: PredictionResultProps) {
             <code className="break-all font-mono">{result.prediction_id}</code>
           </Row>
         </dl>
+
+        {result.stored && (
+          <p className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+            <span className="font-semibold">Kept on this machine.</span> Reopen it later
+            at{' '}
+            <Link
+              href={`/prediction/${result.prediction_id}`}
+              className="underline decoration-emerald-400 underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700"
+            >
+              this report
+            </Link>
+            {result.retention_expires_at
+              ? ` — retrievable until ${formatTimestamp(result.retention_expires_at)}.`
+              : '.'}
+          </p>
+        )}
       </div>
 
       <div className="space-y-4">

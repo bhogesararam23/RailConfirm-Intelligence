@@ -42,6 +42,7 @@ export default function HomePage() {
   const [journey, setJourney] = useState<JourneyInput>(defaultJourney);
   const [predictionLocal, setPredictionLocal] = useState<string>(defaultPredictionLocal);
   const [target, setTarget] = useState<PredictionTarget>('final_chart_cnf');
+  const [persist, setPersist] = useState(false);
   const [localErrors, setLocalErrors] = useState<Record<string, string>>({});
   const [serverErrors, setServerErrors] = useState<Record<string, string>>({});
 
@@ -99,6 +100,7 @@ export default function HomePage() {
       prediction_at: predictionAt,
       target,
       passengers: toPassengerInputs(rows),
+      persist,
     };
 
     await submit(request);
@@ -210,35 +212,55 @@ export default function HomePage() {
             errors={passengerErrorsByIndex}
           />
 
-          <div className="flex flex-col items-start justify-between gap-3 pt-2 sm:flex-row sm:items-center">
-            <span className="text-xs text-gray-500">
-              {isLoopbackApi() ? (
-                <>
-                  Requests go to {configuredApiUrl()} on this machine only. Nothing is
-                  sent to a third-party service.
-                </>
-              ) : (
-                <>
-                  Requests are sent to the configured backend at{' '}
-                  {configuredApiUrl()}, which is not a loopback address. The journey
-                  and statuses you enter leave this device.
-                </>
-              )}
-            </span>
-            <button
-              type="submit"
-              disabled={state === 'loading' || rows.length > MAX_PASSENGERS}
-              className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:bg-blue-400"
-            >
-              {state === 'loading' ? (
-                <>
-                  <LoadingSpinner size="sm" />
-                  Requesting estimate…
-                </>
-              ) : (
-                'Request estimate'
-              )}
-            </button>
+          <div className="space-y-3 pt-2">
+            <div className="flex items-start gap-2">
+              <input
+                id="keep-report"
+                type="checkbox"
+                checked={persist}
+                onChange={(event) => setPersist(event.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
+              />
+              <label htmlFor="keep-report" className="text-xs text-gray-700">
+                Keep this report on this machine so I can reopen it later.
+                <span className="block text-[11px] text-gray-500">
+                  Storage happens only if this backend has history enabled, and a kept
+                  report stops being retrievable after its retention window. The response
+                  below says whether it was actually kept.
+                </span>
+              </label>
+            </div>
+
+            <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
+              <span className="text-xs text-gray-500">
+                {isLoopbackApi() ? (
+                  <>
+                    Requests go to {configuredApiUrl()} on this machine only. Nothing is
+                    sent to a third-party service.
+                  </>
+                ) : (
+                  <>
+                    Requests are sent to the configured backend at{' '}
+                    {configuredApiUrl()}, which is not a loopback address. The journey
+                    and statuses you enter leave this device.
+                  </>
+                )}
+              </span>
+              <button
+                type="submit"
+                disabled={state === 'loading' || rows.length > MAX_PASSENGERS}
+                className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:bg-blue-400"
+              >
+                {state === 'loading' ? (
+                  <>
+                    <LoadingSpinner size="sm" />
+                    Requesting estimate…
+                  </>
+                ) : (
+                  'Request estimate'
+                )}
+              </button>
+            </div>
           </div>
         </form>
       )}

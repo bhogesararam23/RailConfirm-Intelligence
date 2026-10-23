@@ -39,6 +39,11 @@ data/private/
 data/interim/
 data/processed/
 data/validated/
+# Opt-in prediction history: a stored report is ticket data, never a committed file.
+data/storage/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
 artifacts/
 models/
 *.joblib

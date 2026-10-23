@@ -18,7 +18,8 @@ from typing import Annotated, TypedDict
 
 from fastapi import APIRouter, Depends
 
-from railconfirm.api.dependencies import get_engine
+from railconfirm.api.dependencies import get_engine, get_prediction_store
+from railconfirm.api.problems import ApiProblem
 from railconfirm.api.v1.schemas import (
     GroupOutcomeResponse,
     PassengerOutcomeResponse,
@@ -27,9 +28,21 @@ from railconfirm.api.v1.schemas import (
 )
 from railconfirm.domain.journey import make_journey
 from railconfirm.domain.passenger import StatusObservation, make_observation
+from railconfirm.domain.validation import ReasonCode
 from railconfirm.inference.engine import InferenceEngine
+from railconfirm.storage.predictions import PredictionStorageError, PredictionStore
 
 logger = logging.getLogger(__name__)
+
+HISTORY_DISABLED_MESSAGE = (
+    "This server keeps no prediction history (RAILCONFIRM_PERSIST_PREDICTIONS is not "
+    "enabled), so the report was not stored and cannot be reopened later."
+)
+_PNR_SHAPE_HINT = "^[1-9][0-9]{9}$"
+
+# The route prefix is part of the stored report_url: a client that follows it must land
+# on this same router.
+REPORT_PATH = "/v1/predictions/"
 
 
 class PassengerInferenceInput(TypedDict):
@@ -58,6 +71,7 @@ router = APIRouter()
 async def predict_manual(
     request: PredictionRequest,
     engine: Annotated[InferenceEngine, Depends(get_engine)],
+    store: Annotated[PredictionStore | None, Depends(get_prediction_store)],
 ) -> PredictionResponse:
     """Handle a manual prediction request end-to-end."""
     # ── Build domain journey ───────────────────────────────────────────────────
@@ -167,7 +181,7 @@ async def predict_manual(
             ),
         )
 
-    return PredictionResponse(
+    response = PredictionResponse(
         prediction_id=prediction.prediction_id,
         target=prediction.target.value,
         target_definition=(
@@ -192,4 +206,127 @@ async def predict_manual(
             "CNF, RAC, WL, CANCELLED, OTHER — mutually exclusive and exhaustive "
             "over the eligible population. Probabilities sum to 1.0 per passenger."
         ),
+    )
+    if not request.persist:
+        return response
+    return _store_report(
+        response,
+        store=store,
+        prediction_at=prediction.prediction_at,
+        target=prediction.target.value,
+    )
+
+
+def _store_report(
+    response: PredictionResponse,
+    *,
+    store: PredictionStore | None,
+    prediction_at: datetime,
+    target: str,
+) -> PredictionResponse:
+    """Write the report the caller asked to keep, and say plainly whether it was kept.
+
+    A storage failure never turns into a failed prediction: the estimate is still
+    delivered, and the limitation records that no reopenable copy exists.
+    """
+    if store is None:
+        return response.model_copy(
+            update={"limitations": [*response.limitations, HISTORY_DISABLED_MESSAGE]}
+        )
+    try:
+        stored = store.save(
+            prediction_id=response.prediction_id,
+            payload=response.model_dump(mode="json"),
+            target=target,
+            model_version=response.model_version,
+            prediction_at=prediction_at,
+        )
+    except PredictionStorageError as exc:
+        logger.warning("prediction not stored: id=%s reason=%s", response.prediction_id, exc)
+        return response.model_copy(
+            update={
+                "limitations": [
+                    *response.limitations,
+                    f"History is enabled but this report was not stored: {exc}",
+                ]
+            }
+        )
+    logger.info(
+        "prediction stored: id=%s expires=%s retention_days=%d",
+        stored.prediction_id,
+        stored.expires_at.isoformat(),
+        store.retention_days,
+    )
+    return response.model_copy(
+        update={
+            "stored": True,
+            "report_url": f"{REPORT_PATH}{stored.prediction_id}",
+            "retention_expires_at": stored.expires_at,
+        }
+    )
+
+
+@router.get(
+    "/predictions/{prediction_id}",
+    response_model=PredictionResponse,
+    summary="Reopen a stored prediction report",
+    description=(
+        "Returns the report that was served for this internal id, including the model "
+        "version, registry state and limitations that came with it. Requires prediction "
+        "history to be enabled on this server. PNR numbers are not accepted here."
+    ),
+    tags=["predictions"],
+)
+async def read_prediction(
+    prediction_id: str,
+    store: Annotated[PredictionStore | None, Depends(get_prediction_store)],
+) -> PredictionResponse:
+    """Serve a stored report by internal id."""
+    if store is None:
+        raise ApiProblem(
+            status_code=404,
+            code=ReasonCode.HISTORY_DISABLED,
+            message="This server keeps no prediction history.",
+        )
+    if len(prediction_id) == 10 and prediction_id.isdigit() and prediction_id[0] != "0":
+        # The id in a URL is the one place a user might paste a PNR. Answering that
+        # question here would make this endpoint a ticket tracker.
+        raise ApiProblem(
+            status_code=404,
+            code=ReasonCode.NOT_FOUND,
+            message=(
+                "Reports are reopened by the internal id the server returned, not by a "
+                "PNR number."
+            ),
+        )
+    stored = store.get(prediction_id, now=datetime.now(UTC))
+    if stored is None:
+        raise ApiProblem(
+            status_code=404,
+            code=ReasonCode.NOT_FOUND,
+            message=(
+                "No stored report has this id. Either it was never stored, its retention "
+                "window has closed, or the id is wrong."
+            ),
+        )
+    try:
+        report = PredictionResponse.model_validate(stored.payload)
+    except ValueError as exc:
+        raise ApiProblem(
+            status_code=500,
+            code=ReasonCode.STORAGE_UNAVAILABLE,
+            message=f"The stored report for this id does not match the API contract: {exc}",
+        ) from exc
+    if report.prediction_id != prediction_id:
+        raise ApiProblem(
+            status_code=500,
+            code=ReasonCode.STORAGE_UNAVAILABLE,
+            message="The stored report disagrees with the id it is filed under.",
+        )
+    return report.model_copy(
+        update={
+            "stored": True,
+            "report_url": f"{REPORT_PATH}{prediction_id}",
+            "retention_expires_at": stored.expires_at,
+        }
     )

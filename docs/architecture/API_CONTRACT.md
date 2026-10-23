@@ -23,8 +23,9 @@ Status: describes the implemented `/v1` surface of `backend/railconfirm/api/`. F
 
 | Route | Purpose |
 |---|---|
-| `GET /v1/health` | Liveness plus model availability and the limits in force |
+| `GET /v1/health` | Liveness plus model availability, the limits in force and the history state |
 | `POST /v1/predictions/manual` | Manual journey and passenger input, per-passenger and group outcomes |
+| `GET /v1/predictions/{prediction_id}` | Reopen a stored report by the internal id that served it (ADR-0012) |
 
 ## `POST /v1/predictions/manual`
 
@@ -62,6 +63,7 @@ Constraints enforced:
 - `passengers`: 1–6 entries. More than six is rejected because the group baseline degrades and the answer stops being readable.
 - `original_status`, `current_status`: non-empty after trimming, at most 120 characters.
 - `current_status_observed_at`: optional, but when present it must carry an offset and must not be later than `prediction_at`. Evidence newer than the prediction timestamp would leak the outcome into the estimate.
+- `persist`: optional, default `false`. Asks the server to keep this report so it can be reopened. Honoured only when the server also has history enabled (`RAILCONFIRM_PERSIST_PREDICTIONS`); `stored` in the response is the answer, not this field.
 
 Response (`200`, shown in the current abstaining state):
 
@@ -107,7 +109,10 @@ Response (`200`, shown in the current abstaining state):
   },
   "limitations": ["…"],
   "warnings": ["…"],
-  "outcome_classes": "CNF, RAC, WL, CANCELLED, OTHER — mutually exclusive and exhaustive over the eligible population. Probabilities sum to 1.0 per passenger."
+  "outcome_classes": "CNF, RAC, WL, CANCELLED, OTHER — mutually exclusive and exhaustive over the eligible population. Probabilities sum to 1.0 per passenger.",
+  "stored": false,
+  "report_url": null,
+  "retention_expires_at": null
 }
 ```
 
@@ -118,6 +123,25 @@ Reading the response:
 - `basis` names the evidence cohort and its sample size, and says whether a broad-cohort fallback was used. A fallback is a weaker claim than a cohort match.
 - `group_outcome.method` is `single_passenger`, `independence_baseline`, or `insufficient_data`. The independence baseline assumes passenger outcomes are statistically independent, which is not true of passengers sharing a booking; the assumption is carried in `assumptions` and must stay visible in any UI that renders the numbers.
 - `registry_status` reports the model registry resolution: `no_active_version`, `artifact_missing`, `artifact_invalid`, `not_promoted`, `data_not_approved`, `ready`.
+- `stored` is `true` only when a copy was actually written. When `persist` was sent and nothing was kept, `limitations` carries the reason — history disabled, or a storage refusal — and the estimate is still delivered. A save failure never becomes a failed prediction, and a refused save never becomes a silent one.
+- `report_url` is the server path for the stored report (`/v1/predictions/<id>`). A browser links to `/prediction/<id>`, which is the frontend's own route.
+
+## `GET /v1/predictions/{prediction_id}`
+
+Returns the stored response body for that id, byte-equivalent to what was served, with
+`stored: true`, `report_url` and `retention_expires_at` set. Nothing is recomputed: a
+reopened report is evidence about what was said then, including the `model_version` and
+`registry_status` it came with.
+
+| Outcome | When |
+|---|---|
+| `200` | A stored report exists for the id and is inside its retention window |
+| `404` `not_found` | No report with this id, or its retention window has closed |
+| `404` `history_disabled` | This server keeps no history, so no id can resolve |
+
+A `prediction_id` shaped like a PNR (10 digits, not starting with 0) is answered with
+`not_found` and a message saying reports are reopened by the id the server returned. That
+endpoint is not a ticket tracker, and a PNR never becomes a lookup key by convenience.
 
 ## `GET /v1/health`
 
@@ -134,15 +158,18 @@ Reading the response:
     "min_sample_threshold": 30,
     "max_artifact_bytes": 4194304,
     "max_request_bytes": 65536
-  }
+  },
+  "prediction_history": {}
 }
 ```
 
 `model_available` is true only when a promoted artifact passed validation for the default target. `min_sample_threshold` is the threshold of the estimator that would actually serve the next prediction, which is the promoted artifact's own value when one is ready.
 
+`prediction_history` is `{}` when this server keeps no reports — the default. When history is enabled it carries `enabled`, `retention_days` and `stored_reports`, because an interface that offers to save a report has to know whether saving is possible here before it offers.
+
 ## Errors
 
-All handled errors use one envelope:
+All handled errors use one envelope, including an unrouted path and a disallowed method:
 
 ```json
 {
@@ -161,6 +188,10 @@ All handled errors use one envelope:
 | `422` | `VALIDATION_ERROR` | Request body failed schema validation; `field` is the dotted path relative to the body |
 | `422` | `INVALID_PREDICTION_AT` | Timestamps cannot support a prediction: naive, on/after the journey date, or evidence newer than `prediction_at` |
 | `422` | `invalid_input` | Journey constraint violation |
+| `404` | `not_found` | No route matches this path, or no stored report matches this id |
+| `404` | `history_disabled` | A report was requested by id from a server that keeps no history |
+| `405` | `invalid_input` | The path exists but the method does not |
+| `500` | `storage_unavailable` | A stored report exists but no longer matches the API contract, or disagrees with the id it is filed under |
 | `500` | `INTERNAL_ERROR` | Unhandled failure. The exception text stays server-side; the response carries only the request id |
 
 Unknown statuses, unsupported categories, an unavailable model and insufficient evidence are **not** HTTP errors: they are `200` responses carrying an abstention, so a client can present the limitation instead of guessing from a failure.

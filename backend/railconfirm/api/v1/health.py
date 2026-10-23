@@ -6,11 +6,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
-from railconfirm.api.dependencies import get_engine
+from railconfirm.api.dependencies import get_engine, get_prediction_store
 from railconfirm.api.v1.schemas import MAX_PASSENGERS_PER_REQUEST, HealthResponse
 from railconfirm.config import settings
 from railconfirm.domain.prediction import PredictionTarget
 from railconfirm.inference.engine import InferenceEngine
+from railconfirm.storage.predictions import PredictionStore
 
 router = APIRouter()
 
@@ -29,6 +30,7 @@ router = APIRouter()
 )
 async def health_check(
     engine: Annotated[InferenceEngine, Depends(get_engine)],
+    store: Annotated[PredictionStore | None, Depends(get_prediction_store)],
 ) -> HealthResponse:
     """Return API health plus the registry state an operator needs to triage."""
     resolution = engine.registry.resolve(PredictionTarget.FINAL_CHART_CNF)
@@ -40,6 +42,13 @@ async def health_check(
         if served and resolution.artifact is not None
         else engine.baseline.min_sample_threshold
     )
+    history: dict[str, bool | int | str] = {}
+    if store is not None:
+        history = {
+            "enabled": True,
+            "retention_days": store.retention_days,
+            "stored_reports": store.size,
+        }
     return HealthResponse(
         status="ok",
         model_version=resolution.version if served else "no_model_v0",
@@ -53,4 +62,5 @@ async def health_check(
             "max_artifact_bytes": settings.max_artifact_bytes,
             "max_request_bytes": settings.max_request_bytes,
         },
+        prediction_history=history,
     )

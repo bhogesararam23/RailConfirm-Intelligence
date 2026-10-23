@@ -21,9 +21,11 @@ from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
 
+from railconfirm.api.problems import ApiProblem
 from railconfirm.api.v1.router import router as v1_router
 from railconfirm.api.v1.schemas import ErrorDetail, ErrorResponse
 from railconfirm.config import settings
@@ -34,6 +36,7 @@ from railconfirm.domain.exceptions import (
 )
 from railconfirm.domain.validation import ReasonCode
 from railconfirm.inference.engine import InferenceEngine
+from railconfirm.storage.predictions import PredictionStore
 
 ACCESS_LOG = logging.getLogger("railconfirm.access")
 
@@ -154,7 +157,10 @@ class MaxBodySizeMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-def create_app(engine: InferenceEngine | None = None) -> FastAPI:
+def create_app(
+    engine: InferenceEngine | None = None,
+    prediction_store: PredictionStore | None = None,
+) -> FastAPI:
     """Create and configure the FastAPI application.
 
     Parameters
@@ -162,6 +168,10 @@ def create_app(engine: InferenceEngine | None = None) -> FastAPI:
     engine:
         Optional inference engine to serve. Injected so tests and later phases
         can supply a registry or baseline without module-level globals.
+    prediction_store:
+        Optional history store. When it is omitted, one is opened only if
+        ``RAILCONFIRM_PERSIST_PREDICTIONS`` is enabled — otherwise the app keeps no
+        history at all and says so in the response.
     """
     configure_logging()
 
@@ -178,6 +188,15 @@ def create_app(engine: InferenceEngine | None = None) -> FastAPI:
     )
 
     app.state.engine = engine or InferenceEngine()
+    store = prediction_store
+    if store is None and settings.persist_predictions:
+        store = PredictionStore(
+            settings.storage_dir / "predictions.sqlite3",
+            retention_days=settings.prediction_retention_days,
+        )
+    app.state.prediction_store = store
+    if store is not None:
+        app.add_event_handler("shutdown", store.close)
 
     # ── Middleware (outermost last) ────────────────────────────────────────────
     app.add_middleware(MaxBodySizeMiddleware, max_bytes=settings.max_request_bytes)
@@ -245,6 +264,36 @@ def create_app(engine: InferenceEngine | None = None) -> FastAPI:
                 [ErrorDetail(code=ReasonCode.INVALID_INPUT, message=str(exc))],
                 request,
             ),
+        )
+
+    @app.exception_handler(ApiProblem)
+    async def api_problem_handler(request: Request, exc: ApiProblem) -> JSONResponse:
+        # An endpoint-level problem (unknown report id, history not enabled) still
+        # arrives in the documented envelope, so a client parses one shape.
+        logging.getLogger(__name__).info("api problem: %s %s", exc.code, exc.message)
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=_error_payload(
+                exc.message,
+                [ErrorDetail(code=exc.code, message=exc.message)],
+                request,
+            ),
+        )
+
+    @app.exception_handler(StarletteHTTPException)
+    async def http_exception_handler(
+        request: Request, exc: StarletteHTTPException
+    ) -> JSONResponse:
+        # A path nothing routes to, or a method a path refuses. Without this the reply
+        # is Starlette's {"detail": …} and the contract's "every error is an envelope"
+        # statement is false for the most common mistake a client can make.
+        detail = exc.detail if isinstance(exc.detail, str) else "The request failed."
+        code = ReasonCode.NOT_FOUND if exc.status_code == 404 else (
+            ReasonCode.INTERNAL_ERROR if exc.status_code >= 500 else ReasonCode.INVALID_INPUT
+        )
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=_error_payload(detail, [ErrorDetail(code=code, message=detail)], request),
         )
 
     @app.exception_handler(RailConfirmError)

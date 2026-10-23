@@ -9,7 +9,9 @@ abstention. No live railway API is called.
 
 The form, result rendering and abstention states are implemented, and the
 TypeScript types mirror `backend/railconfirm/api/v1/schemas.py` field for field,
-with contract tests that fail if the two drift.
+with contract tests that fail if the two drift. `/prediction/[id]` reopens a report
+the backend kept (ADR-0012); storage is off by default on both sides, so this page
+is reachable only after a request that asked to be kept.
 
 Nothing here has been validated against real predictions, because the backend
 produces none yet: no dataset has been approved and no model artifact is promoted,
@@ -68,11 +70,13 @@ copy changes to say your input leaves the device.
 src/
   app/                   App Router pages
     page.tsx             Prediction entry form and result
+    prediction/[id]/     A kept report, reopened by its internal id
     about/methodology/   What is estimated, and what is not
     about/data/          Provenance, privacy and intake boundaries
   components/
     ui/                  StatusBadge, ProbabilityBar, AbstentionCard, ErrorBanner, LoadingSpinner
-    prediction/          JourneyForm, PassengerList, PassengerRow, PredictionResult, outcome cards
+    prediction/          JourneyForm, PassengerList, PassengerRow, PredictionResult,
+                         StoredPredictionReport, outcome cards
     layout/              Header, Footer
   lib/
     types.ts             Mirrors the backend response schemas
@@ -100,8 +104,11 @@ src/
   an approximation, and the three group events are stated not to sum to 100%.
 - **Colour never carries meaning alone.** Every status badge pairs a hue with text
   and an aria description.
-- **Nothing is claimed to be saved.** There is no persistence in the product, so no
-  copy says results are stored or retrievable.
+- **Saving is asked for, never assumed.** The form offers "keep this report", and the
+  result only says it was kept when the backend answers `stored: true`. A server with
+  history off, or a save the store refused, shows the reason instead of a saved-report
+  link — and `/prediction/[id]` distinguishes never-stored, aged-out and
+  history-disabled, because those three need different actions.
 
 ## Related docs
 

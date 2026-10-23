@@ -55,6 +55,11 @@ export interface PredictionRequest {
   prediction_at: string; // ISO-8601 with offset, before journey_date
   target?: PredictionTarget;
   passengers: PassengerInput[]; // 1–6 entries
+  /**
+   * Ask the backend to keep this report. Only honoured when the server has history
+   * enabled; `stored` in the response is the answer, not this field.
+   */
+  persist?: boolean;
 }
 
 /**
@@ -108,7 +113,16 @@ export interface PredictionResponse {
   limitations: string[];
   warnings: string[];
   outcome_classes: string;
+  /** True only when the backend actually kept a copy. `persist: true` alone means nothing. */
+  stored: boolean;
+  /** Path to reopen this report, e.g. `/v1/predictions/<uuid>`. Null when not stored. */
+  report_url: string | null;
+  /** ISO-8601 with offset. After this the id stops resolving, so a bookmark is not an archive. */
+  retention_expires_at: string | null;
 }
+
+/** Codes the error envelope uses for history problems. */
+export type HistoryErrorCode = 'not_found' | 'history_disabled' | 'storage_unavailable';
 
 export interface HealthResponse {
   status: string;
@@ -118,6 +132,12 @@ export interface HealthResponse {
   model_available: boolean;
   registry_status: RegistryStatus;
   limits: Record<string, number | string>;
+  /**
+   * Empty when this server keeps no history at all — the default. When present it
+   * carries `enabled`, `retention_days` and `stored_reports`, because a page that
+   * offers to save should say whether saving is possible here.
+   */
+  prediction_history?: Record<string, boolean | number | string>;
 }
 
 /** One field-level problem in a failed request. */

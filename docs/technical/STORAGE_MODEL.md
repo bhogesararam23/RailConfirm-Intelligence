@@ -1,6 +1,34 @@
 # Storage model
 
-Status: logical schema proposal. No database migrations are implemented by this document.
+Status: logical schema proposal, plus one implemented table. The tables below are still a
+design; what exists in code today is described first.
+
+## What exists today
+
+`backend/railconfirm/storage/predictions.py` implements one SQLite table, created on
+demand and off by default (ADR-0012):
+
+```
+predictions(
+  prediction_id  TEXT PRIMARY KEY,   -- the internal UUID the API returned
+  recorded_at    TEXT NOT NULL,      -- fixed-shape UTC, second precision
+  expires_at     TEXT NOT NULL,      -- recorded_at + retention_days (floor: 1)
+  target         TEXT NOT NULL,
+  model_version  TEXT NOT NULL,
+  schema_version INTEGER NOT NULL,   -- read refuses a version it does not understand
+  payload_json   TEXT NOT NULL       -- the response the user was served
+)
+```
+
+This is the document's "validated JSON for an initial implementation" option for
+`predictions`, not a normalisation of it: journey, passenger and observation rows do not
+exist, nothing joins to them, and the store answers one question — reopen this report.
+The write path refuses denied key names and PNR-shaped values, so the payload cannot grow
+an identifier by accident.
+
+Retention for this table is decided (default 30 days, minimum 1, purge to delete) because
+the data is the user's own submission on their own machine, not provider-sourced records
+whose terms are still under review. The paragraph below still governs every other table.
 
 ## Design rules
 

@@ -34,11 +34,15 @@ export default function DataGovernancePage() {
             page shows the address it is sending to.
           </li>
           <li>
-            <strong>Nothing is stored yet:</strong> there is no database and no
-            prediction history in the current build, so a submitted request is not
-            retained by the application. That is a property of the code today, not a
-            promise about future releases — persistence will need its own retention and
-            deletion design.
+            <strong>Nothing is stored unless you ask twice:</strong> a report is kept only
+            when the backend has history enabled <em>and</em> the request ticks &ldquo;keep
+            this report&rdquo;. Both default to off, so the ordinary case still retains
+            nothing. When a report is kept it goes into one local file on the machine
+            running the backend, stays inside its retention window (30 days by default, at
+            least 1), and then stops being retrievable. Passenger names are absent from the
+            data model, and a payload carrying a name field or a PNR-shaped value is
+            refused at the write rather than stored (ADR-0005, ADR-0012). The response says
+            whether it was actually kept — the request alone does not.
           </li>
           <li>
             <strong>Zero secrets in Git:</strong> no API tokens, personal records or
