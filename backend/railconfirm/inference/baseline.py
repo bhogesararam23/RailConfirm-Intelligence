@@ -49,6 +49,26 @@ OUTCOME_CLASSES: tuple[str, ...] = ("CNF", "RAC", "WL", "CANCELLED", "OTHER")
 # cohort match.
 BROAD_COHORT_STATUS = "ALL"
 
+COHORT_STATUS_SEMANTICS = "asof_status_v1"
+"""What the third element of a cohort key means.
+
+``asof_status_v1`` is the status the reservation held at its observation time — the
+column the served request also supplies. A cohort table fitted on some other status
+(for example the booking-time status while requests are answered from the latest
+observation) would be queried with a key built by a different rule, so the artifact
+that declares anything else is refused at load rather than silently mis-looked-up.
+"""
+
+COHORT_FEATURES: tuple[str, ...] = ("class_code", "quota_code", "asof_normalized")
+"""The only features the historical-frequency estimator consumes.
+
+Names are the feature-frame columns produced by
+``railconfirm.data.preprocessing.extract_features``, so a declaration can be checked
+against the schema rather than trusted.
+
+Declared on every artifact to stop a report or a reviewer from crediting the
+estimator with queue positions and lead days it never looks at."""
+
 # Laplace smoothing applied per outcome class to keep unseen classes at a small
 # non-zero probability instead of a hard zero.
 DEFAULT_LAPLACE_ALPHA = 1.0
@@ -98,12 +118,27 @@ class FrequencyTableProvenance:
 FrequencyTable = Mapping[tuple[str, str, str], Mapping[str, int]]
 
 
+def cohort_key(class_code: str, quota_code: str, status: str) -> tuple[str, str, str]:
+    """Build a cohort key the way both fitting and lookup build it.
+
+    Stripping and uppercasing happens here so a table keyed by ``("sl","gn","wl")``
+    and a request for ``("SL", "GN", "WL")`` are the same cohort. A status category
+    is expected, not a raw string: callers parse first, so an unmappable status
+    cannot become its own cohort.
+    """
+    return (
+        str(class_code).strip().upper(),
+        str(quota_code).strip().upper(),
+        str(status).strip().upper(),
+    )
+
+
 def _validate_cohort_key(key: object) -> tuple[str, str, str]:
     if not isinstance(key, tuple) or len(key) != 3:
         raise FrequencyTableValidationError(
             f"Cohort keys must be (class_code, quota_code, status) 3-tuples, got {key!r}."
         )
-    parts = tuple(str(part).strip().upper() for part in key)
+    parts = cohort_key(key[0], key[1], key[2])
     class_code, quota_code, status = parts
     for name, value in (("class_code", class_code), ("quota_code", quota_code)):
         if not value:
@@ -276,15 +311,12 @@ class HistoricalFrequencyBaseline:
         tuple[str, str, str], dict[str, int], bool
     ] | None:
         """Return the matching cohort, its counts, and whether it was a fallback."""
-        cls = class_code.strip().upper()
-        quota = quota_code.strip().upper()
-
-        exact = (cls, quota, status)
-        counts = self._table.get(exact)
+        cohort = cohort_key(class_code, quota_code, status)
+        counts = self._table.get(cohort)
         if counts is not None:
-            return exact, counts, False
+            return cohort, counts, False
 
-        broad = (cls, quota, BROAD_COHORT_STATUS)
+        broad = cohort_key(class_code, quota_code, BROAD_COHORT_STATUS)
         counts = self._table.get(broad)
         if counts is not None:
             return broad, counts, True
@@ -293,23 +325,28 @@ class HistoricalFrequencyBaseline:
     def estimate(
         self,
         passenger_id: str,
-        parsed_status: ParsedStatus,
+        asof_status: ParsedStatus,
         class_code: str,
         quota_code: str,
     ) -> PassengerOutcome:
         """Return a smoothed frequency estimate or an abstention.
 
+        ``asof_status`` is the status the reservation held as of the time being
+        estimated, which is exactly what the cohort keys were fitted from; see
+        ``COHORT_STATUS_SEMANTICS``. Passing a different status column here would
+        answer the question with counts from a different population.
+
         Abstention reasons are ordered from the most actionable to the least:
         an unmappable status, then a status outside the target population, then
         a missing evidence base, then a cohort too small to report.
         """
-        if parsed_status.normalized == NormalizedStatus.UNKNOWN:
+        if asof_status.normalized == NormalizedStatus.UNKNOWN:
             return make_abstention_outcome(
                 passenger_id=passenger_id,
                 reason=AbstentionReason.UNKNOWN_STATUS,
             )
 
-        if parsed_status.normalized not in TARGET_ELIGIBLE_STATUSES:
+        if asof_status.normalized not in TARGET_ELIGIBLE_STATUSES:
             return make_abstention_outcome(
                 passenger_id=passenger_id,
                 reason=AbstentionReason.UNSUPPORTED_STATUS,
@@ -328,7 +365,7 @@ class HistoricalFrequencyBaseline:
                 reason=AbstentionReason.NO_APPROVED_DATA,
             )
 
-        matched = self._lookup(class_code, quota_code, parsed_status.normalized.value)
+        matched = self._lookup(class_code, quota_code, asof_status.normalized.value)
         if matched is None:
             return make_abstention_outcome(
                 passenger_id=passenger_id,

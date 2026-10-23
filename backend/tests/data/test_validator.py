@@ -14,6 +14,7 @@ from railconfirm.data.validator import (
     MISSING_TOKENS,
     REQUIRED_COLUMNS,
     EligibilityThresholds,
+    assess_dataset,
     validate_dataset,
 )
 
@@ -72,6 +73,16 @@ def validate(rows: list[dict], *, columns: tuple[str, ...] | None = None, **kwar
     limits = kwargs.pop("thresholds", None)
     return validate_dataset(
         frame(rows, columns=columns), thresholds=limits or synthetic_rules(), **kwargs
+    )
+
+
+def assess(rows: list[dict], **kwargs):
+    """The same verdict plus the rows that survived it."""
+    limits = kwargs.pop("thresholds", None)
+    return assess_dataset(
+        frame(rows, columns=kwargs.pop("columns", None)),
+        thresholds=limits or synthetic_rules(),
+        **kwargs,
     )
 
 
@@ -468,3 +479,70 @@ def test_summary_lists_reasons_and_examples():
     summary = validate(rows).summary()
     assert "invalid_train_number" in summary
     assert "First rejected rows" in summary
+
+
+# ── The row filter that goes with the verdict ──────────────────────────────────
+
+
+def test_assess_returns_only_the_rows_that_passed():
+    rows = [dict(row) for row in BASE_ROWS]
+    rows.append(dict(BASE_ROWS[0]))
+    report, usable = assess(rows)
+    assert report.rejection_reasons["exact_duplicate_row"] == 1
+    assert len(usable) == report.valid_rows == 2
+    assert list(usable.columns) == list(frame(BASE_ROWS).columns)
+
+
+def test_assess_keeps_neither_side_of_a_contradiction():
+    rows = [dict(BASE_ROWS[0]), {**BASE_ROWS[0], "final_chart_status": "WL/3"}]
+    report, usable = assess(rows)
+    assert report.rejection_reasons["contradictory_labels"] == 2
+    assert len(usable) == 0
+    assert report.structurally_valid is False
+
+
+def test_assess_does_not_trust_a_callers_index():
+    """Duplicate or odd labels used to make a per-row lookup ambiguous."""
+    rows = [dict(row) for row in BASE_ROWS]
+    df = frame(rows)
+    df.index = ["same", "same"]
+    report, usable = assess_dataset(df, thresholds=synthetic_rules())
+    assert report.rejected_rows == 0
+    assert list(usable.index) == [0, 1]
+
+
+def test_assess_row_numbers_count_from_the_first_data_row():
+    rows = [dict(row) for row in BASE_ROWS]
+    rows[1]["observation_date"] = "2026-12-01"
+    report, _ = assess(rows)
+    assert [example["row"] for example in report.row_examples] == ["1"]
+    assert report.rejection_reasons["observation_after_journey"] == 1
+
+
+def test_assess_and_validate_agree_on_the_verdict():
+    """The wrapper and the filter must never describe two different files."""
+    report_only = validate(BASE_ROWS)
+    report, _ = assess([dict(row) for row in BASE_ROWS])
+    assert report.to_dict() == report_only.to_dict()
+
+
+def test_assess_of_a_file_missing_a_required_column_returns_nothing():
+    """frame() pins the schema, so the column exists and every row lacks its value."""
+    rows = [{k: v for k, v in row.items() if k != "observation_date"} for row in BASE_ROWS]
+    report, usable = assess(rows)
+    assert report.rejection_reasons["missing_required_value"] == 2
+    assert len(usable) == 0
+    assert report.structurally_valid is False
+
+
+def test_assess_of_a_frame_without_a_required_column_at_all():
+    df = frame(BASE_ROWS).drop(columns=["observation_date"])
+    report, usable = assess_dataset(df, thresholds=synthetic_rules())
+    assert report.missing_columns == ["observation_date"]
+    assert len(usable) == 0
+
+
+def test_assess_of_an_empty_file_returns_nothing():
+    report, usable = assess([])
+    assert report.total_rows == 0
+    assert len(usable) == 0

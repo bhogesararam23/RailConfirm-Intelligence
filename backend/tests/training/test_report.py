@@ -11,7 +11,11 @@ import pytest
 
 from railconfirm.data.preprocessing import chronological_split
 from railconfirm.domain.status import MAPPING_VERSION
-from railconfirm.inference.baseline import FrequencyTableProvenance
+from railconfirm.inference.baseline import (
+    COHORT_FEATURES,
+    COHORT_STATUS_SEMANTICS,
+    FrequencyTableProvenance,
+)
 from railconfirm.training.fitter import FitSummary
 from railconfirm.training.metrics import (
     METRIC_KEYS,
@@ -81,6 +85,36 @@ def make_report(
         test=scored[1],
         generated_on="2026-05-01",
     )
+
+
+def test_the_report_states_which_features_the_estimator_actually_reads():
+    """The baseline reads three values; the report must not credit it with eight."""
+    report = make_report(cohorts=CONCLUSIVE, frame=rows([("GNWL/10", "CNF")] * 4))
+    features = report.to_dict()["features"]
+    assert features["used_by_estimator"] == list(COHORT_FEATURES)
+    assert {"lead_days", "queue_ratio", "init_position"} <= set(features["not_used_by_estimator"])
+    assert set(features["columns"]) >= set(features["used_by_estimator"])
+    assert features["cohort_semantics"] == COHORT_STATUS_SEMANTICS
+
+    summary = report.summary()
+    assert "read by the estimator: class_code, quota_code, asof_normalized" in summary
+    assert "derived but not read" in summary
+    assert "no status column" in summary  # this fixture's FitSummary records none
+
+
+def test_the_report_describes_the_asof_rule_behind_every_feature():
+    report = make_report(cohorts=CONCLUSIVE, frame=rows([("GNWL/10", "CNF")] * 4))
+    availability = report.to_dict()["features"]["availability"]
+    assert "current_status" in availability
+    assert "otherwise initial_status" in availability
+
+
+def test_the_report_publishes_the_rule_the_fit_recorded():
+    """A reader must be able to see which status the counts were keyed by."""
+    report = make_report(cohorts=CONCLUSIVE, frame=rows([("GNWL/10", "CNF")] * 4))
+    fit = report.to_dict()["fit"]
+    assert fit["cohort_semantics"] == COHORT_STATUS_SEMANTICS
+    assert fit["asof_status_columns"] == []
 
 
 def test_the_report_names_the_event_it_scored():

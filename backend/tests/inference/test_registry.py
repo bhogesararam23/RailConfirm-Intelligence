@@ -190,6 +190,8 @@ def test_document_level_defects_are_rejected(tmp_path, mutate, expected_fragment
         ("trained_to", "not-a-date", "ISO-8601 date"),
         ("feature_schema_version", "   ", "non-empty string"),
         ("promotion", "   ", "non-empty string"),
+        ("cohort_semantics", "initial_status_v1", "answered from"),
+        ("features_used", ["class_code", "quota_code"], "must be exactly"),
     ],
 )
 def test_metadata_defects_are_rejected(tmp_path, field, value, expected_fragment):
@@ -197,6 +199,39 @@ def test_metadata_defects_are_rejected(tmp_path, field, value, expected_fragment
     with pytest.raises(ModelArtifactError, match=expected_fragment):
         load_artifact(
             tmp_path / "fixture_v1.json",
+            expected_version="fixture_v1",
+            expected_target=PredictionTarget.FINAL_CHART_CNF.value,
+            max_bytes=1_000_000,
+        )
+
+
+def test_an_artifact_keyed_by_another_status_rule_is_refused_not_reinterpreted(tmp_path):
+    """Fit-on-booked-status, serve-on-observed-status was the original skew.
+
+    A table whose cohorts came from a different column would answer this request
+    with counts from a different population, so the load fails instead of the lookup
+    silently missing."""
+    write(tmp_path, cohort_semantics="initial_status_v1")
+    with pytest.raises(ModelArtifactError, match="asof_status_v1") as exc:
+        load_artifact(
+            tmp_path / "fixture_v1.json",
+            expected_version="fixture_v1",
+            expected_target=PredictionTarget.FINAL_CHART_CNF.value,
+            max_bytes=1_000_000,
+        )
+    assert "different population" in str(exc.value)
+
+
+@pytest.mark.parametrize("dropped", ["features_used", "cohort_semantics"])
+def test_an_artifact_that_declares_neither_of_its_cohort_rules_is_refused(tmp_path, dropped):
+    write(tmp_path)
+    path = tmp_path / "fixture_v1.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document["metadata"].pop(dropped)
+    path.write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(ModelArtifactError, match=dropped):
+        load_artifact(
+            path,
             expected_version="fixture_v1",
             expected_target=PredictionTarget.FINAL_CHART_CNF.value,
             max_bytes=1_000_000,

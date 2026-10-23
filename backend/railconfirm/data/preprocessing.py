@@ -5,9 +5,14 @@ Two rules govern this module:
 * A feature may only use information available at the record's observation time.
   Outcome labels, post-chart statuses and any later knowledge are excluded by
   construction, not by convention.
-* A split that cannot hold a genuine future period back is reported as unable to
-  evaluate. Returning every row as "train" with an empty test set and calling it
-  a success would let a later metric be computed on nothing.
+* The status a record is *about* is the status it carries at that observation time,
+  and :func:`asof_statuses` is the only definition of it. Fitting, scoring and
+  serving all read the cohort from that one function, so a table built on one
+  column cannot be queried through another.
+
+A split that cannot hold a genuine future period back is reported as unable to
+evaluate. Returning every row as "train" with an empty test set and calling it
+a success would let a later metric be computed on nothing.
 
 See docs/research/EVALUATION_PROTOCOL.md and ADR-0004.
 """
@@ -20,15 +25,29 @@ from typing import Any
 
 import pandas as pd
 
+from railconfirm.data.validator import is_missing
 from railconfirm.domain.exceptions import DatasetValidationError
-from railconfirm.domain.status import parse_status
+from railconfirm.domain.status import ParsedStatus, parse_status
 
-FEATURE_SCHEMA_VERSION = "2.0.0"
+FEATURE_SCHEMA_VERSION = "3.0.0"
 """Bump when feature meaning or nullability changes, so artifacts can be rejected
-rather than silently misread."""
+rather than silently misread.
+
+3.0.0 changes the as-of status: a row whose ``current_status`` is blank now falls
+back to its ``initial_status`` instead of becoming UNKNOWN, and the derived columns
+are named ``asof_*`` so the rule is visible where it is used."""
 
 DATE_COLUMN = "journey_date"
 OBSERVATION_COLUMN = "observation_date"
+
+INITIAL_STATUS_COLUMN = "initial_status"
+CURRENT_STATUS_COLUMN = "current_status"
+
+ASOF_STATUS_FEATURE = "asof_normalized"
+"""The derived feature column carrying the as-of status.
+
+Model artifacts name their consumed features with these column names, so the
+declaration can be checked against the schema instead of being trusted."""
 
 # Columns that describe the answer rather than the situation. They must never
 # reach a model as features.
@@ -46,8 +65,8 @@ FEATURE_COLUMNS: tuple[str, ...] = (
     "quota_code",
     "init_normalized",
     "init_position",
-    "obs_normalized",
-    "obs_position",
+    "asof_normalized",
+    "asof_position",
     "queue_ratio",
     "lead_days",
 )
@@ -148,6 +167,44 @@ def assert_no_label_columns(frame: pd.DataFrame, *, where: str) -> None:
         )
 
 
+def require_status_columns(frame: pd.DataFrame, *, where: str) -> None:
+    """Fail unless the frame can say what status the reservation holds."""
+    if INITIAL_STATUS_COLUMN not in frame.columns and CURRENT_STATUS_COLUMN not in frame.columns:
+        raise DatasetValidationError(
+            f"{where} received neither '{INITIAL_STATUS_COLUMN}' nor "
+            f"'{CURRENT_STATUS_COLUMN}'. Without an as-of status there is no cohort "
+            "to fit and none to look up."
+        )
+
+
+def asof_statuses(frame: pd.DataFrame) -> list[ParsedStatus]:
+    """The status each record carries at its own observation time.
+
+    This is the single definition shared by fitting, scoring and the served
+    request. ``current_status`` is the later look and wins when the source
+    recorded one; a blank ``current_status`` means no later look existed, so the
+    record's as-of status is its ``initial_status`` rather than unknown. A record
+    with no status at all parses to UNKNOWN, which abstains instead of guessing.
+
+    At serving time the same rule is the most recent ``StatusObservation`` at or
+    before the prediction timestamp; the dataset's ``current_status`` is that
+    observation flattened into one column.
+    """
+    require_status_columns(frame, where="asof_statuses")
+    has_current = CURRENT_STATUS_COLUMN in frame.columns
+    has_initial = INITIAL_STATUS_COLUMN in frame.columns
+    if not has_current:
+        return [parse_status(str(value)) for value in frame[INITIAL_STATUS_COLUMN]]
+    if not has_initial:
+        return [parse_status(str(value)) for value in frame[CURRENT_STATUS_COLUMN]]
+    return [
+        parse_status(str(current)) if not is_missing(current) else parse_status(str(initial))
+        for initial, current in zip(
+            frame[INITIAL_STATUS_COLUMN], frame[CURRENT_STATUS_COLUMN], strict=True
+        )
+    ]
+
+
 def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     """Build model features from validated observation records.
 
@@ -160,29 +217,29 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     assert_no_label_columns(df, where="extract_features")
 
     out = df.copy()
-    if "initial_status" not in out.columns:
-        raise DatasetValidationError("extract_features requires an 'initial_status' column.")
+    if INITIAL_STATUS_COLUMN not in out.columns:
+        raise DatasetValidationError(
+            f"extract_features requires an '{INITIAL_STATUS_COLUMN}' column."
+        )
 
-    current_column = "current_status" if "current_status" in out.columns else "initial_status"
-
-    parsed_initial = [parse_status(str(value)) for value in out["initial_status"]]
-    parsed_current = [parse_status(str(value)) for value in out[current_column]]
+    parsed_initial = [parse_status(str(value)) for value in out[INITIAL_STATUS_COLUMN]]
+    parsed_asof = asof_statuses(out)
 
     out["init_normalized"] = [result.normalized.value for result in parsed_initial]
-    out["obs_normalized"] = [result.normalized.value for result in parsed_current]
+    out["asof_normalized"] = [result.normalized.value for result in parsed_asof]
     out["init_position"] = pd.array(
         [result.position for result in parsed_initial], dtype="Int64"
     )
-    out["obs_position"] = pd.array(
-        [result.position for result in parsed_current], dtype="Int64"
+    out["asof_position"] = pd.array(
+        [result.position for result in parsed_asof], dtype="Int64"
     )
 
     # Position relative to the position booked first. A ratio needs both a
     # current and an initial position; otherwise it is unknown, not zero.
     init_position = out["init_position"].astype("Float64")
-    obs_position = out["obs_position"].astype("Float64")
-    out["queue_ratio"] = (obs_position / init_position).where(
-        (obs_position > 0) & (init_position > 0)
+    asof_position = out["asof_position"].astype("Float64")
+    out["queue_ratio"] = (asof_position / init_position).where(
+        (asof_position > 0) & (init_position > 0)
     )
 
     if OBSERVATION_COLUMN in out.columns and DATE_COLUMN in out.columns:

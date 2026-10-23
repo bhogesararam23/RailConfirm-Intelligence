@@ -6,11 +6,128 @@ import pytest
 
 from railconfirm.training.dataset import TrainingDataError, load_approved_dataset
 from tests.support.datasets import (
+    GATE_ROW_COUNT,
     approved_decision,
     approved_source,
+    gate_defects,
     write_approved_manifest,
     write_dataset,
+    write_gate_dataset,
 )
+
+CLEAN_IDS = {f"P{index:04d}" for index in range(GATE_ROW_COUNT)}
+TOTAL_GATE_ROWS = GATE_ROW_COUNT + len(gate_defects())
+
+
+# ── Technical eligibility and rejected rows ────────────────────────────────────
+
+
+def test_rows_the_validator_rejected_never_reach_the_training_frame(tmp_path):
+    """Regression: the gate checked a verdict and then handed over the whole file.
+
+    Every defect shape is counted in the report, and none of them may appear in the
+    frame the fitter and the scorer read."""
+    csv = write_gate_dataset(tmp_path)
+    manifest = write_approved_manifest(csv, tmp_path, dataset_id="defects")
+    loaded = load_approved_dataset(csv, manifest, allow_synthetic_for_testing=True)
+
+    for reason in gate_defects():
+        assert loaded.report.rejection_reasons.get(reason), (
+            reason,
+            loaded.report.rejection_reasons,
+        )
+
+    # P0001 goes too: its label now contradicts itself, and the gate keeps neither
+    # side of a contradiction.
+    assert set(loaded.frame["passenger_record_id"]) == CLEAN_IDS - {"P0001"}
+    assert len(loaded.frame) == loaded.report.valid_rows
+    assert loaded.rejected_rows == TOTAL_GATE_ROWS - loaded.report.valid_rows
+
+
+def test_rejected_rows_are_removed_from_both_fit_and_score_inputs(tmp_path):
+    """A label the report calls censored must not be scored as a negative."""
+    csv = write_gate_dataset(tmp_path)
+    manifest = write_approved_manifest(csv, tmp_path, dataset_id="defects")
+    loaded = load_approved_dataset(csv, manifest, allow_synthetic_for_testing=True)
+
+    assert "CENSORED" not in set(loaded.frame["final_chart_status"])
+    assert "MYSTERY/4" not in set(loaded.frame["initial_status"])
+    assert "AB1234" not in set(loaded.frame["train_number"])
+    assert "" not in set(loaded.frame["class_code"])
+
+
+def test_a_technically_ineligible_dataset_is_refused_for_real_training(tmp_path):
+    """Regression: structural validity was the whole gate.
+
+    24 parseable rows are structurally fine and nowhere near enough to evaluate a
+    probability. Only the labelled synthetic pipeline path may fit them."""
+    csv = write_gate_dataset(tmp_path, synthetic="false")
+    manifest = write_approved_manifest(csv, tmp_path, dataset_id="too-small")
+    with pytest.raises(TrainingDataError, match="not technically eligible") as exc:
+        load_approved_dataset(csv, manifest)
+    message = str(exc.value)
+    assert "provisional minimum" in message
+    assert "structurally valid" in message
+
+
+def test_a_real_dataset_is_not_rescued_by_the_synthetic_opt_in(tmp_path):
+    """Without is_synthetic there is no relaxation, whatever else the caller passes."""
+    csv = write_gate_dataset(tmp_path, synthetic="false")
+    manifest = write_approved_manifest(csv, tmp_path, dataset_id="real-small")
+    with pytest.raises(TrainingDataError, match="not technically eligible"):
+        load_approved_dataset(csv, manifest, allow_synthetic_for_testing=True)
+
+
+def test_the_pipeline_test_relaxation_is_recorded_on_the_dataset(tmp_path):
+    csv = write_gate_dataset(tmp_path)
+    manifest = write_approved_manifest(csv, tmp_path, dataset_id="relaxed")
+    loaded = load_approved_dataset(csv, manifest, allow_synthetic_for_testing=True)
+    assert loaded.eligibility_relaxed is True
+    assert loaded.report.technically_eligible is False
+
+
+def test_an_eligible_dataset_is_never_marked_relaxed(dataset):
+    csv, manifest = dataset
+    loaded = load_approved_dataset(csv, manifest, allow_synthetic_for_testing=True)
+    assert loaded.report.technically_eligible is True
+    assert loaded.eligibility_relaxed is False
+
+
+def test_a_synthetic_marker_on_a_rejected_row_still_marks_the_file(tmp_path):
+    """Detection reads the file, not the surviving rows, so it cannot be laundered.
+
+    The only row declaring is_synthetic is one the validator drops for observing
+    after the journey. Reading the verdict from the kept frame would hand a frame
+    that looks entirely real to whoever fits it."""
+    csv = write_gate_dataset(tmp_path, synthetic="false", defects=False)
+    laundered = Path(csv).with_name("laundered.csv")
+    laundered.write_text(
+        csv.read_text(encoding="utf-8").rstrip("\n")
+        + "\n12301,2026-04-01,SL,GN,GNWL/90,CNF,2026-04-05,B9100,P9100,true\n",
+        encoding="utf-8",
+    )
+    manifest = write_approved_manifest(laundered, tmp_path, dataset_id="laundered")
+
+    with pytest.raises(TrainingDataError, match="is_synthetic"):
+        load_approved_dataset(laundered, manifest)
+
+    loaded = load_approved_dataset(laundered, manifest, allow_synthetic_for_testing=True)
+    assert loaded.report.rejection_reasons["observation_after_journey"] == 1
+    assert loaded.is_synthetic is True
+    assert not any(
+        str(value).strip().lower() in {"true", "1", "yes"}
+        for value in loaded.frame["is_synthetic"]
+    )
+
+
+def test_eligibility_is_checked_after_the_permission_rules(tmp_path):
+    """A rejected licence stays the headline reason even when intake also fails."""
+    csv = write_gate_dataset(tmp_path, synthetic="false")
+    manifest = write_approved_manifest(
+        csv, tmp_path, dataset_id="both-bad", decision=approved_decision(decision="rejected")
+    )
+    with pytest.raises(TrainingDataError, match="rejected"):
+        load_approved_dataset(csv, manifest)
 
 
 @pytest.fixture

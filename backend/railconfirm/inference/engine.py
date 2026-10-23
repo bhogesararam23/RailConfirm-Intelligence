@@ -131,9 +131,12 @@ class InferenceEngine:
                     f"Passenger {p_id[:8]}: Status '{curr_obs.raw_status}' could not be normalized."
                 )
             elif estimator.is_loaded:
+                # The current observation is the as-of status: it is the latest look
+                # the request supplies, and its timestamp is checked against the
+                # prediction time above. Cohorts are keyed by exactly this value.
                 outcome = estimator.estimate(
                     passenger_id=p_id,
-                    parsed_status=parsed,
+                    asof_status=parsed,
                     class_code=journey.class_code,
                     quota_code=journey.quota_code,
                 )

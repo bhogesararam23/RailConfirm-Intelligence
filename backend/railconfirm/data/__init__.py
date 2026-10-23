@@ -10,22 +10,27 @@ from railconfirm.data.manifest import (
     write_manifest,
 )
 from railconfirm.data.preprocessing import (
+    ASOF_STATUS_FEATURE,
     FEATURE_COLUMNS,
     FEATURE_SCHEMA_VERSION,
     SplitResult,
+    asof_statuses,
     assert_no_label_columns,
     chronological_split,
     extract_features,
     feature_frame,
+    require_status_columns,
     strip_labels,
 )
 from railconfirm.data.validator import (
     DatasetValidationReport,
     EligibilityThresholds,
+    assess_dataset,
     validate_dataset,
 )
 
 __all__ = [
+    "ASOF_STATUS_FEATURE",
     "DEFAULT_MAX_BYTES",
     "FEATURE_COLUMNS",
     "FEATURE_SCHEMA_VERSION",
@@ -35,13 +40,16 @@ __all__ = [
     "ManifestError",
     "SUPPORTED_SUFFIXES",
     "SplitResult",
+    "asof_statuses",
     "assert_no_label_columns",
+    "assess_dataset",
     "chronological_split",
     "extract_features",
     "feature_frame",
     "generate_manifest",
     "load_dataset_file",
     "parse_manifest",
+    "require_status_columns",
     "strip_labels",
     "validate_dataset",
     "verify_manifest",

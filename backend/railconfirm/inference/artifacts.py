@@ -6,9 +6,10 @@ defines: ``ARTIFACT_FORMAT`` names the expected shape and anything else is
 rejected before it reaches an estimator.
 
 A file existing is not evidence that it may be used. Every artifact carries its
-target, feature/mapping schema versions, the dataset it was fitted from and an
-explicit promotion state, and the registry only serves artifacts whose
-declaration matches the request.
+target, feature/mapping schema versions, the features it actually reads, the status
+its cohorts are keyed by, the dataset it was fitted from and an explicit promotion
+state, and the registry only serves artifacts whose declarations match the request
+and whose cohort rule matches the lookup the estimator performs.
 """
 
 from __future__ import annotations
@@ -23,6 +24,8 @@ from typing import Any
 
 from railconfirm.domain.exceptions import ModelArtifactError
 from railconfirm.inference.baseline import (
+    COHORT_FEATURES,
+    COHORT_STATUS_SEMANTICS,
     OUTCOME_CLASSES,
     FrequencyTableProvenance,
     FrequencyTableValidationError,
@@ -30,8 +33,12 @@ from railconfirm.inference.baseline import (
     normalize_frequency_table,
 )
 
-ARTIFACT_FORMAT = "railconfirm.frequency-baseline/1"
-"""Artifact format identifier. Bump when the JSON layout changes."""
+ARTIFACT_FORMAT = "railconfirm.frequency-baseline/2"
+"""Artifact format identifier. Bump when the JSON layout changes.
+
+2 adds ``features_used`` and ``cohort_semantics``, which are required at load: a
+table that does not say which status its cohorts were built from cannot be shown to
+be queried with the same rule the product uses."""
 
 ESTIMATOR_HISTORICAL_FREQUENCY = "historical_frequency_baseline"
 """The only estimator this build knows how to serve."""
@@ -62,6 +69,14 @@ class ModelArtifactMetadata:
     laplace_alpha: float
     promotion: str
     limitations: tuple[str, ...]
+    features_used: tuple[str, ...] = COHORT_FEATURES
+    """The features the estimator actually reads, not the schema it could read.
+
+    A frequency baseline consumes class, quota and the as-of status. Declaring that
+    here stops a report or a reviewer from crediting the estimator with queue
+    positions and lead days it never looks at."""
+    cohort_semantics: str = COHORT_STATUS_SEMANTICS
+    """Which status the cohort keys were built from; must match the lookup rule."""
     trained_from: str | None = None
     trained_to: str | None = None
     calibration_method: str | None = None
@@ -216,6 +231,25 @@ def metadata_from_mapping(raw: Any, *, expected_version: str, expected_target: s
             "and the period it was fitted on.",
         )
 
+    features_used = raw.get("features_used")
+    _require(
+        isinstance(features_used, list) and tuple(features_used) == COHORT_FEATURES,
+        f"Artifact features_used must be exactly {list(COHORT_FEATURES)}, got "
+        f"{features_used!r}. This build's estimator reads those three values and "
+        "nothing else; a different declaration means a different estimator or a "
+        "different cohort rule, and its numbers would not mean what this one claims.",
+    )
+
+    cohort_semantics = raw.get("cohort_semantics")
+    _require(
+        cohort_semantics == COHORT_STATUS_SEMANTICS,
+        f"Artifact cohort_semantics is {cohort_semantics!r}, but requests are answered "
+        f"from {COHORT_STATUS_SEMANTICS!r} (the status held as of the prediction "
+        "time). Fitting on one status column and looking up another would answer with "
+        "counts from a different population, so the artifact is refused instead of "
+        "reinterpreted.",
+    )
+
     trained_from = raw.get("trained_from")
     trained_to = raw.get("trained_to")
     if trained_from is not None:
@@ -250,6 +284,8 @@ def metadata_from_mapping(raw: Any, *, expected_version: str, expected_target: s
         laplace_alpha=float(alpha),
         promotion=raw["promotion"],
         limitations=tuple(limitations),
+        features_used=tuple(features_used),
+        cohort_semantics=cohort_semantics,
         trained_from=trained_from,
         trained_to=trained_to,
         calibration_method=calibration_method,

@@ -6,12 +6,20 @@ whether a file may be fitted on, and it is deliberately conservative:
 * the manifest must verify against the file it describes (hash, size, row count);
 * a named human must have recorded an approval decision with a rationale;
 * the licence review must permit model training explicitly;
+* the file must pass the validator's *technical eligibility* rules, not merely be
+  structurally parseable — enough clean rows, more than one outcome class, and a
+  date span a chronological split can hold back;
+* rows the validator rejected (duplicates, contradictory or censored labels,
+  unparseable dates, observations after the journey) are removed here, so they
+  cannot reach fitting or scoring;
 * synthetic rows can never satisfy the gate. A pipeline test may opt in explicitly
   with ``allow_synthetic_for_testing``, and the artifact it produces records that
   fact, which makes the artifact unservable by the registry.
 
-The last rule is what lets the whole training-to-registry path be exercised without
-any chance of a synthetic result being presented as a real one.
+The last two rules are what let the whole training-to-registry path be exercised
+without any chance of a synthetic result being presented as a real one. The
+eligibility relaxation available to that opt-in applies to synthetic rows only: a
+real dataset that fails intake is refused with no way around it.
 """
 
 from __future__ import annotations
@@ -23,7 +31,10 @@ import pandas as pd
 
 from railconfirm.data.loader import load_dataset_file
 from railconfirm.data.manifest import DatasetManifest, parse_manifest, verify_manifest
-from railconfirm.data.validator import DatasetValidationReport, validate_dataset
+from railconfirm.data.validator import (
+    DatasetValidationReport,
+    assess_dataset,
+)
 from railconfirm.domain.exceptions import DatasetValidationError
 
 TRAINING_USE_FIELD = "model_training"
@@ -36,13 +47,20 @@ class TrainingDataError(DatasetValidationError):
 
 @dataclass(frozen=True)
 class ApprovedDataset:
-    """A dataset file plus the manifest and validation report that describe it."""
+    """A dataset file plus the manifest and validation report that describe it.
+
+    ``frame`` holds only the rows the validator kept, so every count in ``report``
+    describes the same file the frame came from while fitting sees only the part of
+    it that passed. ``eligibility_relaxed`` records that a pipeline-test run fitted
+    on rows below the intake thresholds, which the artifact then has to state.
+    """
 
     dataset_path: Path
     manifest: DatasetManifest
     frame: pd.DataFrame
     report: DatasetValidationReport
     is_synthetic: bool
+    eligibility_relaxed: bool = False
 
     @property
     def dataset_id(self) -> str:
@@ -51,6 +69,10 @@ class ApprovedDataset:
     @property
     def sha256(self) -> str:
         return self.manifest.file.sha256 or ""
+
+    @property
+    def rejected_rows(self) -> int:
+        return self.report.rejected_rows
 
 
 def _detect_synthetic(frame: pd.DataFrame) -> bool:
@@ -106,7 +128,7 @@ def load_approved_dataset(
     *,
     allow_synthetic_for_testing: bool = False,
 ) -> ApprovedDataset:
-    """Load a dataset only after its provenance and permissions check out."""
+    """Load a dataset only after its permissions and quality both check out."""
     data_path = Path(dataset_path)
     manifest_file = Path(manifest_path)
     if not data_path.is_file():
@@ -124,24 +146,37 @@ def load_approved_dataset(
         )
 
     frame = load_dataset_file(data_path)
-    report = validate_dataset(frame, source_name=data_path.name)
+    report, usable = assess_dataset(frame, source_name=data_path.name)
+    synthetic = _detect_synthetic(frame)
+
     if not report.structurally_valid:
         raise TrainingDataError(
             "Dataset is not structurally valid:\n  - "
             + "\n  - ".join(report.eligibility_findings or report.missing_columns)
         )
 
-    synthetic = _detect_synthetic(frame)
     assert_trainable(
         manifest,
         is_synthetic=synthetic,
         allow_synthetic_for_testing=allow_synthetic_for_testing,
     )
 
+    # A pipeline-test run may fit below the intake thresholds because its purpose is
+    # to exercise the code, and its artifact is marked synthetic so it can never be
+    # served. Nothing else may: a real dataset that cannot support an evaluation is
+    # refused rather than fitted on anyway.
+    relaxed = synthetic and allow_synthetic_for_testing and not report.technically_eligible
+    if not report.technically_eligible and not relaxed:
+        raise TrainingDataError(
+            "Dataset is structurally valid but not technically eligible for "
+            "training:\n  - " + "\n  - ".join(report.eligibility_findings)
+        )
+
     return ApprovedDataset(
         dataset_path=data_path,
         manifest=manifest,
-        frame=frame,
+        frame=usable,
         report=report,
         is_synthetic=synthetic,
+        eligibility_relaxed=relaxed,
     )

@@ -113,8 +113,26 @@ def _split(args, frame):
     )
 
 
+def _describe_intake(dataset) -> str:
+    """State what validation kept, so a fit never silently rests on dropped rows."""
+    report = dataset.report
+    kept = f"Validation kept {report.valid_rows} of {report.total_rows} rows"
+    if not report.rejected_rows:
+        return kept + " (no rejections)."
+    reasons = ", ".join(
+        f"{reason}={count}" for reason, count in sorted(report.rejection_reasons.items())
+    )
+    return f"{kept} ({report.rejected_rows} rejected: {reasons})."
+
+
 def _fit(args: argparse.Namespace) -> int:
     dataset = _dataset(args)
+    print(_describe_intake(dataset))
+    if dataset.eligibility_relaxed:
+        print(
+            "Eligibility thresholds were NOT met; fitted only because this is a "
+            "labelled synthetic pipeline test."
+        )
     fitted = fit_baseline(
         dataset,
         version=args.version,

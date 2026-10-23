@@ -10,6 +10,7 @@ from tests.support.datasets import (
     approved_decision,
     write_approved_manifest,
     write_dataset,
+    write_gate_dataset,
 )
 
 
@@ -58,6 +59,54 @@ def test_fit_writes_a_candidate_artifact_and_report(paths, capsys):
     assert payload["test"]["rows"] > 0
     printed = capsys.readouterr().out
     assert "Promotion is 'candidate'" in printed
+
+
+def test_fit_states_which_rows_validation_kept(tmp_path: Path, capsys):
+    """A fit must not rest silently on rows the report says were rejected."""
+    csv = write_gate_dataset(tmp_path)
+    manifest = write_approved_manifest(csv, tmp_path, dataset_id="cli-defects")
+    code = main(
+        [
+            "fit",
+            str(csv),
+            str(manifest),
+            "--version",
+            "gated_v1",
+            "--out",
+            str(tmp_path / "gated_v1.json"),
+            "--min-sample-threshold",
+            "1",
+            "--allow-synthetic-for-testing",
+        ]
+    )
+    printed = capsys.readouterr().out
+    assert code == 0, printed
+    assert "Validation kept 23 of 32 rows (9 rejected" in printed
+    assert "exact_duplicate_row=1" in printed
+    assert "contradictory_labels=2" in printed
+    assert "Eligibility thresholds were NOT met" in printed
+
+
+@pytest.mark.parametrize("command", ["fit", "evaluate"])
+def test_the_cli_refuses_a_technically_ineligible_real_dataset(tmp_path: Path, capsys, command):
+    csv = write_gate_dataset(tmp_path, synthetic="false")
+    manifest = write_approved_manifest(csv, tmp_path, dataset_id="cli-too-small")
+    argv = [
+        command,
+        str(csv),
+        str(manifest),
+        "--train-frac",
+        "0.5",
+        "--val-frac",
+        "0.25",
+    ]
+    argv += (
+        ["--version", "v", "--out", str(tmp_path / "v.json")]
+        if command == "fit"
+        else ["--artifact", str(tmp_path / "missing.json")]
+    )
+    assert main(argv) == 1
+    assert "not technically eligible" in capsys.readouterr().err
 
 
 def test_fit_refuses_unapproved_data_and_exits_one(tmp_path: Path, capsys):

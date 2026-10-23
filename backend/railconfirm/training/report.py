@@ -123,6 +123,7 @@ class EvaluationReport:
             "",
             f"Fit: {self.fit['rows_used']} of {self.fit['rows_seen']} training rows used, "
             f"{self.fit['cohort_count']} cohorts",
+            *self._feature_lines(),
         ]
         lines += _metric_lines(self.validation)
         if self.test is not None:
@@ -132,6 +133,18 @@ class EvaluationReport:
         lines += ["", "Limitations:"]
         lines += [f"  - {item}" for item in self.limitations]
         return "\n".join(lines)
+
+    def _feature_lines(self) -> list[str]:
+        """State which status the cohorts are keyed by and what the estimator reads."""
+        columns = " + ".join(self.fit["asof_status_columns"]) or "no status column"
+        line = (
+            f"Cohorts: keyed by {self.features['cohort_semantics']} from {columns}; "
+            f"read by the estimator: {', '.join(self.features['used_by_estimator'])}"
+        )
+        unused = self.features["not_used_by_estimator"]
+        if unused:
+            line += f"; derived but not read: {', '.join(unused)}"
+        return [line]
 
 
 def _fmt(value: float | None) -> str:
@@ -265,11 +278,17 @@ def build_report(
         split=describe_split(split),
         features={
             "columns": list(FEATURE_COLUMNS),
+            "used_by_estimator": list(metadata.features_used),
+            "not_used_by_estimator": [
+                column for column in FEATURE_COLUMNS if column not in metadata.features_used
+            ],
+            "cohort_semantics": metadata.cohort_semantics,
             "feature_schema_version": metadata.feature_schema_version,
             "availability": (
-                "Every feature is derived from the initial status, the most recent "
-                "observation and its date. No outcome label, post-chart status or "
-                "later observation is available to the estimator."
+                "Every feature is derived from the initial status, the as-of status "
+                "(current_status when the source recorded one, otherwise "
+                "initial_status) and its date. No outcome label, post-chart status "
+                "or later observation is available to the estimator."
             ),
         },
         fit=fit.to_dict(),

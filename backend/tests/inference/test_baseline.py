@@ -45,9 +45,10 @@ def loaded_baseline(table, min_sample_threshold=10, provenance=None) -> Historic
 
 
 def estimate(baseline, raw="GNWL/15", class_code="SL", quota_code="GN", pid="p-1"):
+    """`raw` is the status held as of the moment being estimated."""
     return baseline.estimate(
         passenger_id=pid,
-        parsed_status=parse_status(raw),
+        asof_status=parse_status(raw),
         class_code=class_code,
         quota_code=quota_code,
     )

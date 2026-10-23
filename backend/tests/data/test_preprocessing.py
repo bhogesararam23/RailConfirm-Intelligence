@@ -11,16 +11,20 @@ import pytest
 
 from railconfirm.data.loader import load_dataset_file
 from railconfirm.data.preprocessing import (
+    ASOF_STATUS_FEATURE,
     FEATURE_COLUMNS,
     FEATURE_SCHEMA_VERSION,
     LABEL_COLUMNS,
+    asof_statuses,
     assert_no_label_columns,
     chronological_split,
     extract_features,
     feature_frame,
+    require_status_columns,
     strip_labels,
 )
 from railconfirm.domain.exceptions import DatasetValidationError
+from railconfirm.inference.baseline import COHORT_FEATURES
 
 ROWS = [
     {
@@ -61,7 +65,18 @@ def dates(count: int) -> pd.DataFrame:
 def test_features_expose_the_declared_schema():
     features = feature_frame(strip_labels(frame(ROWS)))
     assert list(features.columns) == list(FEATURE_COLUMNS)
-    assert FEATURE_SCHEMA_VERSION == "2.0.0"
+    # Pinned so a bump is a decision: 3.0.0 names the derived status columns asof_*
+    # and falls back to initial_status per row when current_status is blank.
+    assert FEATURE_SCHEMA_VERSION == "3.0.0"
+
+
+def test_the_features_an_artifact_declares_exist_in_this_schema():
+    """Artifacts name consumed features with these column names.
+
+    The check crosses the boundary on purpose: a declaration that names a column
+    this module does not produce would be unverifiable at load time."""
+    assert set(COHORT_FEATURES) <= set(FEATURE_COLUMNS)
+    assert ASOF_STATUS_FEATURE in FEATURE_COLUMNS
 
 
 def test_features_never_read_the_outcome_label():
@@ -96,7 +111,7 @@ def test_missing_positions_stay_unknown_rather_than_zero():
     rows = [{"journey_date": "2026-10-01", "initial_status": "GNWL", "current_status": "CNF"}]
     features = extract_features(frame(rows))
     assert pd.isna(features["init_position"].iloc[0])
-    assert pd.isna(features["obs_position"].iloc[0])
+    assert pd.isna(features["asof_position"].iloc[0])
     assert pd.isna(features["queue_ratio"].iloc[0])
 
 
@@ -106,7 +121,7 @@ def test_positions_are_parsed_when_present():
     ]
     features = extract_features(frame(rows))
     assert features["init_position"].iloc[0] == 40
-    assert features["obs_position"].iloc[0] == 10
+    assert features["asof_position"].iloc[0] == 10
     assert features["queue_ratio"].iloc[0] == pytest.approx(0.25)
 
 
@@ -114,6 +129,63 @@ def test_invalid_position_token_is_unknown_not_zero():
     rows = [{"journey_date": "2026-10-01", "initial_status": "GNWL/0", "current_status": "CNF"}]
     features = extract_features(frame(rows))
     assert pd.isna(features["init_position"].iloc[0])
+
+
+# ── The as-of status rule, shared by fitting, scoring and serving ──────────────
+
+
+def test_the_asof_status_is_the_current_observation_when_recorded():
+    """A booking that moved does not stay described by the status it was bought in."""
+    statuses = asof_statuses(frame([{"initial_status": "GNWL/40", "current_status": "RAC 6"}]))
+    assert statuses[0].normalized.value == "RAC"
+
+
+@pytest.mark.parametrize("blank", ["", None, pd.NA, "NA", "null", "  "])
+def test_a_blank_current_status_falls_back_to_the_booked_status(blank):
+    """Regression: an empty current_status became UNKNOWN and abstained.
+
+    A source that recorded no later look has not made the status unknown; the last
+    status it saw was the initial one, and pretending otherwise would abstain on
+    most of a legitimately sparse file."""
+    statuses = asof_statuses(frame([{"initial_status": "GNWL/40", "current_status": blank}]))
+    assert statuses[0].normalized.value == "WL"
+
+
+def test_an_unmappable_asof_status_is_unknown_rather_than_the_initial_status():
+    """The fallback is for absence, not for values the mapping cannot read."""
+    statuses = asof_statuses(frame([{"initial_status": "GNWL/40", "current_status": "WEIRD"}]))
+    assert statuses[0].normalized.value == "UNKNOWN"
+
+
+def test_a_frame_with_neither_status_column_is_refused():
+    with pytest.raises(DatasetValidationError, match="as-of status"):
+        asof_statuses(frame([{"journey_date": "2026-10-01", "class_code": "SL"}]))
+
+
+def test_require_status_columns_names_what_it_needs():
+    with pytest.raises(DatasetValidationError, match="initial_status"):
+        require_status_columns(frame([{"class_code": "SL"}]), where="fit_cohorts")
+
+
+def test_a_current_status_only_frame_still_has_an_asof_status():
+    statuses = asof_statuses(frame([{"current_status": "RLWL/3"}]))
+    assert statuses[0].normalized.value == "WL"
+
+
+def test_an_initial_status_only_frame_is_its_own_asof_status():
+    statuses = asof_statuses(frame([{"initial_status": "RLWL/3"}]))
+    assert statuses[0].normalized.value == "WL"
+
+
+def test_extract_features_uses_the_same_asof_rule():
+    """The feature frame cannot disagree with the function the fitter calls."""
+    rows = [
+        {"initial_status": "GNWL/40", "current_status": "RAC 6"},
+        {"initial_status": "GNWL/40", "current_status": ""},
+    ]
+    features = extract_features(frame(rows))
+    assert list(features["asof_normalized"]) == ["RAC", "WL"]
+    assert list(features["init_normalized"]) == ["WL", "WL"]
 
 
 def test_lead_days_is_null_for_unparseable_dates():

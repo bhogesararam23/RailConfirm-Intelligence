@@ -18,6 +18,7 @@ from typing import Any
 
 import pandas as pd
 
+from railconfirm.data.preprocessing import INITIAL_STATUS_COLUMN, asof_statuses
 from railconfirm.domain.exceptions import DatasetValidationError
 from railconfirm.domain.prediction import PassengerOutcome, PredictionTarget
 from railconfirm.domain.status import ParsedStatus, parse_status
@@ -241,6 +242,29 @@ def _reliability(
     }
 
 
+def _slices(
+    row: pd.Series, frame: pd.DataFrame, asof: ParsedStatus
+) -> list[tuple[str, str]]:
+    """The segments one scored row belongs to.
+
+    Statuses are sliced by normalized category: "GNWL/10" and "RLWL/3" are different
+    queues but the same population for scoring, and a per-raw-string slice would
+    fragment every metric into ones. Both the booking status and the as-of status are
+    reported, because the difference between them is exactly what a cohort-keyed
+    mismatch would otherwise hide.
+    """
+    slices: list[tuple[str, str]] = []
+    if INITIAL_STATUS_COLUMN in frame.columns:
+        slices.append(
+            ("initial_status", parse_status(str(row[INITIAL_STATUS_COLUMN])).normalized.value)
+        )
+    slices.append(("asof_status", asof.normalized.value))
+    for column in ("class_code", "quota_code"):
+        if column in frame.columns:
+            slices.append((column, str(row[column]).strip().upper()))
+    return slices
+
+
 def score_partition(
     frame: pd.DataFrame,
     estimator: HistoricalFrequencyBaseline,
@@ -253,9 +277,11 @@ def score_partition(
 ) -> Scorecard:
     """Score one partition with the estimator that would serve it in production.
 
-    The estimator is the same object inference uses, so a metric computed here cannot
-    describe a code path the product does not run. ``target`` selects which event the
-    headline numbers describe; the full distribution is always scored as well.
+    The estimator is the same object inference uses, and the status each row is
+    queried with comes from the same :func:`asof_statuses` call the fitter used, so a
+    metric computed here cannot describe a code path the product does not run or a
+    cohort the table was never keyed by. ``target`` selects which event the headline
+    numbers describe; the full distribution is always scored as well.
     """
     if target not in TARGET_EVENTS:
         raise DatasetValidationError(
@@ -270,6 +296,7 @@ def score_partition(
         )
 
     event_classes = TARGET_EVENTS[target]
+    statuses = asof_statuses(frame)
     predictions: list[dict[str, float]] = []
     truths: list[dict[str, float]] = []
     event_pairs: list[tuple[float, float]] = []
@@ -282,16 +309,15 @@ def score_partition(
     event_loss_total = 0.0
     event_baseline_total = 0.0
 
-    for _, row in frame.iterrows():
+    for (_, row), asof in zip(frame.iterrows(), statuses, strict=True):
         truth = _outcome_vector(parse_status(str(row["final_chart_status"])))
         if not truth:
             abstained += 1
             continue
 
-        current_column = "current_status" if "current_status" in frame.columns else "initial_status"
         outcome = estimator.estimate(
             passenger_id=str(row.get("passenger_record_id", "row")),
-            parsed_status=parse_status(str(row[current_column])),
+            asof_status=asof,
             class_code=str(row.get("class_code", "")),
             quota_code=str(row.get("quota_code", "")),
         )
@@ -317,22 +343,7 @@ def score_partition(
             _event_probability(prevalence, event_classes) - event_observed
         ) ** 2
 
-        for dimension, column in (
-            ("initial_status", "initial_status"),
-            ("class_code", "class_code"),
-            ("quota_code", "quota_code"),
-        ):
-            if column not in frame.columns:
-                continue
-            raw = str(row[column]).strip().upper()
-            # Statuses are segmented by normalized category: "GNWL/10" and
-            # "RLWL/3" are different queues but the same population for scoring,
-            # and a per-raw-string slice would fragment every metric into ones.
-            value = (
-                parse_status(raw).normalized.value
-                if dimension == "initial_status"
-                else raw
-            )
+        for dimension, value in _slices(row, frame, asof):
             bucket = segment_rows.setdefault((dimension, value), [])
             bucket.append((brier, 1.0))
 

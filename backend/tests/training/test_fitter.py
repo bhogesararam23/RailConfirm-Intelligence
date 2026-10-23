@@ -1,16 +1,24 @@
-"""Tests for baseline fitting: partition discipline, exclusions and promotion."""
+"""Tests for baseline fitting: partition discipline, cohort keys and promotion."""
 
+import re
 from datetime import date
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
-from railconfirm.data.preprocessing import chronological_split
+from railconfirm.data.loader import load_dataset_file
+from railconfirm.data.preprocessing import ASOF_STATUS_FEATURE, asof_statuses, chronological_split
 from railconfirm.domain.exceptions import DatasetValidationError
 from railconfirm.domain.status import MAPPING_VERSION
 from railconfirm.inference.artifacts import PROMOTION_APPROVED, load_artifact
-from railconfirm.inference.baseline import BROAD_COHORT_STATUS
+from railconfirm.inference.baseline import (
+    BROAD_COHORT_STATUS,
+    COHORT_FEATURES,
+    COHORT_STATUS_SEMANTICS,
+    FrequencyTableProvenance,
+    cohort_key,
+)
 from railconfirm.inference.registry import ArtifactStatus, ModelRegistry
 from railconfirm.training.dataset import load_approved_dataset
 from railconfirm.training.fitter import (
@@ -20,9 +28,11 @@ from railconfirm.training.fitter import (
     prevalence_distribution,
     write_fitted_artifact,
 )
+from railconfirm.training.metrics import build_estimator
 from tests.support.datasets import (
     write_approved_manifest,
     write_dataset,
+    write_moving_dataset,
 )
 
 
@@ -97,14 +107,105 @@ def test_broad_cohort_is_fitted_alongside_exact_cells(approved):
         assert sum(fitted.cohorts[cohort].values()) >= 1
 
 
-def test_ineligible_initial_statuses_are_excluded_not_fitted(approved):
+def test_ineligible_asof_statuses_are_excluded_not_fitted(approved):
+    """The as-of status decides the cohort, so it also decides exclusion."""
     frame = approved.frame.copy()
     frame.loc[0, "initial_status"] = "CANCELLED"
     frame.loc[1, "initial_status"] = "CENSORED"
     summary = fit_cohorts(frame)
-    assert summary.excluded.get("initial_status_cancelled") == 1
-    assert summary.excluded.get("initial_status_censored") == 1
+    assert summary.excluded.get("asof_status_cancelled") == 1
+    assert summary.excluded.get("asof_status_censored") == 1
     assert summary.rows_used == len(frame) - 2
+
+
+def test_a_moved_reservation_is_fitted_into_the_cohort_it_is_queried_from(tmp_path):
+    """Regression: the table was keyed by initial_status while requests used current.
+
+    A booking seen at RAC by its observation time is evidence about RAC bookings, so
+    it must land in the RAC cell — the cell the served lookup for that record reads.
+    """
+    summary = fit_cohorts(load_dataset_file(write_moving_dataset(tmp_path)))
+
+    exact = {cohort for cohort in summary.cohorts if cohort[2] != BROAD_COHORT_STATUS}
+    assert ("SL", "GN", "RAC") in exact
+    assert summary.cohort_semantics == COHORT_STATUS_SEMANTICS
+    assert summary.asof_status_columns == ["initial_status", "current_status"]
+
+
+def test_a_fitted_cohort_is_queried_with_exactly_the_contract_it_was_built_with(tmp_path):
+    """Fit → estimator → estimate: the key asked for is the key that was counted."""
+    frame = load_dataset_file(write_moving_dataset(tmp_path))
+    summary = fit_cohorts(frame)
+    estimator = build_estimator(
+        summary.cohorts,
+        FrequencyTableProvenance(
+            dataset_id="asof-parity",
+            sha256="d" * 64,
+            source_reference="test",
+            approval_status="approved",
+            is_synthetic=True,
+            mapping_version=MAPPING_VERSION,
+            evaluation_only=True,
+        ),
+        min_sample_threshold=1,
+        laplace_alpha=1.0,
+    )
+    statuses = asof_statuses(frame)
+
+    for index, row in frame.iterrows():
+        outcome = estimator.estimate(
+            passenger_id=f"p{index}",
+            asof_status=statuses[index],
+            class_code=str(row["class_code"]),
+            quota_code=str(row["quota_code"]),
+        )
+        assert outcome.is_supported(), (index, outcome.abstention_reason)
+        cohort, _, fallback = _cohort_from_basis(outcome.basis)
+        expected = cohort_key(
+            str(row["class_code"]), str(row["quota_code"]), statuses[index].normalized.value
+        )
+        # Either the exact cohort this row's as-of status was fitted into, or that
+        # class/quota's broad cell when the exact one has no history yet.
+        assert cohort == (expected if not fallback else (expected[0], expected[1], "ALL"))
+        assert cohort in summary.cohorts
+
+
+def _cohort_from_basis(basis: str) -> tuple[tuple[str, str, str], int, bool]:
+    """Parse ``cohort=SL/GN/RAC n=12 …`` back into its parts."""
+    match = re.search(r"cohort=(\S+) n=(\d+)", basis)
+    assert match, basis
+    parts = match.group(1).split("/")
+    assert len(parts) == 3, basis
+    return cohort_key(parts[0], parts[1], parts[2]), int(match.group(2)), "fallback" in basis
+
+
+def test_fit_declares_the_features_it_consumes(tmp_path):
+    """A baseline reading three values must not be credited with the whole schema."""
+    csv = write_moving_dataset(tmp_path)
+    dataset = load_approved_dataset(
+        csv, write_approved_manifest(csv, tmp_path), allow_synthetic_for_testing=True
+    )
+    fitted = fit_baseline(dataset, version="asof_v1", min_sample_threshold=1)
+    assert fitted.metadata.features_used == COHORT_FEATURES
+    assert fitted.metadata.cohort_semantics == COHORT_STATUS_SEMANTICS
+    assert any("not read by this estimator" in item for item in fitted.metadata.limitations)
+    assert any(ASOF_STATUS_FEATURE in item for item in fitted.metadata.limitations)
+
+
+def test_an_artifact_is_written_and_read_back_with_its_cohort_contract(tmp_path):
+    csv = write_moving_dataset(tmp_path)
+    dataset = load_approved_dataset(
+        csv, write_approved_manifest(csv, tmp_path), allow_synthetic_for_testing=True
+    )
+    fitted = fit_baseline(dataset, version="asof_v1", min_sample_threshold=1)
+    loaded = load_artifact(
+        write_fitted_artifact(fitted, tmp_path / "asof_v1.json"),
+        expected_version="asof_v1",
+        expected_target="final_chart_cnf",
+        max_bytes=1_000_000,
+    )
+    assert loaded.metadata.features_used == COHORT_FEATURES
+    assert loaded.metadata.cohort_semantics == COHORT_STATUS_SEMANTICS
 
 
 def test_fit_reports_what_it_consumed(approved):

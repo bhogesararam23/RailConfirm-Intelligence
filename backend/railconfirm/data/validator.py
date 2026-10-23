@@ -11,6 +11,10 @@ The validator answers three separate questions and never conflates them:
    module can grant it.
 
 Rules follow docs/data/DATASET_INTAKE_CHECKLIST.md and docs/data/DATA_CONTRACT.md.
+
+:func:`validate_dataset` answers those questions in words; :func:`assess_dataset`
+also returns the frame restricted to the rows that survived every row-level check,
+so a caller cannot fit or score on records this module has already rejected.
 """
 
 from __future__ import annotations
@@ -231,11 +235,13 @@ class DatasetValidationReport:
         return "\n".join(lines)
 
 
-def _is_missing(value: object) -> bool:
+def is_missing(value: object) -> bool:
     """Treat pandas nulls *and* textual placeholders as absent.
 
     ``str(pd.NA)`` renders ``"<NA>"``, so a string-only check let genuinely empty
-    cells pass as populated.
+    cells pass as populated. Other data-layer modules call this rather than
+    re-deciding what counts as absent, so a blank cell cannot mean one thing to
+    the validator and another to feature construction.
     """
     if value is None:
         return True
@@ -276,7 +282,7 @@ def _context_key(row: Mapping[str, object], columns: list[str]) -> tuple[str, ..
 
 
 def _normalise_cell(value: object) -> str:
-    return "" if _is_missing(value) else _clean(value).upper()
+    return "" if is_missing(value) else _clean(value).upper()
 
 
 def _record_rejection(
@@ -298,31 +304,56 @@ def validate_dataset(
     source_name: str = "in-memory-frame",
     thresholds: EligibilityThresholds | None = None,
 ) -> DatasetValidationReport:
-    """Validate a candidate dataset frame against the row contract.
+    """Validate a candidate dataset frame and report on it.
+
+    Use :func:`assess_dataset` when the caller also needs the rows that survived;
+    this wrapper describes the file only.
+    """
+    report, _ = assess_dataset(df, source_name=source_name, thresholds=thresholds)
+    return report
+
+
+def assess_dataset(
+    df: pd.DataFrame,
+    *,
+    source_name: str = "in-memory-frame",
+    thresholds: EligibilityThresholds | None = None,
+) -> tuple[DatasetValidationReport, pd.DataFrame]:
+    """Validate a frame and return the report plus the rows that passed.
 
     Every rejected row is counted under a stable reason and the first twenty are
     kept as examples, so a report explains what happened instead of only that
     something failed.
+
+    The second return value is the same file with only rows that survived every
+    row-level check. Producing it here rather than re-filtering in the caller is
+    the point: one pass decides both verdicts, so a training frame cannot drift
+    away from the report that describes it.
     """
     rules = thresholds or EligibilityThresholds()
     columns = [str(name).strip() for name in df.columns]
-    df = df.copy()
-    df.columns = columns
+    work = df.copy()
+    work.columns = columns
+    # Positional labels, so a caller's odd or duplicated index cannot make a
+    # per-row lookup ambiguous, and the row numbers in the report count from the
+    # first data row.
+    work = work.reset_index(drop=True)
 
     report = DatasetValidationReport(
         source_name=source_name,
-        total_rows=len(df),
+        total_rows=len(work),
         valid_rows=0,
         rejected_rows=0,
         missing_columns=[c for c in REQUIRED_COLUMNS if c not in columns],
         unexpected_columns=[c for c in columns if c not in (*REQUIRED_COLUMNS, *OPTIONAL_COLUMNS)],
         absent_optional_columns=[c for c in OPTIONAL_COLUMNS if c not in columns],
     )
+    empty = work.iloc[0:0]
 
-    report.null_counts = {column: int(df[column].isna().sum()) for column in columns}
+    report.null_counts = {column: int(work[column].isna().sum()) for column in columns}
     # Placeholder strings such as "NA" arrive as ordinary text, so isna() misses them.
     report.blank_token_counts = {
-        column: int(sum(1 for value in df[column] if _is_textual_missing(value)))
+        column: int(sum(1 for value in work[column] if _is_textual_missing(value)))
         for column in columns
     }
 
@@ -332,21 +363,21 @@ def validate_dataset(
             f"Schema incomplete: missing {report.missing_columns}."
         )
         report.rejected_rows = report.total_rows
-        return report
+        return report, empty
 
     if report.total_rows == 0:
         report.eligibility_findings.append("The dataset contains no rows.")
-        return report
+        return report, empty
 
     context_columns = [column for column in CONTEXT_COLUMNS if column in columns]
 
     # ── Exact duplicate rows ───────────────────────────────────────────────────
-    duplicate_mask = df.duplicated(subset=columns, keep="first")
+    duplicate_mask = work.duplicated(subset=columns, keep="first")
     report.duplicate_rows = int(duplicate_mask.sum())
 
     # ── Contradictory labels within one reservation context ────────────────────
     labels_by_context: dict[tuple[str, ...], set[str]] = {}
-    for _, row in df.iterrows():
+    for _, row in work.iterrows():
         key = _context_key(row, context_columns)
         label = _clean(row["final_chart_status"]).upper()
         if label:
@@ -358,8 +389,9 @@ def validate_dataset(
     journey_dates: list[pd.Timestamp] = []
     observation_dates: list[pd.Timestamp] = []
     labeled_bookings: set[tuple[str, ...]] = set()
+    kept_labels: list[Any] = []
 
-    for row_index, row in df.iterrows():
+    for row_index, row in work.iterrows():
         if bool(duplicate_mask.loc[row_index]):
             report.rejected_rows += 1
             _record_rejection(
@@ -368,7 +400,7 @@ def validate_dataset(
             continue
 
         missing_required = [
-            column for column in REQUIRED_COLUMNS if _is_missing(row[column])
+            column for column in REQUIRED_COLUMNS if is_missing(row[column])
         ]
         if missing_required:
             report.rejected_rows += 1
@@ -471,6 +503,7 @@ def validate_dataset(
         journey_dates.append(journey_date)
         observation_dates.append(observation_date)
         labeled_bookings.add(key)
+        kept_labels.append(row_index)
         report.valid_rows += 1
 
     if journey_dates:
@@ -490,9 +523,15 @@ def validate_dataset(
             "Validation accounting error: rejected rows do not reconcile."
         )
 
-    _apply_eligibility_rules(df, report, rules, labeled_bookings)
-    _add_observations(df, report)
-    return report
+    _apply_eligibility_rules(report, rules, labeled_bookings)
+    _add_observations(work, report)
+    usable = work.loc[kept_labels]
+    if len(usable) != report.valid_rows:
+        raise AssertionError(
+            f"Validation accounting error: {len(usable)} rows kept but {report.valid_rows} "
+            "reported usable."
+        )
+    return report, usable.reset_index(drop=True)
 
 
 def _is_textual_missing(value: object) -> bool:
@@ -501,7 +540,6 @@ def _is_textual_missing(value: object) -> bool:
 
 
 def _apply_eligibility_rules(
-    df: pd.DataFrame,
     report: DatasetValidationReport,
     rules: EligibilityThresholds,
     labeled_bookings: set[tuple[str, ...]],
