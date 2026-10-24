@@ -1302,6 +1302,78 @@ Changed: `backend/railconfirm/data/preprocessing.py`, `backend/railconfirm/data/
   intake minimum of four distinct journey dates only barely supports. That is an intake
   requirement to raise with the reviewer, not a reason to relax a refusal.
 
+## 2026-10-24 — Paired model comparison: the locked period decides, in both directions (ADR-0021)
+
+### Scope
+Roadmap Phase 4's exit gate reads "candidate evaluated on locked later journeys and compared
+with baseline". ADR-0020 produced a candidate, and the repository still had no way to compare
+two models: each could be fitted and scored on its own split, which answers nothing. Built the
+comparison, so the promotion conversation has a number with a provenance instead of an opinion.
+
+### Why the window that chose the candidate cannot judge it
+Two purpose-built synthetic fixtures settled the design before any code was trusted:
+
+- position-informative labels: the candidate **lost validation** (Brier `0.295680 → 0.366304`,
+  delta `+0.070624`) and **won the locked period** (`0.375680 → 0.337007`, `-0.038673`; event
+  `0.184984 → 0.156482`; 62 paired wins against 18 losses). A rule that read validation, or the
+  better of the two, rejects a model that generalises.
+- position-blind labels: the candidate's event score improved on validation while the locked
+  period went backwards (`+0.172314` distribution, `+0.077057` event, 32 wins against 48
+  losses). A rule that read the flattering window would promote noise.
+
+Same code, opposite verdicts, each traceable to printed numbers. That is the mechanism being
+demonstrated, not a result about railways.
+
+### Implemented (tests first, 29 new tests)
+- `backend/railconfirm/training/compare.py` — `pair_scores`, `PairedCount`,
+  `PartitionComparison`, `decide_verdict`, `Verdict`, `run_model_comparison`,
+  `MODEL_SELECTION_METHOD`, `describe_result`. Refusals before any arithmetic: different split
+  partitions (name, boundaries, row counts), the same estimator on both sides, different
+  targets, and two unequal prevalence baselines.
+- Rows are paired by **partition position**, not by passenger identity. `ScoredRow` carries it,
+  and both models walk the same frame in the same order, so the pairing survives the models
+  abstaining on different rows. `only_baseline_scored`, `only_candidate_scored` and
+  `neither_scored` are published; none of them counts as a win.
+- The verdict is four conditions at once on the locked period — distribution Brier improved,
+  event Brier improved, coverage not worse, paired wins strictly greater than losses — with each
+  failure emitted as its own reason at its own numbers. No comparable rows, or a model that
+  scored nothing there, yields `undetermined`.
+- `training/metrics.py` — `score_partition(..., pre_scored=…)` so the aggregate card and the
+  paired counts come from one pass over the rows. The first draft named that parameter
+  `scored`, which already means "count of scored rows" inside the function; mypy caught the
+  collision before any test could.
+
+### One design point worth the argument
+Coverage is a **condition**, not a footnote. A candidate that abstains more can improve every
+average by dropping the rows it answers badly, so `coverage_delta < 0` disqualifies it however
+good its scores look, and the reason says so. Pairing itself uses the target event's squared
+error — the number a passenger is handed — while the distribution Brier must improve too, so a
+win cannot be manufactured by moving mass inside the event's complement.
+
+### Checks run and results
+- `python -m pytest tests/ -q --cov=railconfirm --cov-fail-under=90` → **947 passed**, total
+  coverage **96.17%** (exit 0). 29 of them new, in `tests/training/test_compare.py`.
+- `ruff check railconfirm/ tests/` → **All checks passed!**
+- `mypy` → **Success: no issues found in 44 source files**
+- Live `compare` runs on both fixtures: exit 0, `Verdict: candidate` and `Verdict: baseline`
+  respectively, each printing the locked-period line and its blocks. Fixtures and reports were
+  written to the OS temp directory and deleted; nothing was added under `data/` or `models/`.
+- Hygiene and the frontend gates are recorded in the next section, run after this entry.
+
+### Files
+New: `backend/railconfirm/training/compare.py`, `backend/tests/training/test_compare.py`,
+`docs/adr/ADR-0021-paired-model-comparison-on-the-locked-period.md`.
+Changed: `backend/railconfirm/training/metrics.py` (`ScoredRow.position`, `pre_scored`),
+`backend/railconfirm/training/report.py`, `backend/railconfirm/training/__main__.py`,
+`README.md`, `backend/README.md`, `CHANGELOG.md`, `docs/PROJECT_STATUS.md`,
+`docs/AGENT_HANDOFF.md`, `docs/adr/README.md`, `docs/research/EVALUATION_PROTOCOL.md`,
+`docs/DEVELOPMENT_LOG.md`.
+
+### Unresolved
+- The comparison has never judged two models on real data, and cannot until a dataset clears
+  intake. `min_band_rows` still has no CLI flag, and a McNemar-style significance test on the
+  paired counts is deliberately deferred rather than invented after seeing results.
+
 ## 2026-10-24 — Subgroup calibration measured, and a floor on what may be claimed from it
 
 ### Scope

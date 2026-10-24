@@ -153,6 +153,13 @@ Accept new features only when the preregistered evaluation shows incremental ben
 - Report failed experiments and category gaps.
 - Do not claim an accuracy threshold before actual evaluation.
 - If a candidate does not beat the baseline, report that result and revisit data or formulation.
+- Implemented (ADR-0021): `python -m railconfirm.training compare` is the acceptance rule above,
+  executed rather than advised. It chooses no metric after seeing data — the deciding partition is
+  fixed to the locked period, the paired lens is the target event, and the four conditions
+  (distribution Brier, event Brier, coverage, paired wins over losses) must all hold there. A
+  candidate that fails is reported as `baseline` with each failing condition printed at its own
+  numbers, and a locked period with no rows both models answered is `undetermined` rather than a
+  tie. Neither model is promoted by the run.
 - Synthetic data is allowed for unit and UI tests, but must not appear in empirical performance reporting.
 
 ## Minimum experiment record

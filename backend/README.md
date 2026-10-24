@@ -219,8 +219,9 @@ backend/
       calibration.py      — Platt slope/intercept fitting with refusal conditions
       origins.py          — Rolling-origin refit and per-cutoff scoring
       decay.py            — One frozen artifact scored on each successive horizon
+      compare.py          — Paired baseline-vs-candidate comparison and verdict
       report.py           — Byte-reproducible JSON evaluation reports
-      __main__.py         — `fit`, `evaluate`, `origins` and `decay` commands
+      __main__.py         — `fit`, `evaluate`, `origins`, `decay` and `compare`
   tests/
     domain/               — Status, journey, passenger, prediction tests
     inference/            — Baseline, group, calibration, registry and engine tests
@@ -378,6 +379,11 @@ python -m railconfirm.training decay data/processed/dataset.csv data/manifests/s
   --artifact models/baseline_v1.json --horizon-dates 2 --step-dates 2 \
   --report reports/decay.json --generated-on 2026-10-23
 
+# fit both estimators on one split and judge the candidate on the locked period
+python -m railconfirm.training compare data/processed/dataset.csv data/manifests/set.yaml \
+  --version v3 --candidate-estimator cohort_position_baseline --report reports/compare.json \
+  --generated-on 2026-10-23
+
 # fit the baseline and add a logistic calibration layer measured on the locked test
 python -m railconfirm.training fit data/processed/dataset.csv data/manifests/set.yaml \
   --version baseline_v2 --out models/baseline_v2.json \
@@ -472,6 +478,15 @@ Eligibility thresholds were NOT met; fitted only because this is a labelled synt
   numbers the correction's residual error. Segments below the scorecard's row floor (default 25)
   are flagged `low_sample` and carry no claim in either direction; when none clears the floor the
   conclusion says subgroup calibration cannot be claimed rather than quoting a thin cohort.
+- Model comparison (`compare`, ADR-0021) answers Phase 4's exit gate. Both estimators are
+  fitted on **one split** — the run refuses different partitions, different targets, the same
+  estimator on both sides, or two different prevalence baselines — and rows are paired by
+  **partition position**, the key that still matches reservations up when the two models abstain
+  on different rows. The verdict reads the **locked period** and requires four things at once:
+  distribution Brier improved, event Brier improved, coverage not worse, and strictly more
+  paired wins than losses. Anything else prints `baseline` with each failing condition at its
+  own numbers; a locked period with no rows both models answered is `undetermined`, which is not
+  a pass. No flag lets a caller choose the deciding window.
 - Not implemented: a per-segment calibration correction, and any number computed from approved
   real data. The reports state both limits in their own words.
 
