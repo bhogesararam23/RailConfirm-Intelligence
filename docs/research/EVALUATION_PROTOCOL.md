@@ -79,6 +79,18 @@ Not implemented: empirical copula/correlation group models fitted on real data (
 4. A joint/group-outcome method evaluated against a documented baseline.
 5. Context-augmented variants, introduced one feature group at a time.
 
+Implemented so far: baseline 1 (`historical_frequency_baseline`) and baseline 2 partially, as
+`cohort_position_baseline` — cohort key plus the as-of queue position in fixed doubling bands
+(ADR-0020). Time remaining is **not** read by either estimator: `lead_days` is derived and
+published as unused, and a model that consulted it would have to be re-examined for the
+leakage rule the feature schema already enforces. Baselines 3–5 need both an approved dataset
+and, for 4, real multi-passenger bookings; nothing has been fitted on real data.
+
+Choosing between two estimators is not a matter of which produces the prettier number on one
+split: ADR-0021 defines the paired comparison on a locked later period that decides whether a
+candidate may replace the baseline, including what happens when a candidate wins on validation
+and loses on the locked test.
+
 Do not choose algorithms before understanding the actual sample size, class imbalance, missingness, label quality and feature coverage.
 
 ## Metrics

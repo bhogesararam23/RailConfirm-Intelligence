@@ -2,7 +2,7 @@
 
 Python backend implementing the domain model, prediction API, and local data pipeline.
 
-**Status:** Roadmap Phases 0–7 local-first core: domain contracts, dataset intake with an eligibility-enforced training gate, reproducible baseline fitting and temporal evaluation (single-split and rolling-origin), dependent group outcome distributions, optional logistic calibration, opt-in prediction history and a gated model registry. **No trained model is currently available to serve,** because no candidate dataset has cleared the intake checklist and nothing has been fitted on real railway data; the inference engine therefore returns structured abstention responses for all requests. This is expected behavior, not a placeholder.
+**Status:** Roadmap Phases 0–7 local-first core: domain contracts, dataset intake with an eligibility-enforced training gate, reproducible baseline fitting and temporal evaluation (single-split, rolling-origin and frozen-artifact decay), two estimators (cohort frequency and cohort-position), dependent group outcome distributions, optional logistic calibration with subgroup measurement, opt-in prediction history and a gated model registry. **No trained model is currently available to serve,** because no candidate dataset has cleared the intake checklist and nothing has been fitted on real railway data; the inference engine therefore returns structured abstention responses for all requests. This is expected behavior, not a placeholder.
 
 ## Prerequisites
 
@@ -203,6 +203,7 @@ backend/
       engine.py           — Abstention-first dispatch
       artifacts.py        — JSON model artifact format and validation
       baseline.py         — Historical frequency baseline (requires approved provenance)
+      queue.py            — Cohort estimator split by as-of queue position bands (ADR-0020)
       calibration.py      — Logistic correction applied identically in scoring and serving
       group.py            — Poisson-binomial group distribution and queue-clearing bounds
       registry.py         — Model artifact resolution and promotion gate
@@ -226,7 +227,7 @@ backend/
     api/                  — Prediction, health and history endpoint tests
     data/                 — Loader, validator, preprocessing, rolling-origin and decay-window tests
     storage/              — Opt-in history tests
-    training/             — Gate, fitter, metrics, calibration, cohort-parity, decay and report tests
+    training/             — Gate, fitter, metrics, calibration, cohort-parity, decay, pipeline and report tests
     support/              — Shared synthetic artifact and dataset fixtures
     fixtures/             — Clearly labelled SYNTHETIC test fixtures only
 ```
@@ -268,6 +269,36 @@ A file appearing in `models/` does not activate it. Resolution reports which gat
 | `not_promoted` | Metadata does not declare approval for use | `no_trained_model` |
 | `data_not_approved` | Fitted from unapproved or synthetic data | `no_approved_data` |
 | `ready` | Serves estimates for the requested target | — |
+
+### Two estimators, two artifact shapes (ADR-0020)
+
+| Estimator | Format id | Reads | Payload |
+|---|---|---|---|
+| `historical_frequency_baseline` | `railconfirm.frequency-baseline/2` | class, quota, as-of status | cohort counts |
+| `cohort_position_baseline` | `railconfirm.cohort-position-baseline/1` | class, quota, as-of status, **as-of queue position** | cohort counts plus band cells keyed `CLASS\|QUOTA\|STATUS\|BAND` |
+
+The position model keeps the cohort key and splits each cohort by fixed doubling bands —
+`1, 2-3, 4-7, 8-15, 16-31, 32-63, 64-127, 128+` — because cut points derived from the training
+file would move when the file moves, making two artifacts non-comparable and letting a served
+probability depend on which rows happened to be in the fitting period. A band below
+`min_band_rows` (recorded in the artifact, default 2) does not answer: the cohort rate does, and
+the `basis` string says that is what happened. A status with no position token is unknown, not
+first in the queue.
+
+`load_artifact()` refuses a file whose shape and declaration disagree, in every direction:
+format against estimator, unknown estimator, `features_used` that does not match the declared
+estimator, band cells on a frequency artifact, a position artifact with no band cells, a
+three-part band key, and malformed band counts. `write_artifact()` refuses the same mismatches,
+so a confusing file cannot be produced either. Nothing may assemble an estimator from a cohort
+table by hand: serving uses `LoadedArtifact.estimator()` and offline evaluation uses
+`estimator_for(provenance)`, both of which dispatch on the declaration. That rule is not
+theoretical — decay initially built every artifact with the frequency builder and reported a
+position artifact as identical to the flat model.
+
+Calibration, promotion gates and group arithmetic are unchanged and apply to either estimator.
+Whether the position model is any good is a question for `compare` (ADR-0021) and for real data:
+on the labelled synthetic fixture it is worse than the flat baseline, because that fixture's
+labels do not depend on position.
 
 ## Status mapping
 
@@ -352,6 +383,11 @@ python -m railconfirm.training fit data/processed/dataset.csv data/manifests/set
   --version baseline_v2 --out models/baseline_v2.json \
   --report reports/baseline_v2.json --generated-on 2026-10-23 \
   --calibrate --calibrate-min-rows 50
+
+# fit the position-aware cohort model instead of the flat one (ADR-0020)
+python -m railconfirm.training fit data/processed/dataset.csv data/manifests/set.yaml \
+  --version queue_v1 --out models/queue_v1.json \
+  --estimator cohort_position_baseline --min-sample-threshold 30
 ```
 
 A successful `fit` writes `promotion: "candidate"`, so nothing starts serving; activation

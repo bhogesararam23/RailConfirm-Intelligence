@@ -100,6 +100,38 @@ its result, so a table cannot be built from one column and queried from another.
 `cohort_key()` normalises the components at both ends; status categories are expected,
 not raw strings.
 
+### Two estimators, one request shape (ADR-0020)
+
+The cohort key answers a queue as one average. A reservation first in the waitlist and one two
+hundred deep get the same number, which describes the cohort but not the queue. The position
+estimator keeps that key and splits each cohort by the **as-of queue position**, taken from the
+same parsed status that supplies the key — never a second column — into fixed doubling bands:
+`1, 2-3, 4-7, 8-15, 16-31, 32-63, 64-127, 128+`.
+
+Fixed widths are the point. Cuts derived from the training file would move when the file moves,
+so two artifacts would not be comparable and a served probability would depend on which rows
+happened to be in the fitting period.
+
+Three refusals define the behaviour:
+
+- **A thin band does not answer.** Below `min_band_rows` (default 2, recorded on the artifact
+  because it changes the number) the cohort rate answers and `basis` says
+  `band=8-15 n=1 below the 2-row band floor, cohort rate used`. One row cannot express a rate;
+  it expresses one outcome.
+- **An absent position stays absent.** A status written without a position token yields `None`,
+  answered from the cohort with `as-of queue position unavailable` in the basis. Banding it as
+  first in the queue would give the most confident answer to the reservation about which the
+  source said least — the same fabrication the feature schema refuses for `lead_days`.
+- **A mismatched artifact is refused at load.** Format, estimator, `features_used` and the band
+  block must agree in both directions; `write_artifact` refuses to create the mismatch and
+  `load_artifact` refuses to read one, which surfaces as `model_artifact_invalid`.
+
+The response shape does not change: `p_*`, `basis`, `model_version` and `limitations` mean the
+same thing for either estimator, and calibration, promotion gates and group arithmetic apply to
+whichever model produced the passengers. Whether the position model deserves promotion is an
+empirical question (ADR-0021) never yet asked of real data; on the labelled synthetic fixture it
+loses to the flat baseline, because that fixture's outcomes do not depend on position.
+
 ### What a served probability has been through
 
 A frequency table is smoothed toward the base rate on purpose, which is honest about small samples and wrong about

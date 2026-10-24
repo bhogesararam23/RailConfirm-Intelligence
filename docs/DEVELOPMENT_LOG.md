@@ -1398,3 +1398,120 @@ Changed: `backend/railconfirm/training/metrics.py`, `backend/railconfirm/trainin
   counts, and a fake precision would be worse than a point estimate with a flag. Deferred, not
   rejected.
 
+## 2026-10-24 — A second estimator that reads the queue position (ADR-0020)
+
+### Scope
+`FEATURE_COLUMNS` has derived `asof_position` since schema 3.0.0, and after ADR-0013 the report
+says plainly which of those columns the served estimator reads: three of eight. A flat cohort
+rate answers a passenger first in the waitlist and one two hundred deep with the same number —
+an average over a queue, not a model of one. The evaluation protocol has listed "status-and-time
+baseline using current normalized status, queue position and time remaining" as baseline 2 since
+Phase 3, and roadmap Phase 4 is named after calibrating candidates that do not exist. Built the
+candidate, before data could make its verdict convenient, for the same reason ADR-0014 and
+ADR-0018 built the temporal paths: the first run after intake is the run that gets quoted.
+
+### Implemented (tests first, 94 new tests)
+- `backend/railconfirm/inference/queue.py` (new) — `CohortPositionBaseline`, `position_band`,
+  `normalize_band_table`, `QUEUE_ESTIMATOR_ID`, `QUEUE_FEATURES`, `QUEUE_ARTIFACT_FORMAT`,
+  `DEFAULT_MIN_BAND_ROWS = 2`. Each cohort key is kept and split by **fixed doubling bands**
+  (`1, 2-3, 4-7, 8-15, 16-31, 32-63, 64-127, 128+`).
+- `inference/baseline.py` — `ProbabilityEstimator` protocol (what engine/registry/evaluator
+  need from either model), the `validate_outcome_counts` rename so band cells are checked by
+  the same rule as cohort cells, and `estimate(..., asof_position=None)` on the frequency
+  baseline — accepted and ignored, pinned by a test that byte-compares its output with and
+  without the position.
+- `inference/artifacts.py` — second format, `bands` on `LoadedArtifact`, dispatch via
+  `estimator()` / `estimator_for(provenance)`, estimator-aware `features_used` requirement,
+  `min_band_rows` recorded only for the model that uses it, and refusals in both directions at
+  load and at write.
+- `inference/engine.py`, `inference/registry.py` — serve through the declaration: the engine
+  passes `asof_position=parsed.position`, the registry builds whatever the artifact names.
+- `training/fitter.py` — `fit_cohorts(..., with_bands=)` fills band cells in the same single
+  pass that fills cohorts (one loop, so the two cannot drift), `FitSummary` reports
+  `estimator`/`band_count`/`rows_without_position`, `fit_baseline(estimator=…)` refuses an
+  unknown name instead of defaulting, and the limitation text differs per model: the frequency
+  artifact still says positions are derived-but-unread.
+- `training/metrics.py` — `score_rows` passes `asof_position=asof.position`, the same parsed
+  status that supplies the cohort key.
+- `training/decay.py`, `training/__main__.py` — decay and `evaluate` build the estimator from
+  the artifact rather than from the cohort table; `fit --estimator cohort_position_baseline`
+  prints `Estimator:` and `Bands: N position cells (M training rows carried no position)`.
+
+### A latent defect the new model exposed
+`frozen_decay_estimator()` constructed every artifact with `build_estimator(loaded.cohorts, …)`.
+With only one estimator that was correct; the moment a position artifact existed it silently
+scored the flat model and reported **identical numbers** for the two. Caught by a live run, then
+by a test written before the fix:
+
+```
+$ python -m railconfirm.training decay … --artifact pos_v1.json --horizon-dates 2 --step-dates 2
+  (before the fix) event 0.240085 / 0.239960 — identical to flat_v1, i.e. bands never read
+  (after  the fix) event 0.246575 / 0.275914, drift +0.029339, 0/2 horizons beat the baseline
+```
+The defect could not have affected any artifact that could exist before this change, so it is
+recorded here and in ADR-0020 rather than as a user-visible fix. `evaluate` had the same shape
+and went the same way.
+
+### Live runs (labelled synthetic fixtures, OS temp directory, nothing committed)
+```
+$ python -m railconfirm.training fit … --version pos_v1 --estimator cohort_position_baseline \
+    --min-sample-threshold 5 --allow-synthetic-for-testing
+Used 160 of 160 training rows
+Estimator: cohort_position_baseline
+Cohorts: 4
+Bands: 12 position cells (0 training rows carried no position)
+exit 0
+
+$ python -m railconfirm.training evaluate … --artifact flat_v1.json    # exit 0
+  validation Brier 0.480955 (baseline 0.48), event Brier 0.240085 (baseline 0.24)
+  test       Brier 0.480489 (baseline 0.48), event Brier 0.239960 (baseline 0.24)
+
+$ python -m railconfirm.training evaluate … --artifact pos_v1.json     # exit 0
+  validation Brier 0.495196 (baseline 0.48), event Brier 0.246575 (baseline 0.24)
+  test       Brier 0.566032 (baseline 0.48), event Brier 0.275914 (baseline 0.24)
+
+$ python -m railconfirm.training decay … --artifact pos_v1.json --horizon-dates 2 --step-dates 2
+Drift across 2 horizons (2 scored): event Brier 0.246575 -> 0.275914 (0.029339), coverage 1.0 -> 1.0
+  event beat the frozen base rate in 0/2 scored horizons
+exit 0
+```
+The position model is **worse** here, and that is the honest reading: the balanced fixture's
+labels are generated independently of queue position, so banding a cohort adds variance without
+adding signal. It is not evidence about railways in either direction — no approved dataset
+exists — and it is exactly why ADR-0021's paired comparison has to be the thing that decides
+promotion rather than whichever number looks better on one split.
+
+### Checks run and results
+- `python -m pytest tests/ -q --cov=railconfirm --cov-fail-under=90` → **918 passed** in 273.37s,
+  total coverage **96.24%** (exit 0).
+- `ruff check railconfirm/ tests/` → **All checks passed!** (after `--fix` on import ordering and
+  removal of a now-unused `build_estimator` import in two modules).
+- `mypy` → **Success: no issues found in 43 source files** (a `Protocol` with a settable
+  `is_loaded` attribute was rejected against the classes' read-only properties; declared it as a
+  property in the protocol).
+- `python scripts/check_repository_hygiene.py` → passed (recorded below after this entry).
+- Frontend: no frontend file changed; its gates were green in this session at 115 tests with
+  clean type-check, lint and build, and are re-run before the push recorded below.
+
+### Files
+New: `backend/railconfirm/inference/queue.py`,
+`backend/tests/inference/test_queue_model.py`,
+`backend/tests/inference/test_queue_artifact.py`,
+`backend/tests/training/test_queue_pipeline.py`,
+`docs/adr/ADR-0020-cohort-position-estimator-and-a-second-artifact-format.md`.
+Changed: `inference/baseline.py`, `inference/artifacts.py`, `inference/engine.py`,
+`inference/registry.py`, `training/fitter.py`, `training/metrics.py`, `training/decay.py`,
+`training/__main__.py`, `tests/support/artifacts.py`, `tests/inference/test_registry.py`,
+`README.md`, `backend/README.md`, `CHANGELOG.md`, `docs/PROJECT_STATUS.md`,
+`docs/AGENT_HANDOFF.md`, `docs/adr/README.md`, `docs/architecture/API_CONTRACT.md`,
+`docs/research/EVALUATION_PROTOCOL.md`,
+`docs/technical/INFERENCE_AND_GROUP_PROBABILITIES.md`, `docs/DEVELOPMENT_LOG.md`.
+
+### Unresolved
+- Whether the position estimator beats the flat one is unanswered, and unanswerable here: it
+  needs real queue behaviour. The comparison harness (ADR-0021) is the next piece.
+- Time remaining (`lead_days`) is still derived and unread. Adding it to a model means
+  re-examining the leakage rule at the same time, not just widening `features_used`.
+- `min_band_rows` has no CLI flag; it is settable through the fitting API and recorded on the
+  artifact. Documented as such rather than implied.
+
