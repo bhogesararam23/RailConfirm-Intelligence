@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import math
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -36,6 +36,15 @@ from railconfirm.inference.calibration import (
     CalibrationSpec,
     spec_from_mapping,
 )
+from railconfirm.inference.queue import (
+    DEFAULT_MIN_BAND_ROWS,
+    QUEUE_ARTIFACT_FORMAT,
+    QUEUE_ESTIMATOR_ID,
+    QUEUE_FEATURES,
+    BandKey,
+    CohortPositionBaseline,
+    normalize_band_table,
+)
 
 ARTIFACT_FORMAT = "railconfirm.frequency-baseline/2"
 """Artifact format identifier. Bump when the JSON layout changes.
@@ -45,7 +54,22 @@ table that does not say which status its cohorts were built from cannot be shown
 be queried with the same rule the product uses."""
 
 ESTIMATOR_HISTORICAL_FREQUENCY = "historical_frequency_baseline"
-"""The only estimator this build knows how to serve."""
+"""The cohort frequency table, the first estimator this build serves."""
+
+KNOWN_FORMATS = (ARTIFACT_FORMAT, QUEUE_ARTIFACT_FORMAT)
+"""Every artifact layout this build can read.
+
+Checked before the metadata so an unrelated file is refused rather than partially
+trusted; which of the two is allowed then follows from the estimator the metadata names."""
+
+
+def format_for_estimator(estimator: str) -> str | None:
+    """The only artifact layout that can carry this estimator's arithmetic."""
+    if estimator == ESTIMATOR_HISTORICAL_FREQUENCY:
+        return ARTIFACT_FORMAT
+    if estimator == QUEUE_ESTIMATOR_ID:
+        return QUEUE_ARTIFACT_FORMAT
+    return None
 
 PROMOTION_APPROVED = "approved_for_local_use"
 """Metadata value required before an artifact may be promoted by configuration."""
@@ -80,6 +104,11 @@ class ModelArtifactMetadata:
     here stops a report or a reviewer from crediting the estimator with queue
     positions and lead days it never looks at."""
     cohort_semantics: str = COHORT_STATUS_SEMANTICS
+    min_band_rows: int = DEFAULT_MIN_BAND_ROWS
+    """Rows a position cell needs before it may answer; meaningless to the frequency table.
+
+    Written into the artifact rather than read from configuration, because it changes the
+    served number: the same table with a different floor is a different model."""
     """Which status the cohort keys were built from; must match the lookup rule."""
     trained_from: str | None = None
     trained_to: str | None = None
@@ -109,20 +138,46 @@ class ModelArtifactMetadata:
 
 @dataclass(frozen=True)
 class LoadedArtifact:
-    """A parsed, validated artifact: metadata plus its canonical cohort table."""
+    """A parsed, validated artifact: metadata plus the tables its estimator reads."""
 
     metadata: ModelArtifactMetadata
     cohorts: dict[tuple[str, str, str], dict[str, int]]
     path: Path
+    bands: dict[BandKey, dict[str, int]] = field(default_factory=dict)
 
-    def baseline(self) -> HistoricalFrequencyBaseline:
-        """Build the estimator this artifact declares, with matching settings."""
-        estimator = HistoricalFrequencyBaseline(
+    def estimator(self) -> HistoricalFrequencyBaseline | CohortPositionBaseline:
+        """Build exactly the estimator this artifact declares, with its own settings.
+
+        Dispatch is here rather than at the call site so a cohort table can never be
+        answered by the position arithmetic, or the reverse, because some caller imported
+        the wrong class.
+        """
+        return self.estimator_for(self.metadata.provenance())
+
+    def estimator_for(
+        self, provenance: FrequencyTableProvenance
+    ) -> HistoricalFrequencyBaseline | CohortPositionBaseline:
+        """The same construction against a caller-supplied provenance.
+
+        Offline evaluation passes ``evaluation_only`` provenance so a synthetic fixture can
+        be scored without ever becoming servable. Every other setting — cohorts, band
+        cells, threshold, smoothing, band floor — is what a request gets, so a score and a
+        served number stay one arithmetic.
+        """
+        if self.metadata.estimator == QUEUE_ESTIMATOR_ID:
+            position_model = CohortPositionBaseline(
+                min_sample_threshold=self.metadata.min_sample_threshold,
+                laplace_alpha=self.metadata.laplace_alpha,
+                min_band_rows=self.metadata.min_band_rows,
+            )
+            position_model.load_tables(self.cohorts, self.bands, provenance)
+            return position_model
+        baseline = HistoricalFrequencyBaseline(
             min_sample_threshold=self.metadata.min_sample_threshold,
             laplace_alpha=self.metadata.laplace_alpha,
         )
-        estimator.load_frequency_table(self.cohorts, self.metadata.provenance())
-        return estimator
+        baseline.load_frequency_table(self.cohorts, provenance)
+        return baseline
 
 
 def _require(condition: bool, message: str) -> None:
@@ -177,9 +232,9 @@ def metadata_from_mapping(raw: Any, *, expected_version: str, expected_target: s
         "A final-chart estimate and a departure estimate are different questions.",
     )
     _require(
-        raw["estimator"] == ESTIMATOR_HISTORICAL_FREQUENCY,
+        raw["estimator"] in (ESTIMATOR_HISTORICAL_FREQUENCY, QUEUE_ESTIMATOR_ID),
         f"Unknown estimator {raw['estimator']!r}; this build serves "
-        f"{ESTIMATOR_HISTORICAL_FREQUENCY!r} only.",
+        f"{ESTIMATOR_HISTORICAL_FREQUENCY!r} and {QUEUE_ESTIMATOR_ID!r} only.",
     )
     _require(
         _SHA256_RE.match(raw["dataset_sha256"]) is not None,
@@ -258,13 +313,19 @@ def metadata_from_mapping(raw: Any, *, expected_version: str, expected_target: s
             "without them cannot be reviewed, reproduced or applied.",
         )
 
+    expected_features = (
+        QUEUE_FEATURES
+        if raw["estimator"] == QUEUE_ESTIMATOR_ID
+        else COHORT_FEATURES
+    )
     features_used = raw.get("features_used")
     _require(
-        isinstance(features_used, list) and tuple(features_used) == COHORT_FEATURES,
-        f"Artifact features_used must be exactly {list(COHORT_FEATURES)}, got "
-        f"{features_used!r}. This build's estimator reads those three values and "
-        "nothing else; a different declaration means a different estimator or a "
-        "different cohort rule, and its numbers would not mean what this one claims.",
+        isinstance(features_used, list) and tuple(features_used) == expected_features,
+        f"Artifact features_used must be exactly {list(expected_features)} for estimator "
+        f"{raw['estimator']!r}, got {features_used!r}. That declaration is what a report "
+        "credits the model with: three names means the frequency table never looked at a "
+        "queue position, and four means it did, so the numbers would not mean what the "
+        "artifact claims.",
     )
 
     cohort_semantics = raw.get("cohort_semantics")
@@ -275,6 +336,14 @@ def metadata_from_mapping(raw: Any, *, expected_version: str, expected_target: s
         "time). Fitting on one status column and looking up another would answer with "
         "counts from a different population, so the artifact is refused instead of "
         "reinterpreted.",
+    )
+
+    min_band_rows = raw.get("min_band_rows", DEFAULT_MIN_BAND_ROWS)
+    _require(
+        isinstance(min_band_rows, int)
+        and not isinstance(min_band_rows, bool)
+        and min_band_rows >= 1,
+        f"Artifact min_band_rows must be a positive integer, got {min_band_rows!r}.",
     )
 
     trained_from = raw.get("trained_from")
@@ -313,6 +382,7 @@ def metadata_from_mapping(raw: Any, *, expected_version: str, expected_target: s
         limitations=tuple(limitations),
         features_used=tuple(features_used),
         cohort_semantics=cohort_semantics,
+        min_band_rows=int(min_band_rows),
         trained_from=trained_from,
         trained_to=trained_to,
         calibration_method=calibration_method,
@@ -377,9 +447,9 @@ def load_artifact(
     )
     declared_format = document.get("artifact_format")
     _require(
-        declared_format == ARTIFACT_FORMAT,
-        f"Artifact {path.name} declares format {declared_format!r}, expected "
-        f"{ARTIFACT_FORMAT!r}.",
+        declared_format in KNOWN_FORMATS,
+        f"Artifact {path.name} declares format {declared_format!r}, expected one of "
+        f"{list(KNOWN_FORMATS)}.",
     )
 
     metadata = metadata_from_mapping(
@@ -387,6 +457,16 @@ def load_artifact(
         expected_version=expected_version,
         expected_target=expected_target,
     )
+    expected_format = format_for_estimator(metadata.estimator)
+    assert expected_format is not None  # metadata_from_mapping has already refused others
+    _require(
+        declared_format == expected_format,
+        f"Artifact {path.name} declares format {declared_format!r} but estimator "
+        f"{metadata.estimator!r}, whose tables are laid out as {expected_format!r}. "
+        "Reading one estimator's payload with the other's arithmetic would produce "
+        "plausible numbers for the wrong model.",
+    )
+
     cohorts = _decode_cohorts(document.get("cohorts"))
     try:
         normalized = normalize_frequency_table(cohorts)
@@ -394,7 +474,63 @@ def load_artifact(
         raise ModelArtifactError(
             f"Artifact {path.name} carries an unusable cohort table: {exc}"
         ) from exc
-    return LoadedArtifact(metadata=metadata, cohorts=normalized, path=path)
+
+    bands: dict[BandKey, dict[str, int]] = {}
+    if metadata.estimator == QUEUE_ESTIMATOR_ID:
+        try:
+            bands = normalize_band_table(_decode_bands(document, path.name))
+        except FrequencyTableValidationError as exc:
+            raise ModelArtifactError(
+                f"Artifact {path.name} carries an unusable band table: {exc}"
+            ) from exc
+    else:
+        _require(
+            "bands" not in document,
+            f"Artifact {path.name} carries band cells but declares the frequency "
+            "estimator, which never reads a queue position. Either this file is the "
+            "other model or the band table would be silently ignored.",
+        )
+
+    return LoadedArtifact(
+        metadata=metadata, cohorts=normalized, path=path, bands=bands
+    )
+
+
+def _decode_bands(document: dict[str, Any], name: str) -> dict[BandKey, dict[str, int]]:
+    """Read the position cells, refusing a missing block instead of answering flat."""
+    raw_bands = document.get("bands")
+    if not isinstance(raw_bands, dict) or not raw_bands:
+        raise ModelArtifactError(
+            f"Artifact {name} declares the position estimator but carries no band cells, "
+            "so every request would be answered from the cohort — the model it does not "
+            "claim to be. Fit the position bands or declare the frequency estimator."
+        )
+    table: dict[BandKey, dict[str, int]] = {}
+    for key, counts in raw_bands.items():
+        parts = str(key).split(_COHORT_SEPARATOR)
+        _require(
+            len(parts) == 4 and all(part.strip() for part in parts),
+            f"Band key {key!r} must be a four-part key "
+            f"CLASS{_COHORT_SEPARATOR}QUOTA{_COHORT_SEPARATOR}STATUS"
+            f"{_COHORT_SEPARATOR}BAND; a three-part key names a cohort, not a band.",
+        )
+        _require(
+            isinstance(counts, dict),
+            f"Band {key!r} counts must be a JSON object.",
+        )
+        class_code, quota_code, status, band = parts
+        table[(class_code, quota_code, status, band)] = dict(counts)
+    return table
+
+
+def encode_bands(table: dict[BandKey, dict[str, int]]) -> dict[str, dict[str, int]]:
+    """Encode band cells for JSON with deterministic key order."""
+    return {
+        _COHORT_SEPARATOR.join(band_key): {
+            c: counts[c] for c in OUTCOME_CLASSES if c in counts
+        }
+        for band_key, counts in sorted(table.items())
+    }
 
 
 def encode_cohorts(table: dict[tuple[str, str, str], dict[str, int]]) -> dict[str, dict[str, int]]:
@@ -408,17 +544,51 @@ def encode_cohorts(table: dict[tuple[str, str, str], dict[str, int]]) -> dict[st
 def build_artifact_document(
     metadata: ModelArtifactMetadata,
     cohorts: dict[tuple[str, str, str], dict[str, int]],
+    bands: dict[BandKey, dict[str, int]] | None = None,
 ) -> str:
-    """Serialise an artifact deterministically so two runs can be compared."""
+    """Serialise an artifact deterministically so two runs can be compared.
+
+    The format follows the estimator rather than the caller, and the band block exists only
+    for the model that reads it: a file carrying counts its arithmetic never consults is the
+    confusion this refuses to write.
+    """
+    declared_format = format_for_estimator(metadata.estimator)
+    if declared_format is None:
+        raise ModelArtifactError(
+            f"Artifact declares unknown estimator {metadata.estimator!r}, so no payload "
+            "layout could carry it."
+        )
+    metadata_block = asdict(metadata)
+    if metadata.estimator == QUEUE_ESTIMATOR_ID:
+        if not bands:
+            raise ModelArtifactError(
+                "A cohort-position artifact with no band cells answers every request from "
+                "the cohort, which makes it the frequency-baseline artifact: write it as "
+                "that estimator, or fit the position cells."
+            )
+        payload_bands: dict[str, dict[str, int]] | None = encode_bands(
+            normalize_band_table(bands)
+        )
+    else:
+        if bands:
+            raise ModelArtifactError(
+                "The frequency-baseline declares no band table, so band cells in this "
+                "artifact would never be read. Declare the position estimator instead."
+            )
+        payload_bands = None
+        metadata_block.pop("min_band_rows", None)
+
     document = {
-        "artifact_format": ARTIFACT_FORMAT,
+        "artifact_format": declared_format,
         "metadata": {
-            **asdict(metadata),
+            **metadata_block,
             "outcome_classes": list(metadata.outcome_classes),
             "limitations": list(metadata.limitations),
         },
-        "cohorts": encode_cohorts(cohorts),
+        "cohorts": encode_cohorts(normalize_frequency_table(cohorts)),
     }
+    if payload_bands is not None:
+        document["bands"] = payload_bands
     return json.dumps(document, indent=2, sort_keys=True) + "\n"
 
 
@@ -426,11 +596,12 @@ def write_artifact(
     path: Path,
     metadata: ModelArtifactMetadata,
     cohorts: dict[tuple[str, str, str], dict[str, int]],
+    bands: dict[BandKey, dict[str, int]] | None = None,
 ) -> Path:
     """Write a validated artifact to ``path`` (a ``.json`` file under the models dir)."""
-    normalize_frequency_table(cohorts)
     if path.suffix != ".json":
         raise ModelArtifactError(f"Artifact path {path} must use the .json extension.")
+    document = build_artifact_document(metadata, cohorts, bands=bands)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(build_artifact_document(metadata, cohorts), encoding="utf-8")
+    path.write_text(document, encoding="utf-8")
     return path

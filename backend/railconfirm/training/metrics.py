@@ -26,6 +26,7 @@ from railconfirm.inference.baseline import (
     OUTCOME_CLASSES,
     FrequencyTableProvenance,
     HistoricalFrequencyBaseline,
+    ProbabilityEstimator,
 )
 from railconfirm.inference.calibration import (
     CalibrationSpec,
@@ -405,7 +406,7 @@ class RowScores:
 
 def score_rows(
     frame: pd.DataFrame,
-    estimator: HistoricalFrequencyBaseline,
+    estimator: ProbabilityEstimator,
     *,
     target: str = PredictionTarget.FINAL_CHART_CNF.value,
     calibration: CalibrationSpec | None = None,
@@ -463,6 +464,10 @@ def score_rows(
             asof_status=asof,
             class_code=str(row.get("class_code", "")),
             quota_code=str(row.get("quota_code", "")),
+            # The same as-of position a served request supplies, taken from the same
+            # parsed status the cohort key comes from. Omitting it would score a model
+            # that reads positions as if it did not (ADR-0013's rule, one estimator wider).
+            asof_position=asof.position,
         )
         observed = max(OUTCOME_CLASSES, key=lambda name: truth.get(name, 0.0))
         if gid and gid in group_members:
@@ -502,7 +507,7 @@ def score_rows(
 
 def score_partition(
     frame: pd.DataFrame,
-    estimator: HistoricalFrequencyBaseline,
+    estimator: ProbabilityEstimator,
     *,
     prevalence: Mapping[str, float],
     partition: str = "test",

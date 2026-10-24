@@ -27,7 +27,10 @@ from railconfirm.inference.artifacts import (
     LoadedArtifact,
     load_artifact,
 )
-from railconfirm.inference.baseline import HistoricalFrequencyBaseline
+from railconfirm.inference.baseline import (
+    HistoricalFrequencyBaseline,
+    ProbabilityEstimator,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -200,7 +203,7 @@ class ModelRegistry:
         self,
         target: PredictionTarget,
         fallback: HistoricalFrequencyBaseline,
-    ) -> tuple[HistoricalFrequencyBaseline, ArtifactResolution]:
+    ) -> tuple[ProbabilityEstimator, ArtifactResolution]:
         """Return the estimator to use plus the resolution that justifies it.
 
         When no artifact is ready the caller-supplied fallback is used, so the
@@ -210,4 +213,4 @@ class ModelRegistry:
         resolution = self.resolve(target)
         if not resolution.is_ready or resolution.artifact is None:
             return fallback, resolution
-        return resolution.artifact.baseline(), resolution
+        return resolution.artifact.estimator(), resolution

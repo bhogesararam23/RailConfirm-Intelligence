@@ -184,12 +184,34 @@ def test_document_level_defects_are_rejected(tmp_path, mutate, expected_fragment
         )
 
 
+def test_an_unknown_estimator_is_refused_at_write_and_at_load(tmp_path):
+    """Neither end may invent an estimator: a payload must name one this build can run.
+
+    The write and the load are asserted separately on purpose. Refusing to write such a
+    file is not the same fact as refusing to read one that arrived by another route.
+    """
+    with pytest.raises(ModelArtifactError, match="unknown estimator"):
+        write(tmp_path, estimator="gradient_boosting")
+
+    write(tmp_path)
+    path = tmp_path / "fixture_v1.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document["metadata"]["estimator"] = "gradient_boosting"
+    path.write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(ModelArtifactError, match="Unknown estimator"):
+        load_artifact(
+            path,
+            expected_version="fixture_v1",
+            expected_target=PredictionTarget.FINAL_CHART_CNF.value,
+            max_bytes=1_000_000,
+        )
+
+
 @pytest.mark.parametrize(
     "field,value,expected_fragment",
     [
         ("version", "other_v9", "declares version"),
         ("target", "final_chart_cnf_or_rac", "fitted for target"),
-        ("estimator", "gradient_boosting", "Unknown estimator"),
         ("dataset_sha256", "xyz", "64 lowercase hexadecimal"),
         ("outcome_classes", ["CNF", "RAC", "WL", "OTHER", "CANCELLED"], "must be exactly"),
         ("outcome_classes", ["CNF"], "must be exactly"),
@@ -377,7 +399,7 @@ def test_artifact_round_trip_is_deterministic(tmp_path):
 def test_loaded_artifact_carries_provenance_into_the_estimator(tmp_path):
     write(tmp_path, dataset_id="approved-set-7", data_approval_status="approved")
     resolution = registry(tmp_path).resolve(PredictionTarget.FINAL_CHART_CNF)
-    estimator = resolution.artifact.baseline()
+    estimator = resolution.artifact.estimator()
     assert estimator.provenance is not None
     assert estimator.provenance.dataset_id == "approved-set-7"
     assert estimator.provenance.approved_for_estimation()

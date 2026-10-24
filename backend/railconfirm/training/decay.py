@@ -38,16 +38,16 @@ from railconfirm.inference.artifacts import LoadedArtifact
 from railconfirm.inference.baseline import (
     COHORT_FEATURES,
     COHORT_STATUS_SEMANTICS,
-    HistoricalFrequencyBaseline,
+    ProbabilityEstimator,
 )
 from railconfirm.inference.calibration import CalibrationSpec
+from railconfirm.inference.queue import QUEUE_ESTIMATOR_ID, QUEUE_FEATURES
 from railconfirm.training.dataset import ApprovedDataset
 from railconfirm.training.fitter import fit_cohorts, prevalence_distribution
 from railconfirm.training.metrics import (
     DEFAULT_MIN_SEGMENT_ROWS,
     TARGET_EVENTS,
     Scorecard,
-    build_estimator,
     evaluation_provenance,
     score_partition,
 )
@@ -266,26 +266,28 @@ def _require_frozen_contract(loaded: LoadedArtifact) -> None:
             f"{COHORT_STATUS_SEMANTICS!r}; its decay cannot be measured with the served "
             "lookup rule because the table was not built with it."
         )
-    if tuple(metadata.features_used) != COHORT_FEATURES:
+    expected_features = (
+        QUEUE_FEATURES if metadata.estimator == QUEUE_ESTIMATOR_ID else COHORT_FEATURES
+    )
+    if tuple(metadata.features_used) != expected_features:
         raise DatasetValidationError(
             f"Artifact {metadata.version} declares features_used "
-            f"{tuple(metadata.features_used)}, but the served cohort lookup reads "
-            f"{COHORT_FEATURES}; decay of an estimator that is not the one in service "
-            "would be a number about nothing."
+            f"{tuple(metadata.features_used)}, but estimator {metadata.estimator!r} is "
+            f"served from {expected_features}; decay of an estimator that is not the one "
+            "in service would be a number about nothing."
         )
 
 
-def frozen_decay_estimator(loaded: LoadedArtifact) -> HistoricalFrequencyBaseline:
+def frozen_decay_estimator(loaded: LoadedArtifact) -> ProbabilityEstimator:
     """The artifact's own estimator, marked evaluation-only so synthetic fixtures can score.
 
-    Same cohorts, same threshold, same smoothing as `LoadedArtifact.baseline()`, which is
-    what the engine serves. The one difference is `evaluation_only` on the provenance, which
-    is how offline scoring already exercises a synthetic table; it is unreachable from the
-    serving path, so it cannot turn a fixture into a user-visible probability.
+    Built through `LoadedArtifact.estimator_for`, so a position artifact is decay-tested by
+    the arithmetic that reads its band cells. Constructing it from the cohort table alone —
+    which is what this function did first — silently evaluated every position artifact as the
+    flat baseline and reported identical numbers for two different models.
     """
     metadata = loaded.metadata
-    return build_estimator(
-        loaded.cohorts,
+    return loaded.estimator_for(
         evaluation_provenance(
             metadata.dataset_id,
             metadata.dataset_sha256,
@@ -295,9 +297,7 @@ def frozen_decay_estimator(loaded: LoadedArtifact) -> HistoricalFrequencyBaselin
             mapping_version=metadata.status_mapping_version,
             fitted_from=metadata.trained_from,
             fitted_to=metadata.trained_to,
-        ),
-        min_sample_threshold=metadata.min_sample_threshold,
-        laplace_alpha=metadata.laplace_alpha,
+        )
     )
 
 

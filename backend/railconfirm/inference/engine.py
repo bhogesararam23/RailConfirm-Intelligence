@@ -26,7 +26,9 @@ from railconfirm.domain.prediction import (
 )
 from railconfirm.domain.status import NormalizedStatus
 from railconfirm.domain.validation import validate_prediction_timing
-from railconfirm.inference.baseline import HistoricalFrequencyBaseline
+from railconfirm.inference.baseline import (
+    HistoricalFrequencyBaseline,
+)
 from railconfirm.inference.calibration import CalibrationSpec, calibrate_outcome
 from railconfirm.inference.group import compute_group_outcomes
 from railconfirm.inference.registry import ModelRegistry
@@ -149,6 +151,10 @@ class InferenceEngine:
                     asof_status=parsed,
                     class_code=journey.class_code,
                     quota_code=journey.quota_code,
+                    # The as-of status carries the position; a status written without one
+                    # gives None, which is answered from the cohort rather than banded as
+                    # "first in queue".
+                    asof_position=parsed.position,
                 )
                 if calibration is not None:
                     outcome = calibrate_outcome(calibration, outcome)

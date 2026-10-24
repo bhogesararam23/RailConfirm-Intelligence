@@ -40,7 +40,10 @@ from railconfirm.domain.exceptions import (
     ModelArtifactError,
 )
 from railconfirm.domain.status import MAPPING_VERSION
-from railconfirm.inference.artifacts import load_artifact
+from railconfirm.inference.artifacts import (
+    ESTIMATOR_HISTORICAL_FREQUENCY,
+    load_artifact,
+)
 from railconfirm.training.calibration import (
     DEFAULT_MIN_CALIBRATION_ROWS,
     CalibrationEvidence,
@@ -58,7 +61,6 @@ from railconfirm.training.fitter import (
 )
 from railconfirm.training.metrics import (
     TARGET_EVENTS,
-    build_estimator,
     evaluation_provenance,
     score_partition,
 )
@@ -94,6 +96,15 @@ def build_parser() -> argparse.ArgumentParser:
     fit.add_argument("--min-sample-threshold", type=int, default=30)
     fit.add_argument("--laplace-alpha", type=float, default=1.0)
     fit.add_argument("--notes", default=None)
+    fit.add_argument(
+        "--estimator",
+        default=ESTIMATOR_HISTORICAL_FREQUENCY,
+        help=(
+            "which model to fit and declare on the artifact: the cohort frequency table, or "
+            "the cohort-position table that also reads the as-of queue position. An unknown "
+            "name is refused rather than defaulted."
+        ),
+    )
     fit.add_argument(
         "--calibrate",
         action="store_true",
@@ -272,6 +283,7 @@ def _fit(args: argparse.Namespace) -> int:
         min_sample_threshold=args.min_sample_threshold,
         laplace_alpha=args.laplace_alpha,
         notes=args.notes,
+        estimator=args.estimator,
     )
     calibration: CalibrationEvidence | None = None
     if args.calibrate:
@@ -291,7 +303,13 @@ def _fit(args: argparse.Namespace) -> int:
     written = write_fitted_artifact(fitted, args.out)
     print(f"Wrote candidate artifact {written}")
     print(f"Used {fitted.summary.rows_used} of {fitted.summary.rows_seen} training rows")
+    print(f"Estimator: {fitted.metadata.estimator}")
     print(f"Cohorts: {len(fitted.cohorts)}")
+    if fitted.bands:
+        print(
+            f"Bands: {len(fitted.bands)} position cells "
+            f"({fitted.summary.rows_without_position} training rows carried no position)"
+        )
     if calibration is not None:
         print(f"Calibration: {calibration.spec.description}")
         print(
@@ -314,12 +332,7 @@ def _fit(args: argparse.Namespace) -> int:
             fitted_from=fitted.metadata.trained_from,
             fitted_to=fitted.metadata.trained_to,
         )
-        estimator = build_estimator(
-            fitted.cohorts,
-            provenance,
-            min_sample_threshold=args.min_sample_threshold,
-            laplace_alpha=args.laplace_alpha,
-        )
+        estimator = fitted.estimator_for(provenance)
         # Scored with the calibration the artifact now carries, so the headline numbers
         # describe the arithmetic a served request would produce.
         validation = score_partition(
@@ -397,12 +410,10 @@ def _evaluate(args: argparse.Namespace) -> int:
         fitted_from=metadata.trained_from,
         fitted_to=metadata.trained_to,
     )
-    estimator = build_estimator(
-        artifact.cohorts,
-        provenance,
-        min_sample_threshold=metadata.min_sample_threshold,
-        laplace_alpha=metadata.laplace_alpha,
-    )
+    # Built from the artifact, so a position artifact is scored by the arithmetic that reads
+    # its band cells. Building it from the cohort table alone would silently evaluate a
+    # different model than the one the file declares.
+    estimator = artifact.estimator_for(provenance)
 
     # Scored through the artifact's own calibration layer when it declares one: the
     # numbers below have to describe what a served request would emit, not a variant

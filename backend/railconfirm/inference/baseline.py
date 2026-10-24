@@ -23,6 +23,7 @@ import logging
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
 
 from railconfirm.config import settings
 from railconfirm.domain.exceptions import FrequencyTableValidationError
@@ -74,6 +75,28 @@ estimator with queue positions and lead days it never looks at."""
 DEFAULT_LAPLACE_ALPHA = 1.0
 
 _APPROVED_STATUS = "approved"
+
+
+@runtime_checkable
+class ProbabilityEstimator(Protocol):
+    """What the engine, the evaluator and the registry actually need from a model.
+
+    Two estimators now exist — the cohort frequency table and the cohort-position table —
+    and both are asked the same question with the same inputs. Naming that shared shape is
+    what stops a score computed with one from being reported as the other's.
+    """
+
+    @property
+    def is_loaded(self) -> bool: ...
+
+    def estimate(
+        self,
+        passenger_id: str,
+        asof_status: ParsedStatus,
+        class_code: str,
+        quota_code: str,
+        asof_position: int | None = None,
+    ) -> PassengerOutcome: ...
 
 
 @dataclass(frozen=True)
@@ -155,39 +178,43 @@ def _validate_cohort_key(key: object) -> tuple[str, str, str]:
     return class_code, quota_code, status
 
 
-def _validate_counts(counts: object, cohort: tuple[str, str, str]) -> dict[str, int]:
+def validate_outcome_counts(counts: object, where: tuple[str, ...]) -> dict[str, int]:
+    """Check one cell of outcome counts, naming the cell that failed.
+
+    Shared by the frequency table and the position-band table so a malformed cell is
+    refused by the same rule in both, with the same reasons."""
     if not isinstance(counts, Mapping):
         raise FrequencyTableValidationError(
-            f"Cohort {cohort} counts must be a mapping of outcome class to count, "
+            f"Cell {where} counts must be a mapping of outcome class to count, "
             f"got {type(counts).__name__}."
         )
     if not counts:
-        raise FrequencyTableValidationError(f"Cohort {cohort} has no outcome counts.")
+        raise FrequencyTableValidationError(f"Cell {where} has no outcome counts.")
 
     validated: dict[str, int] = {}
     for outcome, count in counts.items():
         if outcome not in OUTCOME_CLASSES:
             raise FrequencyTableValidationError(
-                f"Cohort {cohort} reports outcome {outcome!r}, which is outside the "
+                f"Cell {where} reports outcome {outcome!r}, which is outside the "
                 f"defined outcome space {list(OUTCOME_CLASSES)}. An unrecognised label "
                 "must be fixed in the fitting step, not smoothed away."
             )
         # bool is a subclass of int but is never a count.
         if isinstance(count, bool) or not isinstance(count, int):
             raise FrequencyTableValidationError(
-                f"Cohort {cohort} outcome {outcome!r} has count {count!r} of type "
+                f"Cell {where} outcome {outcome!r} has count {count!r} of type "
                 f"{type(count).__name__}; counts must be integers, so a fractional "
                 "value means the aggregation step is wrong."
             )
         if count < 0:
             raise FrequencyTableValidationError(
-                f"Cohort {cohort} outcome {outcome!r} has negative count {count}."
+                f"Cell {where} outcome {outcome!r} has negative count {count}."
             )
         validated[outcome] = count
 
     if sum(validated.values()) <= 0:
         raise FrequencyTableValidationError(
-            f"Cohort {cohort} has no positive counts, so it carries no evidence."
+            f"Cell {where} has no positive counts, so it carries no evidence."
         )
     return validated
 
@@ -220,7 +247,7 @@ def normalize_frequency_table(table: FrequencyTable) -> dict[tuple[str, str, str
                 f"Cohort keys {raw_key!r} collide with an earlier entry after "
                 "normalisation; the table would silently discard one of them."
             )
-        normalized[cohort] = _validate_counts(raw_counts, cohort)
+        normalized[cohort] = validate_outcome_counts(raw_counts, cohort)
     return normalized
 
 
@@ -328,6 +355,7 @@ class HistoricalFrequencyBaseline:
         asof_status: ParsedStatus,
         class_code: str,
         quota_code: str,
+        asof_position: int | None = None,
     ) -> PassengerOutcome:
         """Return a smoothed frequency estimate or an abstention.
 

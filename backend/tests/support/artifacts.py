@@ -17,6 +17,7 @@ from railconfirm.inference.artifacts import (
     write_artifact,
 )
 from railconfirm.inference.baseline import OUTCOME_CLASSES
+from railconfirm.inference.queue import QUEUE_ESTIMATOR_ID, QUEUE_FEATURES
 from railconfirm.inference.registry import ModelRegistry
 
 COHORTS: dict[tuple[str, str, str], dict[str, int]] = {
@@ -50,17 +51,46 @@ def artifact_metadata(**overrides) -> ModelArtifactMetadata:
     return ModelArtifactMetadata(**base)  # type: ignore[arg-type]
 
 
+POSITION_BANDS: dict[tuple[str, str, str, str], dict[str, int]] = {
+    ("SL", "GN", "WL", "1"): {"CNF": 60, "RAC": 15, "WL": 15, "CANCELLED": 5, "OTHER": 5},
+    ("SL", "GN", "WL", "32-63"): {
+        "CNF": 5,
+        "RAC": 5,
+        "WL": 80,
+        "CANCELLED": 5,
+        "OTHER": 5,
+    },
+    ("SL", "GN", "ALL", "1"): {"CNF": 60, "RAC": 15, "WL": 15, "CANCELLED": 5, "OTHER": 5},
+    ("SL", "GN", "ALL", "32-63"): {
+        "CNF": 5,
+        "RAC": 5,
+        "WL": 80,
+        "CANCELLED": 5,
+        "OTHER": 5,
+    },
+}
+"""First-in-queue and deep-in-queue cells for the fixture cohort. Synthetic by construction."""
+
+
 def write_fixture_artifact(
     tmp_path: Path,
     name: str = "fixture_v1",
     cohorts: dict[tuple[str, str, str], dict[str, int]] | None = None,
+    bands: dict[tuple[str, str, str, str], dict[str, int]] | None = None,
     **meta_overrides,
 ) -> Path:
-    """Write an artifact file called ``<name>.json`` with the given metadata."""
+    """Write an artifact file called ``<name>.json`` with the given metadata.
+
+    Passing `bands` writes a position artifact and switches the estimator for the caller:
+    band cells with no estimator that reads them are the mismatch the loader refuses."""
+    if bands is not None:
+        meta_overrides.setdefault("estimator", QUEUE_ESTIMATOR_ID)
+        meta_overrides.setdefault("features_used", QUEUE_FEATURES)
     return write_artifact(
         tmp_path / f"{name}.json",
         artifact_metadata(**meta_overrides),
         COHORTS if cohorts is None else cohorts,
+        bands=bands,
     )
 
 
