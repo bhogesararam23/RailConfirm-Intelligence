@@ -20,6 +20,7 @@ from typing import Any
 from railconfirm.data.preprocessing import FEATURE_COLUMNS, SplitResult
 from railconfirm.inference.artifacts import ModelArtifactMetadata
 from railconfirm.training.calibration import CalibrationEvidence
+from railconfirm.training.compare import ModelComparisonResult
 from railconfirm.training.decay import FROZEN_EVALUATION_METHOD, FrozenDecayResult
 from railconfirm.training.fitter import FitSummary
 from railconfirm.training.metrics import TARGET_EVENTS, Scorecard
@@ -909,6 +910,214 @@ def _decay_conclusions(result: FrozenDecayResult) -> list[str]:
 
 
 def write_decay_report(report: FrozenDecayReport, path: Path) -> Path:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(report.to_json(), encoding="utf-8")
+    return target
+
+
+COMPARISON_REPORT_SCHEMA_VERSION = "1.0.0"
+"""Its own shape again: this payload compares two models, which neither a single run nor a
+temporal walk of one model describes."""
+
+COMPARISON_METRIC_DEFINITIONS: dict[str, str] = {
+    **METRIC_DEFINITIONS,
+    "brier_delta": (
+        "candidate multiclass Brier minus the baseline's on the same rows. Negative means "
+        "the candidate improved the full distribution."
+    ),
+    "event_brier_delta": (
+        "candidate event Brier minus the baseline's, on the target event the passenger is "
+        "handed. Both deltas must be negative before a candidate is recommended."
+    ),
+    "log_loss_delta": (
+        "candidate multiclass log loss minus the baseline's on the same rows."
+    ),
+    "coverage_delta": (
+        "candidate coverage minus the baseline's. A negative value disqualifies the "
+        "candidate however good its scores look, because refusing harder rows can improve "
+        "an average without improving an answer."
+    ),
+    "rows_both_scored": (
+        "Rows in the partition that both models answered. Wins, losses and ties are counted "
+        "only here; a row one model refused is not a lost forecast."
+    ),
+    "candidate_wins": (
+        "Rows both answered where the candidate's squared error on the target event was "
+        "strictly smaller than the baseline's."
+    ),
+    "candidate_losses": (
+        "Rows both answered where the candidate's event error was strictly larger."
+    ),
+    "ties": (
+        "Rows both answered where the two errors were exactly equal. Ties count for neither "
+        "model, so a candidate cannot reach a recommendation on them."
+    ),
+    "only_baseline_scored": (
+        "Rows the baseline answered and the candidate abstained on — the reach the candidate "
+        "would be giving up."
+    ),
+    "only_candidate_scored": (
+        "Rows the candidate answered and the baseline abstained on."
+    ),
+    "neither_scored": "Rows in the partition that both models refused.",
+    "rows_total": "Rows in the partition, scored by either model or neither.",
+    "prevalence": (
+        "The one reference distribution both models are scored against: the outcome shares of "
+        "the shared training window. Reported because two models compared against different "
+        "baselines are not being compared."
+    ),
+}
+
+
+@dataclass
+class ComparisonReport:
+    """Two models, the rows they both answered, and what the locked period decided."""
+
+    report_schema_version: str
+    generated_on: str
+    evaluation_method: str
+    target: str
+    target_event_classes: list[str]
+    dataset: dict[str, Any]
+    baseline: dict[str, Any]
+    candidate: dict[str, Any]
+    prevalence: dict[str, float]
+    partitions: list[dict[str, Any]]
+    verdict: dict[str, Any]
+    metric_definitions: dict[str, str]
+    limitations: list[str] = field(default_factory=list)
+    conclusions: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
+
+    def summary(self) -> str:
+        lines = [
+            "=== Model comparison report ===",
+            (
+                f"{self.evaluation_method} · target {self.target} "
+                f"(event: {'/'.join(self.target_event_classes)}) · generated "
+                f"{self.generated_on}"
+            ),
+            (
+                f"Baseline {self.baseline['version']} "
+                f"({self.baseline['estimator']}) vs candidate "
+                f"{self.candidate['version']} ({self.candidate['estimator']})"
+            ),
+            (
+                f"Dataset {self.dataset['dataset_id']} (sha256 "
+                f"{str(self.dataset['sha256'])[:12]}…, {self.dataset['rows']} rows)"
+            ),
+            "",
+            "Partitions:",
+        ]
+        for partition in self.partitions:
+            lines.append(f"  {partition['partition']}:")
+            for role in ("baseline", "candidate"):
+                card = partition[role]
+                lines.append(
+                    f"    {role:<9} Brier {_fmt(card['brier'])} vs "
+                    f"{_fmt(card['baseline_brier'])} · event "
+                    f"{_fmt(card['event_brier'])} vs "
+                    f"{_fmt(card['event_baseline_brier'])} · coverage "
+                    f"{card['coverage']:.1%} ({card['scored_rows']}/{card['rows']})"
+                )
+            compare = partition["comparison"]
+            lines.append(
+                f"    deltas: Brier {compare['brier_delta']}, event "
+                f"{compare['event_brier_delta']}, coverage {compare['coverage_delta']}"
+            )
+            lines.append(
+                f"    paired: {compare['candidate_wins']} wins, "
+                f"{compare['candidate_losses']} losses, {compare['ties']} ties over "
+                f"{compare['rows_both_scored']} rows both answered "
+                f"({compare['only_baseline_scored']} baseline-only, "
+                f"{compare['only_candidate_scored']} candidate-only, "
+                f"{compare['neither_scored']} by neither)"
+            )
+        lines += ["", f"Verdict: {self.verdict['outcome']}", ""]
+        lines += [f"  - {reason}" for reason in self.verdict["reasons"]]
+        lines += ["", "Conclusions:"]
+        lines += [f"  - {item}" for item in self.conclusions]
+        lines += ["", "Limitations:"]
+        lines += [f"  - {item}" for item in self.limitations]
+        return "\n".join(lines)
+
+
+def build_comparison_report(
+    result: ModelComparisonResult,
+    *,
+    dataset_id: str,
+    dataset_sha256: str,
+    dataset_rows: int,
+    is_synthetic: bool,
+    generated_on: str,
+) -> ComparisonReport:
+    """Assemble the comparison report; every conclusion is derived from measured numbers."""
+    payload = result.to_dict()
+    limitations = [
+        "Both models were scored on the same rows of the same split, against one prevalence "
+        "baseline taken from the shared training window. Neither was fitted on the other's "
+        "data, and no model saw a row from a later partition.",
+        "The verdict reads the locked period only. A candidate that wins the validation "
+        "window and loses the locked one is reported as losing, because the validation "
+        "window is where candidates are chosen and therefore where they flatter themselves.",
+        "No calibration layer is applied unless an artifact already carries one: this "
+        "compares fitted tables. Calibrate the winner, then compare again if a calibrated "
+        "candidate is to replace an uncalibrated baseline.",
+        "One locked period is one measurement. It settles the comparison on these rows and "
+        "nothing about stability over time, which is what `decay` and `origins` are for.",
+        "Wins and ties are counted on the target event's squared error, because that is the "
+        "number a passenger is handed; the distribution deltas are reported beside them and "
+        "a candidate must improve both.",
+        "RailConfirm is an independent research tool and not an official IRCTC service.",
+    ]
+    if is_synthetic:
+        limitations.insert(
+            0,
+            "Fitted and scored on rows that declare is_synthetic: this compares two ways of "
+            "reading the same made-up queue. Nothing here is evidence about railway "
+            "behaviour, in either direction.",
+        )
+
+    conclusions = [
+        f"Verdict on the locked period: {result.verdict.outcome}.",
+        *result.verdict.reasons,
+    ]
+    for partition in result.partitions:
+        if partition.baseline.brier is None or partition.candidate.brier is None:
+            conclusions.append(
+                f"{partition.partition}: at least one model scored nothing here, so the "
+                "comparison is coverage, not accuracy."
+            )
+
+    return ComparisonReport(
+        report_schema_version=COMPARISON_REPORT_SCHEMA_VERSION,
+        generated_on=generated_on,
+        evaluation_method=result.method,
+        target=result.target,
+        target_event_classes=list(TARGET_EVENTS[result.target]),
+        dataset={
+            "dataset_id": dataset_id,
+            "sha256": dataset_sha256,
+            "rows": dataset_rows,
+        },
+        baseline=payload["baseline"],
+        candidate=payload["candidate"],
+        prevalence=payload["prevalence"],
+        partitions=payload["partitions"],
+        verdict=payload["verdict"],
+        metric_definitions=dict(COMPARISON_METRIC_DEFINITIONS),
+        limitations=limitations,
+        conclusions=conclusions,
+    )
+
+
+def write_comparison_report(report: ComparisonReport, path: Path) -> Path:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(report.to_json(), encoding="utf-8")

@@ -392,6 +392,14 @@ class ScoredRow:
     brier: float
     loss: float
     slices: list[tuple[str, str]]
+    position: int = -1
+    """Where this row sat in the partition, counting rows that abstained.
+
+    Position, not passenger id: two models asked the same rows in the same order must pair
+    the same reservations even when they refuse different ones, and a fixture without
+    unique ids still has a stable order. AUC-style pairing on ids would silently drop or
+    duplicate rows here.
+    """
 
 
 @dataclass(frozen=True)
@@ -446,7 +454,9 @@ def score_rows(
     rows: list[ScoredRow] = []
     abstained = 0
 
-    for (_, row), asof in zip(frame.iterrows(), statuses, strict=True):
+    for position, ((_, row), asof) in enumerate(
+        zip(frame.iterrows(), statuses, strict=True)
+    ):
         gid = (
             str(row["booking_group_id"]).strip()
             if has_groups and pd.notna(row.get("booking_group_id"))
@@ -494,6 +504,7 @@ def score_rows(
                 brier=brier,
                 loss=_log_loss_one(hypothesis, truth),
                 slices=_slices(row, frame, asof),
+                position=position,
             )
         )
 
@@ -515,6 +526,7 @@ def score_partition(
     min_segment_rows: int = DEFAULT_MIN_SEGMENT_ROWS,
     reliability_bins: int = RELIABILITY_BINS,
     calibration: CalibrationSpec | None = None,
+    pre_scored: RowScores | None = None,
 ) -> Scorecard:
     """Score one partition with the estimator that would serve it in production.
 
@@ -523,9 +535,16 @@ def score_partition(
     metric computed here cannot describe a code path the product does not run or a
     cohort the table was never keyed by. ``target`` selects which event the headline
     numbers describe; the full distribution is always scored as well.
+
+    ``pre_scored`` takes rows a caller already walked. The comparison harness needs the
+    per-row results to pair two models, and scoring the frame twice — once for the rows,
+    once for the card — is how aggregates and paired counts drift apart while both look
+    right.
     """
-    scored_rows = score_rows(
-        frame, estimator, target=target, calibration=calibration
+    scored_rows = (
+        pre_scored
+        if pre_scored is not None
+        else score_rows(frame, estimator, target=target, calibration=calibration)
     )
     event_classes = TARGET_EVENTS[target]
     rows = scored_rows.rows

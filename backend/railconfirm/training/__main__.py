@@ -44,11 +44,14 @@ from railconfirm.inference.artifacts import (
     ESTIMATOR_HISTORICAL_FREQUENCY,
     load_artifact,
 )
+from railconfirm.inference.queue import QUEUE_ESTIMATOR_ID
 from railconfirm.training.calibration import (
     DEFAULT_MIN_CALIBRATION_ROWS,
     CalibrationEvidence,
     fit_and_measure,
 )
+from railconfirm.training.compare import describe_result as describe_comparison
+from railconfirm.training.compare import run_model_comparison
 from railconfirm.training.dataset import load_approved_dataset
 from railconfirm.training.decay import describe_result as describe_decay
 from railconfirm.training.decay import run_frozen_decay
@@ -66,9 +69,11 @@ from railconfirm.training.metrics import (
 )
 from railconfirm.training.origins import describe_result, run_rolling_origins
 from railconfirm.training.report import (
+    build_comparison_report,
     build_decay_report,
     build_origin_report,
     build_report,
+    write_comparison_report,
     write_decay_report,
     write_origin_report,
     write_report,
@@ -214,6 +219,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="YYYY-MM-DD recorded in the report; required so output is reproducible",
     )
     decay.add_argument("--allow-synthetic-for-testing", action="store_true")
+
+    compare = subparsers.add_parser(
+        "compare",
+        help="fit both estimators on one split and judge the candidate on the locked period",
+    )
+    _add_common(compare)
+    compare.add_argument(
+        "--version",
+        default="compare",
+        help="prefix for the two artifact versions this comparison fits",
+    )
+    compare.add_argument(
+        "--target",
+        default="final_chart_cnf",
+        choices=sorted(TARGET_EVENTS),
+        help="the target both models are fitted and scored for",
+    )
+    compare.add_argument(
+        "--candidate-estimator",
+        default=QUEUE_ESTIMATOR_ID,
+        help="the estimator to test against the historical-frequency baseline",
+    )
+    compare.add_argument("--min-sample-threshold", type=int, default=30)
+    compare.add_argument("--laplace-alpha", type=float, default=1.0)
+    compare.add_argument("--notes", default=None)
+    compare.add_argument("--report", type=Path, default=None)
+    compare.add_argument("--allow-synthetic-for-testing", action="store_true")
 
     return parser
 
@@ -554,10 +586,59 @@ def _decay(args: argparse.Namespace) -> int:
     return 0
 
 
+def _compare(args: argparse.Namespace) -> int:
+    """Fit the baseline and a candidate on one split, then judge the candidate on the locked one."""
+    dataset = _dataset(args)
+    print(_describe_intake(dataset))
+    if dataset.eligibility_relaxed:
+        print(
+            "Eligibility thresholds were NOT met; running only because this is a "
+            "labelled synthetic pipeline test."
+        )
+    common = {
+        "target": args.target,
+        "train_frac": args.train_frac,
+        "val_frac": args.val_frac,
+        "gap_days": args.gap_days,
+        "min_sample_threshold": args.min_sample_threshold,
+        "laplace_alpha": args.laplace_alpha,
+        "notes": args.notes,
+    }
+    baseline = fit_baseline(dataset, version=args.version + "_base", **common)
+    candidate = fit_baseline(
+        dataset,
+        version=args.version + "_cand",
+        estimator=args.candidate_estimator,
+        **common,
+    )
+    result = run_model_comparison(dataset, baseline=baseline, candidate=candidate)
+    print(describe_comparison(result))
+    if args.report is not None:
+        report = build_comparison_report(
+            result,
+            dataset_id=dataset.dataset_id,
+            dataset_sha256=dataset.sha256,
+            dataset_rows=dataset.report.total_rows,
+            is_synthetic=dataset.is_synthetic,
+            generated_on=_require_generated_on(args),
+        )
+        path = write_comparison_report(report, args.report)
+        print()
+        print(report.summary())
+        print(f"\nReport written to {path}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    handlers = {"fit": _fit, "evaluate": _evaluate, "origins": _origins, "decay": _decay}
+    handlers = {
+        "fit": _fit,
+        "evaluate": _evaluate,
+        "origins": _origins,
+        "decay": _decay,
+        "compare": _compare,
+    }
     try:
         return handlers[args.command](args)
     except (
