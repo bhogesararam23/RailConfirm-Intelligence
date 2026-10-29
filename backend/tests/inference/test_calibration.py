@@ -97,9 +97,10 @@ def test_the_correction_moves_the_event_mass_and_keeps_each_group_proportional()
 
 
 def test_a_merged_event_moves_as_one_mass():
-    calibrated = apply_calibration(
-        spec(2.0, 0.0), DISTRIBUTION, ("CNF", "RAC")
+    merged = spec(
+        2.0, 0.0, target="final_chart_cnf_or_rac", event_classes=("CNF", "RAC")
     )
+    calibrated = apply_calibration(merged, DISTRIBUTION, ("CNF", "RAC"))
     assert event_mass(calibrated, ("CNF", "RAC")) == pytest.approx(
         sigmoid(2 * logit(0.3))
     )
@@ -190,11 +191,37 @@ def test_the_description_names_the_rows_and_period_behind_the_correction():
         ({"slope": -0.01}, "must not be negative"),
         ({"fitted_rows": 0}, "at least one observation"),
         ({"event_classes": ()}, "name the event classes"),
+        ({"target": "departure_status"}, "whose event this build does not define"),
+        # The event is a property of the target. A block naming one target while carrying
+        # another target's event classes was accepted before and moved the wrong mass.
+        ({"event_classes": ("CNF", "RAC")}, "whose event is"),
+        ({"event_classes": ("CNF", "CNF")}, "whose event is"),
+        # Fitting on the rows the correction is then scored against measures its own fit.
+        ({"fitted_partition": "test"}, "may carry a fit"),
+        ({"fitted_partition": "train"}, "may carry a fit"),
+        ({"fitted_from": "2026-04-12", "fitted_to": "2026-04-01"}, "reversed"),
     ],
 )
 def test_a_spec_that_cannot_be_applied_is_not_constructed(overrides, fragment):
     with pytest.raises(ModelArtifactError, match=fragment):
         spec(**overrides)
+
+
+def test_the_cnf_or_rac_target_accepts_its_own_two_class_event():
+    merged = spec(1.0, 0.0, target="final_chart_cnf_or_rac", event_classes=("CNF", "RAC"))
+    assert merged.event_classes == ("CNF", "RAC")
+
+
+def test_a_correction_is_refused_when_it_is_applied_to_a_different_event():
+    """Serving and scoring must correct the same mass, so a caller cannot name another."""
+    with pytest.raises(ModelArtifactError, match="being applied to CNF/RAC"):
+        apply_calibration(spec(2.0, 0.0), DISTRIBUTION, ("CNF", "RAC"))
+
+
+def test_a_two_class_correction_is_refused_on_the_single_class_event():
+    merged = spec(2.0, 0.0, target="final_chart_cnf_or_rac", event_classes=("CNF", "RAC"))
+    with pytest.raises(ModelArtifactError, match="being applied to CNF"):
+        apply_calibration(merged, DISTRIBUTION, ("CNF",))
 
 
 def test_a_round_trip_through_a_mapping_preserves_the_spec():
@@ -219,4 +246,21 @@ def test_a_missing_field_is_named_rather_than_defaulted():
     block = spec(1.0, 0.0).to_mapping()
     del block["intercept"]
     with pytest.raises(ModelArtifactError, match="missing 'intercept'"):
+        spec_from_mapping(block, artifact_target="final_chart_cnf")
+
+
+@pytest.mark.parametrize("bad", ["CNF", 3, {"CNF": 1}, ["CNF", ""]])
+def test_event_classes_must_be_a_list_of_named_classes(bad):
+    """A bare string would iterate into characters and name an event nobody wrote."""
+    block = spec(1.0, 0.0).to_mapping()
+    block["event_classes"] = bad
+    with pytest.raises(ModelArtifactError, match="event_classes must be a list"):
+        spec_from_mapping(block, artifact_target="final_chart_cnf")
+
+
+def test_a_block_declaring_another_event_for_the_same_target_is_refused_at_load():
+    """The reported defect: `final_chart_cnf` accepting a CNF+RAC correction."""
+    block = spec(1.0, 0.0).to_mapping()
+    block["event_classes"] = ["CNF", "RAC"]
+    with pytest.raises(ModelArtifactError, match="whose event is"):
         spec_from_mapping(block, artifact_target="final_chart_cnf")

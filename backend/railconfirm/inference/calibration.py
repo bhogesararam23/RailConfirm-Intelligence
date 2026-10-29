@@ -21,7 +21,7 @@ from dataclasses import asdict, dataclass, replace
 from typing import Any
 
 from railconfirm.domain.exceptions import ModelArtifactError
-from railconfirm.domain.prediction import PassengerOutcome
+from railconfirm.domain.prediction import EVENT_CLASSES_BY_TARGET, PassengerOutcome
 
 CALIBRATION_METHOD_PLATT = "platt_logistic_v1"
 """Logistic (Platt) scaling of the target event's log-odds.
@@ -32,6 +32,14 @@ test can recompute by hand; isotonic would need a step table per band and would 
 noise in the sample sizes this project currently has."""
 
 CALIBRATION_METHODS = (CALIBRATION_METHOD_PLATT,)
+
+FITTABLE_PARTITIONS: tuple[str, ...] = ("validation",)
+"""The only partition a correction may be fitted on.
+
+ADR-0004 and ADR-0017 put the fit on validation and the reading on the locked test. A
+block that says it was fitted on ``test`` is a correction tuned to the rows it would be
+credited with, so it is refused at construction rather than applied and explained away
+in a footnote."""
 
 PROBABILITY_FLOOR = 1e-9
 """Predictions are clipped to ``(floor, 1 - floor)`` before the logit.
@@ -61,6 +69,36 @@ class CalibrationSpec:
                 f"Unknown calibration method {self.method!r}; this build knows "
                 f"{list(CALIBRATION_METHODS)}."
             )
+        # Emptiness first: a block that names no event is malformed whatever target it
+        # carries, and reporting the target mismatch instead would describe a subtler
+        # problem than the one the reader has to fix.
+        if not self.event_classes:
+            raise ModelArtifactError(
+                "Calibration must name the event classes it corrects."
+            )
+        if self.target not in EVENT_CLASSES_BY_TARGET:
+            raise ModelArtifactError(
+                f"Calibration names target {self.target!r}, whose event this build does "
+                f"not define. Known targets: {sorted(EVENT_CLASSES_BY_TARGET)}."
+            )
+        # The event is a property of the target, not a free-text label beside it. A block
+        # that says "final_chart_cnf" while correcting CNF+RAC describes a different
+        # question from the one the artifact answers, and applying it would move a number
+        # the target never claimed.
+        expected_event = EVENT_CLASSES_BY_TARGET[self.target]
+        if tuple(self.event_classes) != expected_event:
+            raise ModelArtifactError(
+                f"Calibration declares event classes {list(self.event_classes)} for target "
+                f"{self.target!r}, whose event is {list(expected_event)}. A correction "
+                "measured against one event does not transfer to another one's "
+                "probabilities: the slope was fitted to the mass it names."
+            )
+        if self.fitted_partition not in FITTABLE_PARTITIONS:
+            raise ModelArtifactError(
+                f"Calibration was fitted on the {self.fitted_partition!r} partition; only "
+                f"{list(FITTABLE_PARTITIONS)} may carry a fit, because a correction tuned "
+                "to the locked rows it is then scored on measures its own selection."
+            )
         for name in ("slope", "intercept"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -82,9 +120,10 @@ class CalibrationSpec:
                 f"Calibration declares {self.fitted_rows} fitted rows; a correction "
                 "needs at least one observation behind it."
             )
-        if not self.event_classes:
+        if self.fitted_from and self.fitted_to and self.fitted_from > self.fitted_to:
             raise ModelArtifactError(
-                "Calibration must name the event classes it corrects."
+                f"Calibration fitted period is reversed: {self.fitted_from} > "
+                f"{self.fitted_to}."
             )
 
     def to_mapping(self) -> dict[str, Any]:
@@ -146,9 +185,23 @@ def apply_calibration(
     existing proportions: no evidence was fitted for them separately, and inventing a
     split would present an unmeasured number as a measured one.
 
+    ``event_classes`` must be the event the spec was fitted on. It is passed rather than
+    read from the spec so a caller cannot quietly score one event while the served path
+    corrects another; if the two disagree this raises instead of returning a number that
+    only one of them would recognise.
+
     A mass of exactly 0 or 1 cannot be rescaled, so the distribution is returned as it
     stands rather than being clipped into a fake confidence level.
     """
+    declared = tuple(event_classes)
+    if declared != tuple(spec.event_classes):
+        raise ModelArtifactError(
+            f"Calibration for target {spec.target!r} was fitted on the "
+            f"{'/'.join(spec.event_classes)} event, but it is being applied to "
+            f"{'/'.join(declared) or 'no event'}. The slope belongs to the mass it was "
+            "fitted on, so correcting a different one would move a number the artifact "
+            "never measured."
+        )
     current = event_mass(distribution, event_classes)
     if current <= 0.0 or current >= 1.0:
         return dict(distribution)
@@ -167,11 +220,36 @@ def spec_from_mapping(raw: Any, *, artifact_target: str) -> CalibrationSpec:
         raise ModelArtifactError(
             f"Calibration must be a JSON object, got {type(raw).__name__}."
         )
+    # The target is settled before the spec is constructed. Switching it also changes
+    # which event classes are legal, so leaving the comparison until afterwards would
+    # report an event-class contradiction when the real problem is a block written for a
+    # different question. The narrower message is the one a reader can act on.
+    if "target" not in raw:
+        raise ModelArtifactError(
+            "Calibration block is missing 'target'; a partial correction cannot be "
+            "applied, because half a fitted layer is not a layer."
+        )
+    if str(raw["target"]) != artifact_target:
+        raise ModelArtifactError(
+            f"Calibration was fitted for target {str(raw['target'])!r} but the artifact is "
+            f"served for {artifact_target!r}. A correction measured against one event "
+            "does not transfer to another one's probabilities."
+        )
+    declared_events = raw.get("event_classes")
+    # Checked before construction: iterating a bare string would yield its characters, and
+    # the resulting message would name an event nobody wrote.
+    if not isinstance(declared_events, list | tuple) or not all(
+        isinstance(name, str) and name.strip() for name in declared_events
+    ):
+        raise ModelArtifactError(
+            "Calibration event_classes must be a list of non-empty class names, got "
+            f"{declared_events!r}."
+        )
     try:
         spec = CalibrationSpec(
             method=str(raw["method"]),
             target=str(raw["target"]),
-            event_classes=tuple(str(name) for name in raw["event_classes"]),
+            event_classes=tuple(str(name) for name in declared_events),
             slope=raw["slope"],
             intercept=raw["intercept"],
             fitted_partition=_text(raw["fitted_partition"], "fitted_partition"),
@@ -185,12 +263,6 @@ def spec_from_mapping(raw: Any, *, artifact_target: str) -> CalibrationSpec:
             "be applied, because half a fitted layer is not a layer."
         ) from exc
 
-    if spec.target != artifact_target:
-        raise ModelArtifactError(
-            f"Calibration was fitted for target {spec.target!r} but the artifact is "
-            f"served for {artifact_target!r}. A correction measured against one event "
-            "does not transfer to another one's probabilities."
-        )
     return spec
 
 

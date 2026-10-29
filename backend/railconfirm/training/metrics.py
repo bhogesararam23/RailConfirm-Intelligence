@@ -20,7 +20,11 @@ import pandas as pd
 
 from railconfirm.data.preprocessing import INITIAL_STATUS_COLUMN, asof_statuses
 from railconfirm.domain.exceptions import DatasetValidationError
-from railconfirm.domain.prediction import PassengerOutcome, PredictionTarget
+from railconfirm.domain.prediction import (
+    EVENT_CLASSES_BY_TARGET,
+    PassengerOutcome,
+    PredictionTarget,
+)
 from railconfirm.domain.status import ParsedStatus, parse_status
 from railconfirm.inference.baseline import (
     OUTCOME_CLASSES,
@@ -47,16 +51,16 @@ nothing, so the flag travels with the number and the report is only allowed to s
 segments that clear it."""
 RELIABILITY_BINS = 10
 
-TARGET_EVENTS: dict[str, tuple[str, ...]] = {
-    PredictionTarget.FINAL_CHART_CNF.value: ("CNF",),
-    PredictionTarget.FINAL_CHART_CNF_OR_RAC.value: ("CNF", "RAC"),
-}
+TARGET_EVENTS: dict[str, tuple[str, ...]] = dict(EVENT_CLASSES_BY_TARGET)
 """Which outcome classes count as the event for each supported target.
 
 The headline number a user reads is the probability of an event, not of one class:
 ``final_chart_cnf_or_rac`` is confirmed *or* RAC. Scoring the full distribution
 without also scoring that event would leave the product's main claim unmeasured.
-"""
+
+The mapping itself lives in :mod:`railconfirm.domain.prediction`, because serving and
+calibration need the same definition and a pipeline module is not the right owner of it.
+This name stays because the reports are written against it."""
 
 
 @dataclass(frozen=True)
@@ -440,6 +444,14 @@ def score_rows(
     if "final_chart_status" not in frame.columns:
         raise DatasetValidationError(
             "This partition has no 'final_chart_status' column to score against."
+        )
+    if calibration is not None and calibration.target != target:
+        # Guarded here as well as in apply_calibration so the failure names the two
+        # questions rather than the two event tuples.
+        raise DatasetValidationError(
+            f"Cannot apply a calibration fitted for {calibration.target!r} while scoring "
+            f"{target!r}: the corrected number and the scored number would describe "
+            "different claims."
         )
 
     event_classes = TARGET_EVENTS[target]

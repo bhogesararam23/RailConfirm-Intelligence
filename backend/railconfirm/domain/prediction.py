@@ -42,6 +42,20 @@ class PredictionTarget(str, Enum):
     """Confirmed berth or at least RAC accommodation at final chart."""
 
 
+EVENT_CLASSES_BY_TARGET: dict[str, tuple[str, ...]] = {
+    PredictionTarget.FINAL_CHART_CNF.value: ("CNF",),
+    PredictionTarget.FINAL_CHART_CNF_OR_RAC.value: ("CNF", "RAC"),
+}
+"""Which outcome classes each target's event covers, defined once.
+
+The headline number a user reads is the probability of an *event*, not of one class:
+``final_chart_cnf_or_rac`` is confirmed *or* RAC. Scoring, calibration and serving all
+need that definition, and if any of them described the event differently the same
+artifact would produce two numbers for one claim. It lives in the domain layer because
+it is a property of the target, not of any pipeline that consumes it; the training
+metrics re-export it as ``TARGET_EVENTS`` and keep the name reports already use."""
+
+
 class AbstentionReason(str, Enum):
     """Stable reason codes for inference abstention.
 
