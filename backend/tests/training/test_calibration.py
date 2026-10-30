@@ -328,8 +328,12 @@ def test_a_calibrated_artifact_does_not_also_deny_being_calibrated(fitted):
 # ── Report wording ─────────────────────────────────────────────────────────────
 
 
-def plain_scores(baseline, partition: str):
-    """Score a partition with no calibration layer, as an uncalibrated run would."""
+def plain_scores(baseline, partition: str, *, min_sample_threshold: int | None = None):
+    """Score a partition with no calibration layer, as an uncalibrated run would.
+
+    ``min_sample_threshold`` can be raised past every cohort to produce a partition whose
+    rows all abstain — the shape a locked period takes when the estimator cannot reach it.
+    """
     from railconfirm.training.metrics import (
         build_estimator,
         evaluation_provenance,
@@ -346,7 +350,11 @@ def plain_scores(baseline, partition: str):
             is_synthetic=True,
             mapping_version=MAPPING_VERSION,
         ),
-        min_sample_threshold=baseline.metadata.min_sample_threshold,
+        min_sample_threshold=(
+            baseline.metadata.min_sample_threshold
+            if min_sample_threshold is None
+            else min_sample_threshold
+        ),
         laplace_alpha=baseline.metadata.laplace_alpha,
     )
     return score_partition(
@@ -415,6 +423,65 @@ def test_a_declared_layer_without_measurement_says_so(fitted):
     assert "Calibration: applied to the numbers above" in report.summary()
 
 
+# ── A locked period that measured nothing ─────────────────────────────────────
+
+
+def unmeasured_evidence(baseline, evidence):
+    """The same fit, judged on a locked period the estimator abstained on everywhere."""
+    from dataclasses import replace
+
+    silent = plain_scores(baseline, "test", min_sample_threshold=10_000)
+    assert silent.event_brier is None and silent.scored_rows == 0
+    return replace(evidence, test_before=silent, test_after=silent)
+
+
+def test_a_locked_period_that_scored_nothing_is_unknown_not_a_failure(fitted):
+    """An abstention on the locked period is not evidence that the correction failed.
+
+    This used to raise ``AssertionError`` from a public property, on a path the CLI reaches
+    *after* it has written the artifact, so a completed fit reported itself as a crash.
+    """
+    baseline, _ = fitted
+    evidence = unmeasured_evidence(baseline, measure(baseline))
+    assert evidence.locked_test_measured is False
+    assert evidence.test_effect is None
+    assert evidence.helps_on_locked_test is None
+    payload = evidence.to_dict()
+    assert payload["locked_test_measured"] is False
+    assert payload["helps_on_locked_test"] is None
+    assert payload["test_event_brier_change"] is None
+    # The validation side is still measured, so only the locked reading is missing.
+    assert payload["validation_event_brier_change"] < 0
+
+
+def test_the_report_calls_an_unmeasured_locked_period_unknown(fitted):
+    baseline, _ = fitted
+    evidence = unmeasured_evidence(baseline, measure(baseline))
+    report = report_for(with_calibration(baseline, evidence.spec), evidence)
+    joined = " ".join(report.conclusions)
+    assert "unmeasured: the locked period produced no score at all" in joined
+    assert "did not carry into the locked period" not in joined
+    assert "the correction's effect there is unknown" in joined
+    summary = report.summary()
+    assert "unknown — the locked period produced no score" in summary
+    # The line a Windows console prints is still printable.
+    text = summary + "\n" + "\n".join(report.conclusions + report.limitations)
+    text.encode("cp1252")
+
+
+def test_validation_evidence_without_a_score_is_refused_rather_than_compared(fitted):
+    """A fit cannot exist without scored validation rows, so a missing side is a bug."""
+    from dataclasses import replace
+
+    baseline, _ = fitted
+    broken = replace(
+        measure(baseline),
+        validation_after=plain_scores(baseline, "val", min_sample_threshold=10_000),
+    )
+    with pytest.raises(DatasetValidationError, match="cannot be produced by a fit"):
+        _ = broken.validation_effect
+
+
 def test_evidence_that_was_not_embedded_is_labelled_as_such(fitted):
     baseline, _ = fitted
     report = report_for(baseline, measure(baseline))
@@ -469,6 +536,73 @@ def test_fit_calibrate_writes_a_calibrated_candidate(tmp_path: Path, capsys):
     payload = json.loads(report.read_text(encoding="utf-8"))
     assert payload["calibration"]["validation_event_brier_change"] < 0
     assert payload["validation"]["calibration_applied"] is True
+
+
+def test_the_cli_reports_an_unmeasured_locked_period_instead_of_crashing(tmp_path: Path, capsys):
+    """The locked period can be unreachable: the CLI must say so, not raise.
+
+    Reaching that state needs rows the cohort table cannot answer, so the fixture is
+    rewritten after the split is known: every row in the locked period moves to quota
+    ``TQ``, which training never saw, so neither the exact cohort nor the
+    ``(class, quota, ALL)`` fallback can be looked up and the estimator abstains on every
+    one of them. Changing the *status* alone would not do it: the broad fallback answers
+    any status inside a known class/quota pair.
+
+    Before this fix ``helps_on_locked_test`` raised ``AssertionError`` here — after the
+    artifact had already been written and before the report file existed, so a finished
+    fit reported itself as a crash.
+    """
+    csv = write_balanced_dataset(tmp_path)
+    manifest = write_approved_manifest(csv, tmp_path)
+    probe = load_approved_dataset(csv, manifest, allow_synthetic_for_testing=True)
+    probe_split = fit_baseline(
+        probe, version="probe", min_sample_threshold=5, val_frac=0.15
+    ).split
+    locked_dates = set(probe_split.test["journey_date"].astype(str))
+    assert locked_dates
+
+    rewritten = []
+    for line in csv.read_text(encoding="utf-8").splitlines():
+        fields = line.split(",")
+        if len(fields) > 5 and fields[1] in locked_dates:
+            # quota_code, not initial_status: the table falls back to a broad cohort
+            # keyed by (class, quota, ALL), so only an unseen (class, quota) abstains.
+            fields[3] = "TQ"
+        rewritten.append(",".join(fields))
+    csv.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
+    manifest = write_approved_manifest(csv, tmp_path)
+
+    artifact = tmp_path / "unmeasured_v1.json"
+    report = tmp_path / "unmeasured_report.json"
+    code = main(
+        [
+            "fit",
+            str(csv),
+            str(manifest),
+            "--version",
+            "unmeasured_v1",
+            "--out",
+            str(artifact),
+            "--report",
+            str(report),
+            "--generated-on",
+            "2026-05-02",
+            "--min-sample-threshold",
+            "5",
+            "--calibrate",
+            "--calibrate-min-rows",
+            "10",
+            "--allow-synthetic-for-testing",
+        ]
+    )
+    printed = capsys.readouterr().out
+    assert code == 0, printed
+    assert "unknown (the locked period produced no score)" in printed
+    assert "did not help" not in printed
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    assert payload["calibration"]["locked_test_measured"] is False
+    assert payload["calibration"]["helps_on_locked_test"] is None
+    assert payload["test"]["scored_rows"] == 0
 
 
 def test_fit_refuses_to_calibrate_on_a_thin_validation_period(tmp_path: Path, capsys):

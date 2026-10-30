@@ -1816,3 +1816,58 @@ aggregation against the scoring loop, then reproduced as a constructed plan in a
   remaining evaluation work is the same as before — the pipeline has never run on approved real
   data, and every figure above comes from synthetic fixtures.
 
+## 2026-10-30 — A locked period that scored nothing reported itself as a crash (ADR-0029)
+
+### Scope
+Continuing the evaluation-reliability workstream into `backend/railconfirm/training/calibration.py`,
+`decay.py` and their report paths: what a calibration's published evidence claims, and what
+happens when one of its two readings does not exist. The defect below was found by reading the
+public properties of `CalibrationEvidence` against the scoring loop that populates them, then
+reproduced in a script before any code was changed.
+
+### Changed
+- **A missing locked reading raised from a public property.** `test_effect` and
+  `helps_on_locked_test` opened with bare `assert` statements. A locked partition on which
+  every row abstained — `scored_rows == 0`, `event_brier is None`, which happens whenever the
+  estimator cannot reach a cohort — produced `AssertionError` from `to_dict()` and from the
+  `fit` command's own summary line. The CLI reaches both **after** `write_fitted_artifact`, so a
+  fit that had completed and written its model reported itself as a crash, exited non-zero and
+  never wrote `--report`. Under `python -O` the same path returned `None - None` and raised
+  `TypeError`, so the assertion was not even a reliable error.
+- `test_effect` now returns `float | None`, `helps_on_locked_test` returns `bool | None`, and a
+  new `locked_test_measured` states whether the period produced an event score at all. `None`
+  is not `False`: a correction that measured nothing has not been shown to fail.
+- The conclusion, the summary line and the terminal output say *unmeasured* / *unknown* for that
+  case, and keep the existing failing wording for a measurement that was made and pointed the
+  wrong way. One wording rule, three rendering paths.
+- `validation_effect` now raises `DatasetValidationError` naming the contradiction. The refusal
+  is right — `fit_platt` cannot fit without rows carrying a probability strictly inside
+  `(0, 1)` — but a bare `assert` was the wrong way to say it.
+- `REPORT_SCHEMA_VERSION` → `1.1.0`: the calibration block gained `locked_test_measured` and
+  `helps_on_locked_test` may now be null. No key changed meaning, but a `1.0.0` reader would
+  have read that null as `false`, which is exactly the ambiguity the new key removes.
+
+### Found while writing the tests
+- **A changed status would not have made the locked period unreachable.** The first version of
+  the CLI test rewrote the locked rows to `RAC 2`, and the fit still scored them: `_lookup`
+  falls back from `(class, quota, status)` to a broad `(class, quota, ALL)` cohort, so every
+  status inside a known class/quota pair is answerable. The fixture now moves the locked rows to
+  an unseen quota (`TQ`), which no fallback can reach. That fallback is a real property of the
+  lookup and is recorded in the test and in ADR-0029 rather than left as a puzzle.
+
+### Checks run
+- `python -m pytest tests/training/test_calibration.py -q` → 44 passed.
+- `python -m pytest -q` → **1054 passed** (77.2 s).
+- `python -m ruff check .` → clean. `python -m mypy railconfirm` → clean, 44 source files.
+- `python scripts/check_repository_hygiene.py` → passed (22 required files, 240 tracked files).
+- The crash path was reproduced with a standalone script against a fitted fixture before the
+  fix; the assertion message quoted above is from that run.
+
+### Unresolved
+- A calibrated artifact whose locked period could not be scored is still written, and still
+  carries its calibration: the fit decision is a validation decision (ADR-0017). The report now
+  states the missing measurement instead, and promotion stays `candidate`. Whether a promotion
+  reviewer should require a measured locked effect is a product decision that has not been made,
+  and it is recorded here rather than silently enforced by the code.
+- Nothing above is evidence about railway behaviour. Every number involved comes from synthetic
+  fixtures, and the report keeps stating that in its limitations.

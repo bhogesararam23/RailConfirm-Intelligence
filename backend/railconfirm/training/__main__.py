@@ -344,12 +344,15 @@ def _fit(args: argparse.Namespace) -> int:
         )
     if calibration is not None:
         print(f"Calibration: {calibration.spec.description}")
+        if calibration.helps_on_locked_test is None:
+            locked = "unknown (the locked period produced no score)"
+        else:
+            locked = "helped" if calibration.helps_on_locked_test else "did not help"
         print(
             f"  validation event Brier {calibration.validation_before.event_brier} -> "
             f"{calibration.validation_after.event_brier}; locked test "
             f"{calibration.test_before.event_brier} -> "
-            f"{calibration.test_after.event_brier} "
-            f"({'helped' if calibration.helps_on_locked_test else 'did not help'})"
+            f"{calibration.test_after.event_brier} ({locked})"
         )
     print("Promotion is 'candidate': nothing is served until it is approved and activated.")
 

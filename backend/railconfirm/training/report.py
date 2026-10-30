@@ -26,7 +26,14 @@ from railconfirm.training.fitter import FitSummary
 from railconfirm.training.metrics import TARGET_EVENTS, Scorecard
 from railconfirm.training.origins import RollingOriginResult
 
-REPORT_SCHEMA_VERSION = "1.0.0"
+REPORT_SCHEMA_VERSION = "1.1.0"
+"""Raised from 1.0.0 because the calibration block gained ``locked_test_measured`` and
+``helps_on_locked_test`` may now be null.
+
+A null is not a false: a locked period on which every row abstained measured nothing about
+the correction, and a 1.0.0 reader would have read that null as "did not help". The new key
+is what lets a reader tell the two apart; nothing else changed meaning.
+"""
 ORIGIN_REPORT_SCHEMA_VERSION = "1.1.0"
 """Separate from ``REPORT_SCHEMA_VERSION``: a rolling-origin report describes many
  cutoffs, not one train/validation/test run, and a reader must be able to tell which
@@ -177,6 +184,12 @@ class EvaluationReport:
         if self.test is not None:
             lines += _metric_lines(self.test)
         if self.calibration is not None:
+            if self.calibration["locked_test_measured"]:
+                verdict = (
+                    "helped" if self.calibration["helps_on_locked_test"] else "did not help"
+                )
+            else:
+                verdict = "unknown — the locked period produced no score"
             lines += [
                 "",
                 (
@@ -185,8 +198,7 @@ class EvaluationReport:
                     f"{self.calibration['validation_event_brier_after']}, locked test "
                     f"{self.calibration['test_event_brier_before']} -> "
                     f"{self.calibration['test_event_brier_after']} "
-                    f"({'helped' if self.calibration['helps_on_locked_test'] else 'did not help'} "
-                    "on the locked period)"
+                    f"({verdict} on the locked period)"
                 ),
             ]
         elif self.validation.calibration_applied:
@@ -399,13 +411,22 @@ def build_report(
             "unknown here — the tables describe the corrected numbers only."
         )
     else:
-        verdict = (
-            "an improvement, which is what a locked period has to show before a "
-            "correction is trusted"
-            if calibration.helps_on_locked_test
-            else "no improvement: the gain belonged to the validation window and did "
-            "not carry into the locked period, so promotion should weigh this"
-        )
+        if calibration.helps_on_locked_test is None:
+            verdict = (
+                "unmeasured: the locked period produced no score at all, so the correction's "
+                "effect there is unknown and this artifact's calibration rests on the "
+                "validation window alone"
+            )
+        elif calibration.helps_on_locked_test:
+            verdict = (
+                "an improvement, which is what a locked period has to show before a "
+                "correction is trusted"
+            )
+        else:
+            verdict = (
+                "no improvement: the gain belonged to the validation window and did "
+                "not carry into the locked period, so promotion should weigh this"
+            )
         conclusions.append(
             f"Calibration: {calibration.spec.description}. It was embedded because the "
             f"validation event Brier moved {calibration.validation_before.event_brier} -> "

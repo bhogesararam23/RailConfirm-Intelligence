@@ -221,22 +221,51 @@ class CalibrationEvidence:
 
     @property
     def validation_effect(self) -> float:
-        """Change in validation event Brier. Negative is an improvement."""
-        assert self.validation_before.event_brier is not None
-        assert self.validation_after.event_brier is not None
-        return round(
-            self.validation_after.event_brier - self.validation_before.event_brier, 6
-        )
+        """Change in validation event Brier. Negative is an improvement.
+
+        A missing side is an internal contradiction rather than a finding: ``fit_platt``
+        requires rows carrying a probability strictly inside (0, 1), so a calibration that
+        exists at all was fitted on a partition that scored. Raising keeps that mismatch
+        visible instead of letting two different runs be compared as one.
+        """
+        before = self.validation_before.event_brier
+        after = self.validation_after.event_brier
+        if before is None or after is None:
+            raise DatasetValidationError(
+                "Calibration evidence carries a validation scorecard with no event Brier, "
+                "which cannot be produced by a fit that required scored rows. The two "
+                "numbers come from different runs."
+            )
+        return round(after - before, 6)
 
     @property
-    def test_effect(self) -> float:
-        assert self.test_before.event_brier is not None
-        assert self.test_after.event_brier is not None
-        return round(self.test_after.event_brier - self.test_before.event_brier, 6)
+    def test_effect(self) -> float | None:
+        """Change in the locked test's event Brier, or ``None`` when it scored nothing.
+
+        ``None`` is not "no improvement". A locked period on which every row abstained
+        measured nothing about the correction, and a report that folded it into the
+        failure branch would state a result nobody observed. It used to raise here: an
+        ``AssertionError`` from a public property, reached after the artifact had already
+        been written, turned a completed fit into a crash.
+        """
+        before = self.test_before.event_brier
+        after = self.test_after.event_brier
+        if before is None or after is None:
+            return None
+        return round(after - before, 6)
 
     @property
-    def helps_on_locked_test(self) -> bool:
-        return self.test_effect < 0
+    def locked_test_measured(self) -> bool:
+        """Whether the locked period produced an event score for the correction at all."""
+        return self.test_effect is not None
+
+    @property
+    def helps_on_locked_test(self) -> bool | None:
+        """Whether the correction improved the locked period; ``None`` when unmeasured."""
+        effect = self.test_effect
+        if effect is None:
+            return None
+        return effect < 0
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -247,6 +276,7 @@ class CalibrationEvidence:
             "test_event_brier_before": self.test_before.event_brier,
             "test_event_brier_after": self.test_after.event_brier,
             "test_event_brier_change": self.test_effect,
+            "locked_test_measured": self.locked_test_measured,
             "helps_on_locked_test": self.helps_on_locked_test,
         }
 
