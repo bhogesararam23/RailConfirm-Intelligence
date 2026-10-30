@@ -18,6 +18,7 @@ from typing import Any
 from railconfirm.domain.journey import Journey
 from railconfirm.domain.passenger import StatusObservation
 from railconfirm.domain.prediction import (
+    FEATURE_SCHEMA_VERSION,
     AbstentionReason,
     PassengerOutcome,
     PredictionRecord,
@@ -115,7 +116,10 @@ class InferenceEngine:
                 )
         else:
             model_version = "no_model_v0"
-            feature_schema_version = "1.0.0"
+            # The schema this build derives, not the one an older record happened to carry.
+            # A literal here was a second copy of a versioned constant, and it had already
+            # drifted two majors from the build that wrote it.
+            feature_schema_version = FEATURE_SCHEMA_VERSION
             limitations = [
                 "RailConfirm is an independent research tool and not an official IRCTC service.",
                 "Predictions represent probabilities of reservation outcomes, not guaranteed confirmations.",

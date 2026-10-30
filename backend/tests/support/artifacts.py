@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from railconfirm.domain.prediction import PredictionTarget
+from railconfirm.domain.prediction import FEATURE_SCHEMA_VERSION, PredictionTarget
 from railconfirm.domain.status import MAPPING_VERSION
 from railconfirm.inference.artifacts import (
     ESTIMATOR_HISTORICAL_FREQUENCY,
@@ -32,7 +32,7 @@ def artifact_metadata(**overrides) -> ModelArtifactMetadata:
         "version": "fixture_v1",
         "target": PredictionTarget.FINAL_CHART_CNF.value,
         "estimator": ESTIMATOR_HISTORICAL_FREQUENCY,
-        "feature_schema_version": "1.0.0",
+        "feature_schema_version": FEATURE_SCHEMA_VERSION,
         "status_mapping_version": MAPPING_VERSION,
         "outcome_classes": OUTCOME_CLASSES,
         "dataset_id": "fixture-sl-gn-2026-10",

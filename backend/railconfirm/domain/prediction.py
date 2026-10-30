@@ -58,6 +58,22 @@ it is a property of the target, not of any pipeline that consumes it; the traini
 metrics re-export it as ``TARGET_EVENTS`` and keep the name reports already use."""
 
 
+FEATURE_SCHEMA_VERSION = "3.0.0"
+"""Bump when feature meaning or nullability changes, so artifacts can be rejected
+rather than silently misread.
+
+3.0.0 changes the as-of status: a row whose ``current_status`` is blank now falls
+back to its ``initial_status`` instead of becoming UNKNOWN, and the derived columns
+are named ``asof_*`` so the rule is visible where it is used.
+
+It lives in the domain, beside the target definitions, because it is the version of a
+contract that fitting and serving must agree on rather than a property of either. The
+feature list itself stays in ``railconfirm.data.preprocessing``, which re-exports this
+name; serving reads the version from here so an artifact can be refused without the
+serving path importing the pandas-based feature module (the same reasoning ADR-0022
+applied to the target-to-event table)."""
+
+
 class AbstentionReason(str, Enum):
     """Stable reason codes for inference abstention.
 
@@ -408,7 +424,12 @@ class PredictionRecord:
     prediction_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     model_version: str = "no_model_v0"
-    feature_schema_version: str = "1.0.0"
+    feature_schema_version: str = FEATURE_SCHEMA_VERSION
+    """The feature contract this record's inputs were derived under.
+
+    Defaulted rather than optional: a prediction whose record does not say which
+    feature derivation produced it cannot be compared with another, and the default is
+    the contract this build applies."""
     passenger_outcomes: list[PassengerOutcome] = field(default_factory=list)
     group_outcome: GroupOutcome | None = None
     evidence_coverage: str = "insufficient"

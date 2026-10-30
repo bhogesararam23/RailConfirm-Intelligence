@@ -11,7 +11,12 @@ import pytest
 
 from railconfirm.domain.journey import make_journey
 from railconfirm.domain.passenger import make_observation
-from railconfirm.domain.prediction import AbstentionReason, PredictionTarget
+from railconfirm.domain.prediction import (
+    FEATURE_SCHEMA_VERSION,
+    AbstentionReason,
+    PredictionTarget,
+)
+from railconfirm.domain.status import MAPPING_VERSION
 from railconfirm.inference.engine import InferenceEngine
 from railconfirm.inference.registry import ModelRegistry
 from tests.support.artifacts import write_fixture_artifact as write
@@ -57,16 +62,49 @@ def test_ready_artifact_yields_supported_estimates(tmp_path: Path):
     assert outcome.is_supported()
     assert outcome.p_cnf == pytest.approx(71 / 110)
     assert record.model_version == "fixture_v1"
-    assert record.feature_schema_version == "1.0.0"
+    assert record.feature_schema_version == FEATURE_SCHEMA_VERSION
     assert record.evidence_coverage == "sufficient"
     assert record.prediction_at == AS_OF
     assert "Synthetic fixture artifact" in record.limitations[0]
 
 
-def test_ready_artifact_reports_its_own_feature_schema(tmp_path: Path):
+def test_an_artifact_fitted_under_another_feature_schema_is_refused(tmp_path: Path):
+    """A schema version the build does not derive is a refusal, not a label to echo.
+
+    The declaration used to be checked only for being a non-empty string, so an artifact
+    fitted under schema ``2.3.0`` — a version this build has never had — loaded and served,
+    and the record repeated the claim back. Its cohorts were keyed from whatever as-of
+    derivation that build applied, which is the population a lookup here does not reach.
+    """
     write(tmp_path, feature_schema_version="2.3.0")
     record = predict(InferenceEngine(registry=ModelRegistry(models_dir=tmp_path, active_version="fixture_v1")))
-    assert record.feature_schema_version == "2.3.0"
+
+    assert record.model_version == "no_model_v0"
+    assert record.passenger_outcomes[0].abstention_reason is AbstentionReason.MODEL_ARTIFACT_INVALID
+    assert any("artifact_invalid" in text for text in record.limitations)
+    assert any("2.3.0" in text and FEATURE_SCHEMA_VERSION in text for text in record.limitations)
+
+
+def test_an_artifact_fitted_under_another_status_mapping_is_refused(tmp_path: Path):
+    """The cohort key's third part is the normalized status, so its mapping is a contract."""
+    write(tmp_path, status_mapping_version="0.9.0")
+    record = predict(InferenceEngine(registry=ModelRegistry(models_dir=tmp_path, active_version="fixture_v1")))
+
+    assert record.passenger_outcomes[0].abstention_reason is AbstentionReason.MODEL_ARTIFACT_INVALID
+    assert any("0.9.0" in text and MAPPING_VERSION in text for text in record.limitations)
+
+
+def test_an_abstention_reports_the_feature_schema_the_build_applies(tmp_path: Path):
+    """With no artifact, the record still names the contract its inputs were derived under.
+
+    The value was a literal ``"1.0.0"`` in two places — the record default and the engine's
+    no-model branch — while the build had moved to 3.0.0, so every abstained prediction
+    claimed a feature schema that no longer existed.
+    """
+    record = predict(InferenceEngine(registry=ModelRegistry(models_dir=tmp_path)))
+
+    assert record.model_version == "no_model_v0"
+    assert record.feature_schema_version == FEATURE_SCHEMA_VERSION
 
 
 def test_broken_artifact_is_reported_as_invalid_not_absent(tmp_path: Path):

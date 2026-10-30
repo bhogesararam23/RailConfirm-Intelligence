@@ -2106,3 +2106,53 @@ against the rules the same functions already follow for their other settings.
 - No eligible split, metric, report field or artifact changes, so no published number moved.
   Nothing here is evidence about railway behaviour.
 
+## 2026-10-30 — An artifact from another feature derivation was served, not refused (ADR-0034)
+
+### Scope
+`backend/railconfirm/inference/artifacts.py` and the record that carries a prediction's
+provenance. Found by reading the metadata block field by field against the rule the module's own
+docstring states: every declaration is compared to this build except the two that say how the
+cohort keys were built.
+
+### Changed
+- **`feature_schema_version` and `status_mapping_version` were asserted to be non-empty strings
+  and nothing else.** The target, estimator, `outcome_classes`, `features_used`,
+  `cohort_semantics`, promotion state and dataset approval are all compared to this build. The
+  pair that determines the third part of every cohort key was not. Both are now refused on a
+  mismatch, naming the artifact's value and the build's, and the request abstains with
+  `model_artifact_invalid`.
+- **Reproduced against the shared fixtures before changing anything:**
+  `tests/support/artifacts.py` declared feature schema `1.0.0` and `tests/support/datasets.py`
+  `2.0.0`, while this build derives `3.0.0`; both loaded and served. `test_ready_artifact_reports_its_own_feature_schema`
+  wrote `2.3.0` — a version this build has never had — and asserted it was served and echoed into
+  the record. That test is deleted; the case is now a refusal test.
+- **`FEATURE_SCHEMA_VERSION` moved to `railconfirm.domain.prediction`.** Serving needs it to
+  refuse an artifact, and importing `data.preprocessing` for one string would put pandas into the
+  API process (verified absent today) and invert the separation ADR-0022 upheld for the
+  target-to-event table. `data.preprocessing` re-exports the name, so fitter, tests and
+  `data/__init__` are unchanged.
+- **The record's `feature_schema_version` now reads the constant** instead of the literal
+  `"1.0.0"` it carried in two places — the dataclass default and the engine's no-artifact branch.
+
+### Found while writing the tests
+- The three copies of `"1.0.0"` are a textbook drift: the constant was bumped to 3.0.0, the
+  default and the engine's literal were not, and no test compared them, so every abstained
+  response claimed a schema the build no longer had while every served response echoed whatever
+  the artifact said.
+- The refusal surfaces as `model_artifact_invalid`, which is the correct existing status: the
+  artifact is not missing, it is not promotable, and it is not for another target — it is built
+  against a contract this build does not apply.
+- `test_registry.py` already parametrised a whitespace-only `feature_schema_version` as a
+  "non-empty string" failure, which is why the type check looked like it covered the field.
+
+### Checks run
+- `pytest tests/inference` → **320 passed** (2.1 s).
+- `pytest` over the whole backend → **1078 passed** (217.6 s).
+- `ruff check .` clean; `mypy railconfirm` clean, 44 source files; the hygiene script passed.
+
+### Unresolved
+- No artifact this project can fit is affected: the fitter writes both versions from the
+  constants, and nothing is promoted. The stricter loader therefore has no migration path to
+  exercise yet; when a real artifact exists and a schema bump is needed, the refit or migration
+  is a documented step, not an interpretation at load.
+

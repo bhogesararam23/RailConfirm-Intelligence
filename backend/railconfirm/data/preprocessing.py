@@ -28,15 +28,14 @@ import pandas as pd
 
 from railconfirm.data.validator import is_missing
 from railconfirm.domain.exceptions import DatasetValidationError
+from railconfirm.domain.prediction import FEATURE_SCHEMA_VERSION as FEATURE_SCHEMA_VERSION
 from railconfirm.domain.status import ParsedStatus, parse_status
 
-FEATURE_SCHEMA_VERSION = "3.0.0"
-"""Bump when feature meaning or nullability changes, so artifacts can be rejected
-rather than silently misread.
-
-3.0.0 changes the as-of status: a row whose ``current_status`` is blank now falls
-back to its ``initial_status`` instead of becoming UNKNOWN, and the derived columns
-are named ``asof_*`` so the rule is visible where it is used."""
+# ``FEATURE_SCHEMA_VERSION`` is imported, not defined here: it names a contract serving
+# must also enforce, and serving reads it from the domain so an artifact can be refused
+# without importing this pandas-based module. The column list below is what it describes.
+# The name is re-exported from this module because the feature schema is defined with the
+# columns it versions, and every fitting call site already imports from here.
 
 DATE_COLUMN = "journey_date"
 OBSERVATION_COLUMN = "observation_date"

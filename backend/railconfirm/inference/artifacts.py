@@ -23,6 +23,8 @@ from pathlib import Path
 from typing import Any
 
 from railconfirm.domain.exceptions import ModelArtifactError
+from railconfirm.domain.prediction import FEATURE_SCHEMA_VERSION
+from railconfirm.domain.status import MAPPING_VERSION
 from railconfirm.inference.baseline import (
     COHORT_FEATURES,
     COHORT_STATUS_SEMANTICS,
@@ -231,6 +233,21 @@ def metadata_from_mapping(raw: Any, *, expected_version: str, expected_target: s
         raw["target"] == expected_target,
         f"Artifact is fitted for target {raw['target']!r}, not {expected_target!r}. "
         "A final-chart estimate and a departure estimate are different questions.",
+    )
+    _require(
+        raw["feature_schema_version"] == FEATURE_SCHEMA_VERSION,
+        f"Artifact {raw['version']!r} declares feature schema "
+        f"{raw['feature_schema_version']!r}, but this build derives features under "
+        f"{FEATURE_SCHEMA_VERSION!r}. A table fitted under a different derivation was "
+        "keyed from a different as-of status, so its cohorts cannot be looked up by this "
+        "build: refit it, or write a migration, instead of serving it unverified.",
+    )
+    _require(
+        raw["status_mapping_version"] == MAPPING_VERSION,
+        f"Artifact {raw['version']!r} declares status mapping "
+        f"{raw['status_mapping_version']!r}, but this build maps statuses under "
+        f"{MAPPING_VERSION!r}. The same raw value may normalize to a different key, so "
+        "the artifact's cohorts would be read with a rule they were not counted under.",
     )
     _require(
         raw["estimator"] in (ESTIMATOR_HISTORICAL_FREQUENCY, QUEUE_ESTIMATOR_ID),
