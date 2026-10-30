@@ -2004,3 +2004,57 @@ reproduced with a cohort chosen to make a probability land exactly on an edge.
   wider edit as the spread definition above.
 - Nothing above is evidence about railway behaviour. The fixture is synthetic.
 
+## 2026-10-30 — The group block was published undefined and scored zeros for missing figures (ADR-0032)
+
+### Scope
+Finishing the metrics review in `backend/railconfirm/training/metrics.py` and
+`report.py`: the nested `GroupScorecard` every partition with multi-passenger bookings
+publishes, and whether its numbers are explained and its abstentions handled. Two defects, both
+found by comparing the block against the rules the rest of the report already follows.
+
+### Changed
+- **`METRIC_DEFINITIONS` never covered the group figures.** A field is exempt from the
+definition rule by being listed in `STRUCTURAL_FIELDS`, and `group` is one — so the eight
+figures inside it were published with no sentence at all. Three of them are Brier scores of a
+mathematical bound, including one reported in the terminal line as "queue bound"; the rest
+were only decodable by reading the code. `GROUP_STRUCTURAL_FIELDS` and `GROUP_METRIC_KEYS` now
+partition `GroupScorecard`, the way the top-level pair partitions `Scorecard`, and all eight
+have definitions.
+- The definitions name the three awkward facts: `queue_brier_*` scores the comonotonic limit
+rather than a calibrated probability and is never evidence of validated group behaviour;
+`brier_all_cnf`'s label is the *target's* event classes, so the field name is exact only for
+`final_chart_cnf`; `baseline_brier_all_cnf` raises the event prevalence to the booking's own
+size, so groups of different sizes are scored against different references.
+- **A missing group figure was scored as `0.0`.** All six probabilities used the
+`value if ... is not None else 0.0` shape, so a booking the methods could not combine became a
+certain "did not happen" and entered the published Brier. Both methods are now asked first and
+a group without figures is counted in `abstained_groups`, contributing to no mean.
+
+### Found while writing the tests
+- The exemption was self-inflicted and invisible: `test_every_published_metric_is_defined_and_nothing_extra_is`
+asserted equality against `METRIC_KEYS`, which by construction excludes `group`, so the test
+was passing *because* the nested block was outside its scope. The new test asserts the field
+partition instead of a key list, which is the property that cannot drift.
+- The `0.0` branch is unreachable through the public API today — a group is only scored when
+every member is supported, and a supported outcome carries all three probabilities (ADR-0024).
+That is why the regression needed `monkeypatch` on `compute_group_outcomes`: the point of the
+test is the contract, so it must be able to construct the case the invariant currently
+prevents.
+- `GROUP_METRIC_KEYS` is eight fields, not nine: the five counting fields are structural. The
+docstring was written with the wrong count first and corrected before the commit.
+
+### Checks run
+- `pytest tests/training/test_metrics.py tests/training/test_report.py` → **39 passed** (1.7 s).
+- `pytest` over the whole backend → **1067 passed** (161.8 s).
+- `ruff check .` clean; `mypy railconfirm` clean, 44 source files; the hygiene script passed.
+
+### Unresolved
+- `brier_all_cnf` and the other target-dependent group field names remain misleading for the
+merged target. Renaming them changes published report bytes and every consumer, so it is left
+for a release that is already moving the schema; the definition states the ambiguity instead,
+which is what ADR-0032 records.
+- The group baseline is a per-group reference (event prevalence raised to the group's size), so
+the published `baseline_brier_all_cnf` is not comparable between partitions with different
+booking-size mixes. It is stated in the definition and not otherwise corrected.
+- Nothing above is evidence about railway behaviour. Every number comes from synthetic fixtures.
+

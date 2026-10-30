@@ -133,6 +133,51 @@ METRIC_DEFINITIONS: dict[str, str] = {
         "population can look aligned while offsetting cohorts are not, which is what these "
         "rows exist to expose; a segment below the row floor carries no claim."
     ),
+    "brier_all_cnf": (
+        "Mean squared error of the independence-method probability that every passenger in "
+        "the booking lands in the target's event classes — for `final_chart_cnf` that is "
+        "every berth confirmed, for `final_chart_cnf_or_rac` every berth confirmed or RAC, "
+        "so the label the field name suggests is only exact for the first target. Scored "
+        "over groups whose members all returned a supported estimate and a label; the "
+        "probability it scores treats passengers as independent, which is an approximation "
+        "and not a property of a booking."
+    ),
+    "brier_all_cnf_or_rac": (
+        "The same independence-method score against the label \"every passenger confirmed "
+        "or RAC\", whatever the target is. It is published beside `brier_all_cnf` so a "
+        "reader can see how much of the first number is the merged event being easier."
+    ),
+    "brier_at_least_one_wl": (
+        "Mean squared error of the independence-method probability that at least one "
+        "passenger in the booking ends on a waitlist, against whether one did."
+    ),
+    "queue_brier_all_cnf": (
+        "The same score computed from the queue-dependent comonotonic bound rather than "
+        "from an independence product. A Brier score of a bound is not a Brier score of a "
+        "calibrated probability: the bound is the extreme joint arrangement the marginals "
+        "allow under sequential clearing, so this figure says how close the bookings came "
+        "to that limit, not how accurate a group forecast was. It is a mathematical bound, "
+        "never an empirically validated claim about group behaviour."
+    ),
+    "queue_brier_all_cnf_or_rac": (
+        "The queue bound scored against the label \"every passenger confirmed or RAC\"."
+    ),
+    "queue_brier_at_least_one_wl": (
+        "The queue bound's probability that at least one passenger waits, scored against "
+        "whether one did."
+    ),
+    "baseline_brier_all_cnf": (
+        "The same event's training-period prevalence raised to the booking's passenger "
+        "count, scored against the same label — the \"everyone independently drawn from the "
+        "base rate\" reference. The exponent is the group's own size, so groups of different "
+        "sizes are averaged against baselines that differ by construction, and the reference "
+        "is not a real group model: it is the floor a learnt group claim has to clear."
+    ),
+    "brier_skill_all_cnf": (
+        "1 - `brier_all_cnf` / `baseline_brier_all_cnf`. Positive means the independence "
+        "approximation beat the size-aware base rate on the scored groups; it says nothing "
+        "about the queue bound, which is reported beside it rather than compared."
+    ),
 }
 
 

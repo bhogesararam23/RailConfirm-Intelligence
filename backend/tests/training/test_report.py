@@ -18,8 +18,11 @@ from railconfirm.inference.baseline import (
 )
 from railconfirm.training.fitter import FitSummary
 from railconfirm.training.metrics import (
+    GROUP_METRIC_KEYS,
+    GROUP_STRUCTURAL_FIELDS,
     METRIC_KEYS,
     STRUCTURAL_FIELDS,
+    GroupScorecard,
     build_estimator,
     score_partition,
 )
@@ -186,7 +189,23 @@ def test_every_published_metric_is_defined_and_nothing_extra_is():
     report = make_report(cohorts=CONCLUSIVE, frame=rows([("GNWL/10", "CNF")] * 4))
     published = set(report.to_dict()["validation"])
     assert published - STRUCTURAL_FIELDS == METRIC_KEYS
-    assert set(report.to_dict()["metric_definitions"]) == set(METRIC_KEYS)
+    assert set(report.to_dict()["metric_definitions"]) == set(METRIC_KEYS) | set(
+        GROUP_METRIC_KEYS
+    )
+
+
+def test_a_group_figure_cannot_be_published_without_a_definition():
+    """The group block is nested, so the top-level coverage check never saw it.
+
+    Every number in it was published with no definition, including three Brier scores of
+    a mathematical bound rather than of a probability — the one distinction the project
+    insists must never be blurred.
+    """
+    report = make_report(cohorts=CONCLUSIVE, frame=rows([("GNWL/10", "CNF")] * 4))
+    definitions = set(report.to_dict()["metric_definitions"])
+    assert set(GroupScorecard.__dataclass_fields__) == GROUP_STRUCTURAL_FIELDS | GROUP_METRIC_KEYS
+    assert GROUP_METRIC_KEYS <= definitions
+    assert "mathematical bound" in report.to_dict()["metric_definitions"]["queue_brier_all_cnf"]
 
 
 def test_the_report_serialises_event_metrics_byte_stably(tmp_path):

@@ -10,7 +10,7 @@ import math
 import pandas as pd
 import pytest
 
-from railconfirm.domain.prediction import PredictionTarget
+from railconfirm.domain.prediction import AbstentionReason, PredictionTarget
 from railconfirm.domain.status import MAPPING_VERSION
 from railconfirm.inference.baseline import FrequencyTableProvenance
 from railconfirm.training.metrics import (
@@ -396,6 +396,45 @@ def test_group_scoring_with_multi_passenger_bookings():
     payload = card.to_dict()
     assert "group" in payload
     assert payload["group"]["total_groups"] == 2
+
+
+def test_a_group_figure_that_is_absent_is_an_abstention_and_never_a_zero(monkeypatch):
+    """A missing group probability must not be scored as "certainly did not happen".
+
+    The independence and queue methods return no figure when a booking cannot be combined.
+    Reading that as ``0.0`` made the scorecard publish a Brier computed from a probability
+    nobody produced, which is exactly the substitution ADR-0024 removed one layer down. A
+    group without figures is now counted with the abstentions, where the report can say so.
+    """
+    from railconfirm.domain.status import parse_status
+    from railconfirm.inference.group import GroupOutcome
+    from railconfirm.training import metrics as metrics_module
+
+    outcome = estimator().estimate("P1", parse_status("GNWL/10"), "SL", "GN")
+    members = {"B1": [(outcome, "CNF"), (outcome, "CNF")]}
+    monkeypatch.setattr(
+        metrics_module,
+        "compute_group_outcomes",
+        lambda *args, **kwargs: GroupOutcome(
+            p_all_cnf=None,
+            p_all_cnf_or_rac=None,
+            p_at_least_one_wl=None,
+            method="independence_baseline",
+            assumptions="refused",
+            abstention_reason=AbstentionReason.INSUFFICIENT_SAMPLE,
+        ),
+    )
+    card = metrics_module._group_scorecard(
+        group_members=members, event_classes=("CNF",), prevalence=PREVALENCE
+    )
+    assert card is not None
+    assert card.total_groups == 1
+    assert card.multi_passenger_groups == 1
+    assert card.scored_groups == 0
+    assert card.abstained_groups == 1
+    assert card.brier_all_cnf is None
+    assert card.queue_brier_all_cnf is None
+    assert card.baseline_brier_all_cnf is None
 
 
 def test_group_scoring_abstained_when_passenger_abstains():

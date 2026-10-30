@@ -218,6 +218,25 @@ METRIC_KEYS = frozenset(name for name in Scorecard.__dataclass_fields__) - STRUC
 new metric cannot be published without being explained.
 """
 
+GROUP_STRUCTURAL_FIELDS = frozenset(
+    {
+        "total_groups",
+        "single_passenger_groups",
+        "multi_passenger_groups",
+        "scored_groups",
+        "abstained_groups",
+    }
+)
+"""Group-scorecard fields that count groups rather than measure a probability model."""
+
+GROUP_METRIC_KEYS = frozenset(GroupScorecard.__dataclass_fields__) - GROUP_STRUCTURAL_FIELDS
+"""Every published group figure the report must define in words.
+
+The group block is nested under a structural field, so the top-level check that pairs
+``METRIC_KEYS`` with ``METRIC_DEFINITIONS`` never saw it: eight numbers — including three
+Brier scores of a *bound* and one baseline whose exponent is the group's own size — were
+published with no definition at all."""
+
 
 def _outcome_vector(parsed: ParsedStatus) -> dict[str, float]:
     """One-hot over the declared outcome space.
@@ -702,35 +721,45 @@ def _group_scorecard(
             abstained_groups += 1
             continue
 
-        scored_groups += 1
         po_list = [po for po, _ in members if po is not None]
         labels = [label for _, label in members if label is not None]
 
+        # Both methods are asked before anything is scored, and a group that comes back
+        # without the figure being scored is an abstention rather than a zero. Reading an
+        # absent probability as 0.0 turns a missing number into "certainly did not happen"
+        # and then publishes a Brier computed against it — the same substitution ADR-0024
+        # removed one layer down, in the group methods themselves.
+        indep = compute_group_outcomes(po_list, method="independence_baseline")
+        queue = compute_queue_dependent_bounds(po_list)
+        if (
+            indep is None
+            or indep.p_all_cnf is None
+            or indep.p_all_cnf_or_rac is None
+            or indep.p_at_least_one_wl is None
+            or queue is None
+            or queue.p_all_cnf is None
+            or queue.p_all_cnf_or_rac is None
+            or queue.p_at_least_one_wl is None
+        ):
+            abstained_groups += 1
+            continue
+
+        scored_groups += 1
         true_all_cnf = 1.0 if all(lbl in event_classes for lbl in labels) else 0.0
         true_all_cnf_or_rac = 1.0 if all(lbl in ("CNF", "RAC") for lbl in labels) else 0.0
         true_at_least_one_wl = 1.0 if any(lbl == "WL" for lbl in labels) else 0.0
 
-        indep = compute_group_outcomes(po_list, method="independence_baseline")
-        p_indep_cnf = indep.p_all_cnf if indep and indep.p_all_cnf is not None else 0.0
-        p_indep_cnf_rac = (
-            indep.p_all_cnf_or_rac if indep and indep.p_all_cnf_or_rac is not None else 0.0
-        )
-        p_indep_wl = (
-            indep.p_at_least_one_wl if indep and indep.p_at_least_one_wl is not None else 0.0
-        )
+        p_indep_cnf = indep.p_all_cnf
+        p_indep_cnf_rac = indep.p_all_cnf_or_rac
+        p_indep_wl = indep.p_at_least_one_wl
 
         indep_brier_cnf_sum += (p_indep_cnf - true_all_cnf) ** 2
         indep_brier_cnf_rac_sum += (p_indep_cnf_rac - true_all_cnf_or_rac) ** 2
         indep_brier_wl_sum += (p_indep_wl - true_at_least_one_wl) ** 2
 
-        queue = compute_queue_dependent_bounds(po_list)
-        p_queue_cnf = queue.p_all_cnf if queue and queue.p_all_cnf is not None else 0.0
-        p_queue_cnf_rac = (
-            queue.p_all_cnf_or_rac if queue and queue.p_all_cnf_or_rac is not None else 0.0
-        )
-        p_queue_wl = (
-            queue.p_at_least_one_wl if queue and queue.p_at_least_one_wl is not None else 0.0
-        )
+        p_queue_cnf = queue.p_all_cnf
+        p_queue_cnf_rac = queue.p_all_cnf_or_rac
+        p_queue_wl = queue.p_at_least_one_wl
 
         queue_brier_cnf_sum += (p_queue_cnf - true_all_cnf) ** 2
         queue_brier_cnf_rac_sum += (p_queue_cnf_rac - true_all_cnf_or_rac) ** 2
