@@ -128,7 +128,7 @@ Fixed widths are the point. Cuts derived from the training file would move when 
 so two artifacts would not be comparable and a served probability would depend on which rows
 happened to be in the fitting period.
 
-Three refusals define the behaviour:
+Five refusals define the behaviour:
 
 - **A thin band does not answer.** Below `min_band_rows` (default 2, recorded on the artifact
   because it changes the number) the cohort rate answers and `basis` says
@@ -141,6 +141,20 @@ Three refusals define the behaviour:
 - **A mismatched artifact is refused at load.** Format, estimator, `features_used` and the band
   block must agree in both directions; `write_artifact` refuses to create the mismatch and
   `load_artifact` refuses to read one, which surfaces as `model_artifact_invalid`.
+- **A band label the banding rule cannot produce is refused.** `position_band` returns one of
+  `1, 2-3, 4-7, 8-15, 16-31, 32-63, 64-127, 128+` and nothing else, so a cell keyed `1-3`,
+  `128` or `64-128` is unreachable at every request. It would still be counted as position
+  evidence and written back to the artifact, which is the shape of a position model that
+  answers everything from the cohort. The accepted set is derived from `band_labels()`, not
+  from a second literal list, and a test asserts it equals what `position_band` returns for
+  a long run of positions.
+- **A band cell whose cohort has no row is refused.** `estimate` resolves the cohort before it
+  reads a band, so an orphan cell can never answer; a band table made only of orphans is the
+  frequency model carrying the position model's name. The cross-check runs in `load_tables`,
+  in `build_artifact_document` and at `load_artifact`, so a half-loaded model is not possible.
+  The first three parts of a band key are validated by the cohort table's own rule, so a cell
+  keyed by a status the estimator cannot look up is refused for the same reason. See
+  ADR-0025.
 
 The response shape does not change: `p_*`, `basis`, `model_version` and `limitations` mean the
 same thing for either estimator, and calibration, promotion gates and group arithmetic apply to

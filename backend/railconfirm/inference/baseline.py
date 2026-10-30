@@ -156,7 +156,13 @@ def cohort_key(class_code: str, quota_code: str, status: str) -> tuple[str, str,
     )
 
 
-def _validate_cohort_key(key: object) -> tuple[str, str, str]:
+def validate_cohort_key(key: object) -> tuple[str, str, str]:
+    """Check one cohort key and return it canonicalised.
+
+    Shared with the position-band table, whose first three parts name a cohort: a band cell
+    keyed by a status the estimator can never look up is as unreachable as one keyed by a
+    band it can never produce.
+    """
     if not isinstance(key, tuple) or len(key) != 3:
         raise FrequencyTableValidationError(
             f"Cohort keys must be (class_code, quota_code, status) 3-tuples, got {key!r}."
@@ -241,7 +247,7 @@ def normalize_frequency_table(table: FrequencyTable) -> dict[tuple[str, str, str
 
     normalized: dict[tuple[str, str, str], dict[str, int]] = {}
     for raw_key, raw_counts in table.items():
-        cohort = _validate_cohort_key(raw_key)
+        cohort = validate_cohort_key(raw_key)
         if cohort in normalized:
             raise FrequencyTableValidationError(
                 f"Cohort keys {raw_key!r} collide with an earlier entry after "

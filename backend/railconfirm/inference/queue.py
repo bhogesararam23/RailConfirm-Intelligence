@@ -45,6 +45,7 @@ from railconfirm.inference.baseline import (
     FrequencyTableProvenance,
     cohort_key,
     normalize_frequency_table,
+    validate_cohort_key,
     validate_outcome_counts,
 )
 
@@ -122,22 +123,60 @@ def band_labels() -> tuple[str, ...]:
 
 
 def _validate_band_key(raw_key: object) -> BandKey:
-    if isinstance(raw_key, tuple) and len(raw_key) != 4:
-        raise FrequencyTableValidationError(
-            f"Band key {raw_key!r} must be a four-part tuple (class_code, quota_code, "
-            "status, band); a three-part key names a cohort, not a band."
-        )
+    """Read one band key, refusing anything the estimator could never look up.
+
+    Both halves are checked against the code that produces them rather than against a copy
+    of it: the first three parts are a cohort key, validated by the same rule the cohort
+    table uses, and the fourth must be a label ``position_band`` can return. A cell outside
+    either set is unreachable at every request, and its presence would make an artifact
+    look position-aware while every answer came from the cohort.
+    """
     if not isinstance(raw_key, tuple):
         raise FrequencyTableValidationError(
             f"Band key {raw_key!r} must be a four-part tuple (class_code, quota_code, "
             "status, band)."
         )
-    parts = tuple(str(part).strip().upper() for part in raw_key)
-    if not all(parts):
+    if len(raw_key) != 4:
         raise FrequencyTableValidationError(
-            f"Band key {raw_key!r} has an empty part, so no request could ever match it."
+            f"Band key {raw_key!r} must be a four-part tuple (class_code, quota_code, "
+            "status, band); a three-part key names a cohort, not a band."
         )
-    return parts  # type: ignore[return-value]
+    cohort = validate_cohort_key(raw_key[:3])
+    band = str(raw_key[3]).strip()
+    if not band:
+        raise FrequencyTableValidationError(
+            f"Band key {raw_key!r} names no band, so no request could ever match it."
+        )
+    reachable = band_labels()
+    if band not in reachable:
+        raise FrequencyTableValidationError(
+            f"Band key {raw_key!r} names band {band!r}, which this build never produces. "
+            f"The reachable bands are {list(reachable)}: the cuts are fixed doubling widths "
+            "(ADR-0020), so a neighbouring or rounded label is a different model's table."
+        )
+    return (*cohort, band)
+
+
+def validate_band_cohorts(
+    cohorts: Mapping[tuple[str, str, str], object],
+    bands: Mapping[BandKey, object],
+) -> None:
+    """Refuse a band cell whose cohort has no row of its own.
+
+    ``CohortPositionBaseline.estimate`` resolves the cohort first and answers from the band
+    only afterwards, so a band cell without a parent cohort row can never be reached — and
+    a table made only of such cells is the frequency model wearing the position model's
+    name. Best read as the cross-check it is: the band table is a refinement of the cohort
+    table, and a refinement of rows that do not exist is an orphan.
+    """
+    orphans = sorted({key[:3] for key in bands} - set(cohorts))
+    if orphans:
+        raise FrequencyTableValidationError(
+            f"Band cells {orphans} name cohorts with no row in the cohort table. The "
+            "estimator resolves the cohort before it reads a band, so these cells could "
+            "never answer a request; fit them against the cohorts they refine."
+        )
+
 
 
 def normalize_band_table(table: BandTable) -> dict[BandKey, dict[str, int]]:
@@ -256,6 +295,7 @@ class CohortPositionBaseline:
         """Install both tables only if both validate; a half-loaded model is not a model."""
         normalized_cohorts = normalize_frequency_table(cohorts)
         normalized_bands = normalize_band_table(bands)
+        validate_band_cohorts(normalized_cohorts, normalized_bands)
         self._cohorts = normalized_cohorts
         self._bands = normalized_bands
         self._provenance = provenance
@@ -428,4 +468,5 @@ __all__ = [
     "band_labels",
     "normalize_band_table",
     "position_band",
+    "validate_band_cohorts",
 ]

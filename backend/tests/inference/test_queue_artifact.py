@@ -27,6 +27,7 @@ from railconfirm.inference.artifacts import (
 from railconfirm.inference.baseline import (
     COHORT_FEATURES,
     COHORT_STATUS_SEMANTICS,
+    FrequencyTableValidationError,
     HistoricalFrequencyBaseline,
 )
 from railconfirm.inference.queue import (
@@ -278,6 +279,55 @@ def test_a_malformed_band_cell_is_refused_at_load_not_smoothed(tmp_path):
             expected_version="queue_v1",
             expected_target="final_chart_cnf",
             max_bytes=1_000_000,
+        )
+
+
+def test_a_band_label_the_model_cannot_produce_is_refused_at_load(tmp_path):
+    """`1-3` is a plausible label and an impossible one: the cuts are fixed doublings.
+
+    The cell would load, inflate the band count, and never answer a request — an artifact
+    that looks position-aware while every answer still comes from the cohort.
+    """
+    path = write(tmp_path, queue_metadata(), bands=BANDS)
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document["bands"]["SL|GN|WL|1-3"] = {"CNF": 4, "WL": 1}
+    path.write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(ModelArtifactError, match="unusable band"):
+        load_artifact(
+            path,
+            expected_version="queue_v1",
+            expected_target="final_chart_cnf",
+            max_bytes=1_000_000,
+        )
+
+
+def test_an_artifact_whose_band_cells_have_no_cohort_row_is_refused(tmp_path):
+    """A refinement of rows that do not exist can never be reached."""
+    path = write(tmp_path, queue_metadata(), bands=BANDS)
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document["cohorts"] = {"SL|GN|RAC": {"CNF": 40, "WL": 60}}
+    path.write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(ModelArtifactError, match="nothing could reach"):
+        load_artifact(
+            path,
+            expected_version="queue_v1",
+            expected_target="final_chart_cnf",
+            max_bytes=1_000_000,
+        )
+
+
+def test_writing_a_band_cell_with_no_cohort_row_is_refused():
+    """The writer refuses what the loader would refuse, so the two cannot disagree."""
+    with pytest.raises(FrequencyTableValidationError, match="no row in the cohort table"):
+        build_artifact_document(
+            queue_metadata(), COHORTS, bands={("SL", "GN", "RAC", "1"): {"CNF": 3}}
+        )
+
+
+def test_a_band_label_the_model_cannot_produce_is_refused_by_the_writer():
+    with pytest.raises(FrequencyTableValidationError, match="never produces"):
+        build_artifact_document(
+            queue_metadata(), COHORTS, bands={("SL", "GN", "WL", "8-16"): {"CNF": 3}}
         )
 
 

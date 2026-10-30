@@ -23,6 +23,7 @@ from railconfirm.inference.queue import (
     QUEUE_ESTIMATOR_ID,
     QUEUE_FEATURES,
     CohortPositionBaseline,
+    band_labels,
     normalize_band_table,
     position_band,
 )
@@ -372,6 +373,66 @@ def test_band_cells_are_normalised_the_way_cohort_keys_already_are():
 def test_a_band_key_of_the_wrong_shape_is_refused():
     with pytest.raises(FrequencyTableValidationError, match="four"):
         normalize_band_table({("SL", "GN", "WL"): {"CNF": 3, "WL": 1}})
+
+
+@pytest.mark.parametrize(
+    "label",
+    ["0", "1-3", "128", "200+", "64-128", "8 - 15", "first", "1 to 3"],
+)
+def test_a_band_label_the_model_never_produces_is_refused(label):
+    """A cell keyed by an unreachable label can never answer a request.
+
+    `1-3` and `128` are the plausible mistakes: one neighbouring width and the top cut
+    written as a ceiling. Both would load, be counted as position evidence, and never be
+    read by `position_band`.
+    """
+    with pytest.raises(FrequencyTableValidationError, match="never produces"):
+        normalize_band_table({("SL", "GN", "WL", label): {"CNF": 3, "WL": 1}})
+
+
+@pytest.mark.parametrize("label", band_labels())
+def test_every_reachable_band_label_is_accepted(label):
+    normalized = normalize_band_table({("SL", "GN", "WL", label): {"CNF": 3, "WL": 1}})
+    assert list(normalized) == [("SL", "GN", "WL", label)]
+
+
+def test_the_accepted_labels_are_exactly_what_the_banding_rule_returns():
+    """The loader's list is checked against the function that produces labels, not a copy."""
+    produced = {position_band(position) for position in range(1, 5000)}
+    assert produced == set(band_labels())
+
+
+def test_a_band_keyed_by_a_status_the_estimator_cannot_look_up_is_refused():
+    """The first three parts name a cohort, so they are validated as one."""
+    with pytest.raises(FrequencyTableValidationError, match="not a normalized status"):
+        normalize_band_table({("SL", "GN", "WAITING", "1"): {"CNF": 3, "WL": 1}})
+
+
+def test_a_band_key_with_no_band_is_refused():
+    with pytest.raises(FrequencyTableValidationError, match="names no band"):
+        normalize_band_table({("SL", "GN", "WL", "   "): {"CNF": 3, "WL": 1}})
+
+
+def test_a_band_key_with_an_empty_class_is_refused():
+    with pytest.raises(FrequencyTableValidationError, match="empty class_code"):
+        normalize_band_table({("  ", "GN", "WL", "1"): {"CNF": 3, "WL": 1}})
+
+
+def test_a_band_cell_whose_cohort_has_no_row_is_refused_and_nothing_is_loaded():
+    """The estimator resolves the cohort first, so an orphan cell could never be reached.
+
+    A table made only of orphans is the frequency model under the position model's name,
+    which is the confusion ADR-0020 exists to prevent.
+    """
+    estimator = CohortPositionBaseline(min_sample_threshold=5)
+    with pytest.raises(FrequencyTableValidationError, match="no row in the cohort table"):
+        estimator.load_tables(
+            COHORTS,
+            {("SL", "GN", "RAC", "1"): {"CNF": 1, "WL": 1}},
+            provenance(),
+        )
+    assert not estimator.is_loaded
+    assert estimator.provenance is None
 
 
 @pytest.mark.parametrize(

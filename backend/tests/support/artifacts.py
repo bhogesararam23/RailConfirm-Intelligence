@@ -51,6 +51,21 @@ def artifact_metadata(**overrides) -> ModelArtifactMetadata:
     return ModelArtifactMetadata(**base)  # type: ignore[arg-type]
 
 
+POSITION_COHORTS: dict[tuple[str, str, str], dict[str, int]] = {
+    **COHORTS,
+    # The broad cohort the ALL band cells refine. Without it those cells have no parent row
+    # and the loader refuses them as unreachable, which is what they would be.
+    ("SL", "GN", "ALL"): {
+        "CNF": 90,
+        "RAC": 40,
+        "WL": 30,
+        "CANCELLED": 10,
+        "OTHER": 5,
+    },
+}
+"""Cohorts for the position fixture: the exact cells plus the broad cohort its bands refine."""
+
+
 POSITION_BANDS: dict[tuple[str, str, str, str], dict[str, int]] = {
     ("SL", "GN", "WL", "1"): {"CNF": 60, "RAC": 15, "WL": 15, "CANCELLED": 5, "OTHER": 5},
     ("SL", "GN", "WL", "32-63"): {
@@ -86,10 +101,12 @@ def write_fixture_artifact(
     if bands is not None:
         meta_overrides.setdefault("estimator", QUEUE_ESTIMATOR_ID)
         meta_overrides.setdefault("features_used", QUEUE_FEATURES)
+    if cohorts is None:
+        cohorts = POSITION_COHORTS if bands is not None else COHORTS
     return write_artifact(
         tmp_path / f"{name}.json",
         artifact_metadata(**meta_overrides),
-        COHORTS if cohorts is None else cohorts,
+        cohorts,
         bands=bands,
     )
 

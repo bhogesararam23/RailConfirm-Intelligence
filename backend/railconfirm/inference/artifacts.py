@@ -44,6 +44,7 @@ from railconfirm.inference.queue import (
     BandKey,
     CohortPositionBaseline,
     normalize_band_table,
+    validate_band_cohorts,
 )
 
 ARTIFACT_FORMAT = "railconfirm.frequency-baseline/2"
@@ -483,6 +484,12 @@ def load_artifact(
             raise ModelArtifactError(
                 f"Artifact {path.name} carries an unusable band table: {exc}"
             ) from exc
+        try:
+            validate_band_cohorts(normalized, bands)
+        except FrequencyTableValidationError as exc:
+            raise ModelArtifactError(
+                f"Artifact {path.name} carries band cells nothing could reach: {exc}"
+            ) from exc
     else:
         _require(
             "bands" not in document,
@@ -559,6 +566,7 @@ def build_artifact_document(
             "layout could carry it."
         )
     metadata_block = asdict(metadata)
+    normalized_cohorts = normalize_frequency_table(cohorts)
     if metadata.estimator == QUEUE_ESTIMATOR_ID:
         if not bands:
             raise ModelArtifactError(
@@ -566,9 +574,9 @@ def build_artifact_document(
                 "the cohort, which makes it the frequency-baseline artifact: write it as "
                 "that estimator, or fit the position cells."
             )
-        payload_bands: dict[str, dict[str, int]] | None = encode_bands(
-            normalize_band_table(bands)
-        )
+        normalized_bands = normalize_band_table(bands)
+        validate_band_cohorts(normalized_cohorts, normalized_bands)
+        payload_bands: dict[str, dict[str, int]] | None = encode_bands(normalized_bands)
     else:
         if bands:
             raise ModelArtifactError(
@@ -585,7 +593,7 @@ def build_artifact_document(
             "outcome_classes": list(metadata.outcome_classes),
             "limitations": list(metadata.limitations),
         },
-        "cohorts": encode_cohorts(normalize_frequency_table(cohorts)),
+        "cohorts": encode_cohorts(normalized_cohorts),
     }
     if payload_bands is not None:
         document["bands"] = payload_bands
