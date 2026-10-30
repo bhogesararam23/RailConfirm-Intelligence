@@ -45,9 +45,19 @@ ORIGIN_REPORT_SCHEMA_VERSION = "1.1.0"
  is not being reinterpreted, it is being under-informed.
  """
 
-DECAY_REPORT_SCHEMA_VERSION = "1.0.0"
+DECAY_REPORT_SCHEMA_VERSION = "1.1.0"
 """Its own version because its payload is one artifact judged repeatedly, which neither
-of the other two shapes describes."""
+ of the other two shapes describes.
+
+ Raised from 1.0.0 because the summary gained `first_scored_horizon` and
+ `last_scored_horizon`, and because `event_brier_drift` and `coverage_drift` are now
+ stated to span different sets of horizons.
+
+ A 1.0.0 reader would have read the event drift as "last horizon minus the first" and
+ been wrong whenever an earlier horizon abstained. No key was renamed or reinterpreted,
+ so a minor bump carries the correction without forcing old reports to be treated as
+ suspect.
+ """
 
 ORIGIN_AGGREGATE_DEFINITIONS: dict[str, str] = {
     "mean_over_origins": (
@@ -756,14 +766,19 @@ DECAY_METRIC_DEFINITIONS: dict[str, str] = {
         "recomputed per horizon drifts toward the answer it is judging."
     ),
     "event_brier_drift": (
-        "Last horizon event Brier minus the first horizon's, in horizon order. Positive "
+        "The last horizon that produced a score minus the first that did, in horizon "
+        "order — horizons on which every row abstained carry no reading and are named by "
+        "`first_scored_horizon`/`last_scored_horizon`, so the two ends of this difference "
+        "are dated rather than assumed to be the nearest and furthest windows. Positive "
         "means the frozen table did worse as the calendar moved away from its fitted "
         "period; it is a difference of two measured means, not a tested trend."
     ),
     "coverage_drift": (
-        "Last horizon coverage minus the first horizon's. A fall means the fixed cohort "
-        "table abstains on more of the later rows — a statement about the table's reach, "
-        "not about whether its numbers were right."
+        "Last horizon coverage minus the first horizon's. Coverage exists for every "
+        "horizon — a horizon that abstained on everything reports 0.0 — so this difference "
+        "spans the whole walk, while the event Brier drift may skip horizons that scored "
+        "nothing. A fall means the fixed cohort table abstains on more of the later rows — "
+        "a statement about the table's reach, not about whether its numbers were right."
     ),
 }
 
@@ -831,8 +846,9 @@ class FrozenDecayReport:
         lines += [
             "",
             (
-                f"Drift: event Brier {_fmt(summary['first_event_brier'])} -> "
-                f"{_fmt(summary['last_event_brier'])} "
+                f"Drift: event Brier h{summary['first_scored_horizon']} "
+                f"{_fmt(summary['first_event_brier'])} -> "
+                f"h{summary['last_scored_horizon']} {_fmt(summary['last_event_brier'])} "
                 f"({_fmt(summary['event_brier_drift'])}), coverage "
                 f"{_fmt(summary['first_coverage'])} -> "
                 f"{_fmt(summary['last_coverage'])} ({_fmt(summary['coverage_drift'])})"
@@ -880,7 +896,8 @@ def build_decay_report(
             "applied."
         ),
         (
-            "Drift is the difference between the first and last horizon means. Horizon row "
+            "Drift is the difference between the first and last scored horizon means "
+            "(coverage, which every horizon reports, spans the whole walk). Horizon row "
             "counts and outcome mixes differ, so a movement here describes these windows and "
             "is not a tested trend in the artifact."
         ),
@@ -951,12 +968,43 @@ def _decay_conclusions(result: FrozenDecayResult) -> list[str]:
         )
         return conclusions
 
-    conclusions.append(
-        f"Across {scored} scored horizons the target event Brier ran from "
-        f"{result.first_event_brier:.6f} in the window nearest the cutoff to "
-        f"{result.last_event_brier:.6f} in the furthest, a drift of "
-        f"{result.event_brier_drift:+.6f}."
-    )
+    first_index = result.first_scored_horizon
+    last_index = result.last_scored_horizon
+    if scored == 1:
+        conclusions.append(
+            f"Only horizon {first_index} produced a score: its target event Brier is "
+            f"{result.first_event_brier:.6f}, one future window is a single measurement and "
+            "not a decay curve, and no drift can be read from it."
+        )
+    else:
+        window_phrase = (
+            "in the window nearest the cutoff"
+            if first_index == 0
+            else f"at horizon {first_index}, not the window nearest the cutoff"
+        )
+        tail_phrase = (
+            "in the furthest"
+            if last_index == result.horizon_count - 1
+            else f"at horizon {last_index}, not the furthest"
+        )
+        silent_horizons = [
+            score.window.index
+            for score in result.scores
+            if score.scorecard.event_brier is None
+        ]
+        caveat = (
+            f" Horizon{'s' if len(silent_horizons) > 1 else ''} "
+            f"{', '.join(str(index) for index in silent_horizons)} produced no score, so "
+            "the two ends of this difference are the two ends that were measured."
+            if silent_horizons
+            else ""
+        )
+        conclusions.append(
+            f"Across {scored} scored horizons the target event Brier ran from "
+            f"{result.first_event_brier:.6f} {window_phrase} to "
+            f"{result.last_event_brier:.6f} {tail_phrase}, a drift of "
+            f"{result.event_brier_drift:+.6f}.{caveat}"
+        )
     spread = result.event_brier_spread
     if spread and spread[1] > spread[0]:
         conclusions.append(

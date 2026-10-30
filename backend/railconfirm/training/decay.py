@@ -168,6 +168,31 @@ class FrozenDecayResult:
         return values[-1] if values else None
 
     @property
+    def scored_horizon_indices(self) -> tuple[int, ...]:
+        """Which horizons produced an event score, in horizon order.
+
+        A horizon the table abstained on everywhere has no Brier, so the first and last
+        readings are the first and last *scored* horizons — not necessarily horizon 0 and
+        the final one. Publishing the indices is what lets a report date its own numbers
+        instead of calling the second horizon "the one nearest the cutoff".
+        """
+        return tuple(
+            score.window.index
+            for score in self.scores
+            if score.scorecard.event_brier is not None
+        )
+
+    @property
+    def first_scored_horizon(self) -> int | None:
+        indices = self.scored_horizon_indices
+        return indices[0] if indices else None
+
+    @property
+    def last_scored_horizon(self) -> int | None:
+        indices = self.scored_horizon_indices
+        return indices[-1] if indices else None
+
+    @property
     def event_brier_drift(self) -> float | None:
         first, last = self.first_event_brier, self.last_event_brier
         if first is None or last is None:
@@ -216,6 +241,8 @@ class FrozenDecayResult:
             "rows_seen": self.rows_seen,
             "first_event_brier": self.first_event_brier,
             "last_event_brier": self.last_event_brier,
+            "first_scored_horizon": self.first_scored_horizon,
+            "last_scored_horizon": self.last_scored_horizon,
             "event_brier_drift": self.event_brier_drift,
             "first_coverage": self.first_coverage,
             "last_coverage": self.last_coverage,
@@ -414,7 +441,8 @@ def describe_result(result: FrozenDecayResult) -> str:
     lines.append(
         f"Drift across {result.horizon_count} horizons "
         f"({result.horizons_with_scores} scored): event Brier "
-        f"{_fmt(result.first_event_brier)} -> {_fmt(result.last_event_brier)} "
+        f"h{result.first_scored_horizon} {_fmt(result.first_event_brier)} -> "
+        f"h{result.last_scored_horizon} {_fmt(result.last_event_brier)} "
         f"({result.event_brier_drift if result.event_brier_drift is not None else 'n/a'}), "
         f"coverage {_fmt(result.first_coverage)} -> {_fmt(result.last_coverage)}"
     )

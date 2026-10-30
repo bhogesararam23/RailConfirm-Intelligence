@@ -22,6 +22,7 @@ from railconfirm.training.calibration import fit_and_measure
 from railconfirm.training.dataset import load_approved_dataset
 from railconfirm.training.decay import (
     FROZEN_EVALUATION_METHOD,
+    HorizonScore,
     describe_result,
     run_frozen_decay,
 )
@@ -218,6 +219,12 @@ def test_drift_compares_the_first_horizon_with_the_last_rather_than_averaging(tm
         max(card.event_brier for card in scored),
     )
     assert result.coverage_spread is not None
+    # The ends of the drift are horizons, and the run says which ones.
+    assert result.first_scored_horizon == result.scores[0].window.index
+    assert result.last_scored_horizon == result.scores[-1].window.index
+    assert result.scored_horizon_indices == tuple(
+        score.window.index for score in result.scores
+    )
 
 
 def test_a_horizon_that_abstained_everywhere_is_counted_separately(tmp_path):
@@ -234,6 +241,84 @@ def test_a_run_where_nothing_could_be_scored_reports_no_drift(tmp_path):
     result = run_frozen_decay(dataset, loaded, horizon_dates=1, step_dates=1)
     assert result.first_event_brier is None
     assert result.event_brier_drift is None
+    assert result.first_scored_horizon is None
+    assert result.scored_horizon_indices == ()
+
+
+def without_a_score(card):
+    """The same window with every row abstaining, so the horizon measures nothing."""
+    return replace(
+        card,
+        scored_rows=0,
+        abstained_rows=card.rows,
+        coverage=0.0,
+        brier=None,
+        log_loss=None,
+        baseline_brier=None,
+        baseline_log_loss=None,
+        brier_skill=None,
+        event_brier=None,
+        event_log_loss=None,
+        event_baseline_brier=None,
+        event_brier_skill=None,
+        reliability={},
+        event_reliability=[],
+        segment_calibration=[],
+        segments=[],
+        outcome_distribution={},
+        group=None,
+    )
+
+
+def mute(result, indices):
+    """The same run with the named horizons abstaining on everything."""
+    muted = tuple(
+        HorizonScore(
+            window=score.window,
+            scorecard=without_a_score(score.scorecard)
+            if score.window.index in indices
+            else score.scorecard,
+            cohort_count=score.cohort_count,
+        )
+        for score in result.scores
+    )
+    return replace(result, scores=muted)
+
+
+def test_the_drift_says_which_horizons_it_measured(tmp_path):
+    """A silent first horizon must not be reported as the window nearest the cutoff.
+
+    The drift is the last *scored* horizon minus the first *scored* one, so when an
+    earlier horizon abstained the conclusion has to date its own number. It used to call
+    horizon 1's Brier "the window nearest the cutoff", which is a statement about a
+    window that produced no reading at all.
+    """
+    loaded, dataset, _ = artifact(tmp_path)
+    result = run_frozen_decay(dataset, loaded, horizon_dates=1, step_dates=1)
+    assert len(result.scores) >= 3
+    muted = mute(result, {0})
+    assert muted.first_scored_horizon == 1
+    assert muted.last_scored_horizon == muted.horizon_count - 1
+    assert muted.summary["first_scored_horizon"] == 1
+    report = report_of(muted, dataset)
+    joined = " ".join(report.conclusions)
+    assert "in the window nearest the cutoff" not in joined
+    assert "at horizon 1, not the window nearest the cutoff" in joined
+    assert "in the furthest" in joined
+    assert "Horizon 0 produced no score" in joined
+    assert "the two ends of this difference are the two ends that were measured" in joined
+    assert "h1" in report.summary_lines()
+
+
+def test_a_single_scored_horizon_is_not_reported_as_a_decay_curve(tmp_path):
+    loaded, dataset, _ = artifact(tmp_path)
+    result = run_frozen_decay(dataset, loaded, horizon_dates=1, step_dates=1)
+    muted = mute(result, set(range(1, result.horizon_count)))
+    assert muted.horizons_with_scores == 1
+    joined = " ".join(report_of(muted, dataset).conclusions)
+    assert "Only horizon 0 produced a score" in joined
+    assert "single measurement" in joined
+    assert "drift of" not in joined
 
 
 def test_describe_result_prints_one_line_per_horizon_and_names_the_cutoff(tmp_path):

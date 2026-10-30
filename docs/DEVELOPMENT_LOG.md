@@ -1884,3 +1884,71 @@ reproduced in a script before any code was changed.
   and it is recorded here rather than silently enforced by the code.
 - Nothing above is evidence about railway behaviour. Every number involved comes from synthetic
   fixtures, and the report keeps stating that in its limitations.
+
+## 2026-10-30 — The decay readout dated its drift from a window nobody measured (ADR-0030)
+
+### Scope
+Continuing the evaluation-reliability workstream into `backend/railconfirm/training/decay.py`
+and `backend/railconfirm/training/report.py`: what the frozen-artifact drift actually
+subtracts, and what it says about the horizons it subtracted. The defect was found by reading
+`_decay_conclusions` against the `_values(...)` helper it calls, not from a failing test — the
+suite asserted the skip-silent behaviour as if it were intended.
+
+### Changed
+- **The conclusion named windows it had not measured.** `first_event_brier` and
+  `last_event_brier` come from `_values("event_brier")`, which skips `None`, so the two ends of
+  the drift are the first and last *scored* horizons. A horizon on which every row abstained has
+  no event Brier — legitimate since ADR-0029 — and the sentence still said "in the window nearest
+  the cutoff" / "in the furthest". The metric definition repeated the claim ("last horizon
+  event Brier minus the first horizon's"), so the number and its definition agreed with each
+  other and both disagreed with the run.
+- `FrozenDecayResult` publishes `scored_horizon_indices`, `first_scored_horizon` and
+  `last_scored_horizon`; both indices enter `summary`, so a reader holding only the JSON can tell
+  the drift starts at horizon 1. `describe_result` prints `h{first} … -> h{last} …`.
+- The conclusion dates its own endpoints, names the skipped horizons, and keeps the near/far
+  wording only when those are the windows it used.
+- **One scored horizon was reported as a decay curve.** With two horizons and one silent, the
+  old wording printed `ran from 0.240000 … to 0.240000 …, a drift of +0.000000` — a zero
+  difference between a number and itself, in a report whose `MIN_HORIZONS = 2` exists because a
+  trend through one point is not a trend. That case now reports the single score, says one
+  future window is a single measurement, and prints no drift.
+- **The two drift figures spanned different horizon sets and nothing said so.** `coverage` is
+  defined on every horizon (a fully abstaining horizon reports `0.0`), so `coverage_drift`
+  always spans horizon 0 to the last, while `event_brier_drift` may skip horizons at either end.
+  Both metric definitions and the limitations list now state their own span.
+- `DECAY_REPORT_SCHEMA_VERSION` → `1.1.0`: the summary gained two keys and two definitions
+  changed wording. Additive, the same rule ADR-0028 and ADR-0029 applied.
+- The arithmetic, the plan, the frozen baseline and every score are untouched. On a run where
+  every horizon scored — every run the fixtures produce — the published numbers are identical.
+
+### Found while writing the tests
+- The existing test named
+  `test_drift_compares_the_first_horizon_with_the_last_rather_than_averaging` encoded the skip
+  in its own body: it ran a six-horizon fixture on which everything scored, so "first scored"
+  and "first horizon" coincided and the distinction was invisible. Making a horizon silent had
+  to be constructed, which is why `without_a_score(card)` and `mute(result, indices)` now exist:
+  the first replaces a scorecard's measurements with a fully abstaining one, the second applies
+  it to named horizons. Mutating the fixture's data was the alternative and would have changed
+  what every other test in the file measures.
+- Dataclasses make this cheap and safe — `replace()` on the result and on each `HorizonScore`
+  keeps `window`, `cohort_count` and the horizon indices intact, so the muted run is still a
+  valid run and only the reading is gone.
+
+### Checks run
+- `pytest tests/training/test_decay.py` → **37 passed** (40.8 s) after the change. The defect was
+  not found by a failing test — it was found by reading `_values(...)` against the sentence
+  built from it — so the two new tests were written from the constructed silent-horizon case
+  rather than from a red run.
+- `pytest` over the whole backend → **1063 passed** (156.0 s).
+- `ruff check .` clean; `mypy railconfirm` clean, 44 source files; the hygiene script passed.
+
+### Unresolved
+- `event_brier_spread` still describes only the horizons that scored, which is correct for a
+  spread of readings but means it is not comparable to the coverage figures beside it. The
+  metric definition for the spread does not yet say which horizons it spans; the same
+  clarifying sentence should be added to `METRIC_DEFINITIONS` in the shared block, where it
+  would apply to the single-cutoff and rolling-origin reports too, and that is a wider edit than
+  this fix.
+- Nothing above is evidence about railway behaviour. Every number involved comes from synthetic
+  fixtures.
+
