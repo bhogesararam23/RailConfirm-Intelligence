@@ -27,14 +27,37 @@ from railconfirm.training.metrics import TARGET_EVENTS, Scorecard
 from railconfirm.training.origins import RollingOriginResult
 
 REPORT_SCHEMA_VERSION = "1.0.0"
-ORIGIN_REPORT_SCHEMA_VERSION = "1.0.0"
+ORIGIN_REPORT_SCHEMA_VERSION = "1.1.0"
 """Separate from ``REPORT_SCHEMA_VERSION``: a rolling-origin report describes many
-cutoffs, not one train/validation/test run, and a reader must be able to tell which
-shape the bytes are."""
+ cutoffs, not one train/validation/test run, and a reader must be able to tell which
+ shape the bytes are.
+
+ Raised from 1.0.0 because the aggregate block now publishes a pooled figure per score
+ alongside the mean over origins, plus ``scored_rows_spread`` and the two agreement
+ verdicts. No existing key changed meaning; the new ones are additive, so a 1.0.0 reader
+ is not being reinterpreted, it is being under-informed.
+ """
 
 DECAY_REPORT_SCHEMA_VERSION = "1.0.0"
 """Its own version because its payload is one artifact judged repeatedly, which neither
 of the other two shapes describes."""
+
+ORIGIN_AGGREGATE_DEFINITIONS: dict[str, str] = {
+    "mean_over_origins": (
+        "Unweighted mean of the per-origin scores. Each origin counts once whatever it "
+        "scored, so this describes how the fitting procedure behaved across cutoffs — not "
+        "per prediction. A horizon with two rows counts as much as one with two thousand."
+    ),
+    "pooled_over_scored_rows": (
+        "Each origin's score weighted by the rows it actually scored, which is the mean "
+        "squared error per scored prediction across the whole run. This is the number a "
+        "statement about served predictions should rest on."
+    ),
+}
+"""Kept out of ``METRIC_DEFINITIONS`` because only the rolling-origin report has two ways
+of aggregating; a single-cutoff or decay report should not define statistics it never
+publishes."""
+
 
 METRIC_DEFINITIONS: dict[str, str] = {
     "brier": (
@@ -496,7 +519,12 @@ class RollingOriginReport:
         aggregate = self.aggregate
         lines += [
             "",
-            f"Aggregate: mean Brier {_fmt(aggregate['mean_brier'])} vs "
+            f"Aggregate over scored rows: Brier {_fmt(aggregate['pooled_brier'])} vs "
+            f"{_fmt(aggregate['pooled_baseline_brier'])}, event "
+            f"{_fmt(aggregate['pooled_event_brier'])} vs "
+            f"{_fmt(aggregate['pooled_event_baseline_brier'])}",
+            f"Mean over origins (each cutoff counts once): Brier "
+            f"{_fmt(aggregate['mean_brier'])} vs "
             f"{_fmt(aggregate['mean_baseline_brier'])}, mean event "
             f"{_fmt(aggregate['mean_event_brier'])} vs "
             f"{_fmt(aggregate['mean_event_baseline_brier'])}",
@@ -506,6 +534,12 @@ class RollingOriginReport:
                 f"{aggregate['origins_with_scores']} scoring origins (distribution), "
                 f"{aggregate['origins_beating_event_baseline']}/"
                 f"{aggregate['origins_with_event_scores']} (event)"
+            ),
+            (
+                f"Aggregations vs their own baselines: distribution "
+                f"{aggregate['distribution_agreement']}, event "
+                f"{aggregate['event_agreement']} (agree means the mean over origins and "
+                "the pooled figure reach the same verdict)"
             ),
             "",
             "Conclusions:",
@@ -558,6 +592,14 @@ def build_origin_report(
         )
 
     conclusions = _origin_conclusions(result)
+    rows_spread = result.scored_rows_spread
+    if rows_spread and rows_spread[0] != rows_spread[1]:
+        limitations.append(
+            f"Origins scored between {rows_spread[0]} and {rows_spread[1]} rows, so the "
+            "mean over origins and the pooled figure are not interchangeable: the first "
+            "describes the fitting procedure per cutoff, the second describes per-prediction "
+            "performance weighted by how many rows each horizon held."
+        )
     return RollingOriginReport(
         report_schema_version=ORIGIN_REPORT_SCHEMA_VERSION,
         generated_on=generated_on,
@@ -575,7 +617,7 @@ def build_origin_report(
         plan=payload["plan"],
         aggregate=payload["aggregate"],
         origins=payload["origins"],
-        metric_definitions=dict(METRIC_DEFINITIONS),
+        metric_definitions={**METRIC_DEFINITIONS, **ORIGIN_AGGREGATE_DEFINITIONS},
         limitations=limitations,
         conclusions=conclusions,
     )
@@ -618,6 +660,23 @@ def _origin_conclusions(result: RollingOriginResult) -> list[str]:
             "cutoff's number should not be quoted as the result."
         )
 
+    if result.distribution_agreement == "disagree":
+        conclusions.append(
+            "The two aggregations disagree about the distribution: the mean over origins "
+            f"is {result.mean_brier} against a mean baseline {result.mean_baseline_brier}, "
+            f"while pooled over the {result.rows_scored} scored rows it is "
+            f"{result.pooled_brier} against {result.pooled_baseline_brier}. The horizons "
+            "differ in size, so which figure a reader quotes decides the verdict; neither "
+            "is published here as *the* result."
+        )
+    elif result.pooled_brier is not None:
+        conclusions.append(
+            f"Pooled over the {result.rows_scored} scored rows — the figure a statement "
+            f"about served predictions should rest on — Brier is {result.pooled_brier} "
+            f"against {result.pooled_baseline_brier}, and it points the same way against "
+            "its baseline as the mean over origins."
+        )
+
     event_beats = result.origins_beating_event_baseline
     if event_beats == event_scored:
         conclusions.append(
@@ -634,6 +693,14 @@ def _origin_conclusions(result: RollingOriginResult) -> list[str]:
         conclusions.append(
             f"{event_beats} of {event_scored} origins beat the target-event baseline: "
             "the headline claim holds at some cutoffs and not others."
+        )
+
+    if result.event_agreement == "disagree":
+        conclusions.append(
+            "The two aggregations disagree about the target event too: the mean over "
+            f"origins is {result.mean_event_brier} against "
+            f"{result.mean_event_baseline_brier}, while pooled over scored rows it is "
+            f"{result.pooled_event_brier} against {result.pooled_event_baseline_brier}."
         )
 
     spread = result.brier_spread

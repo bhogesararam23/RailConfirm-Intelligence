@@ -12,7 +12,11 @@ import pytest
 
 from railconfirm.domain.exceptions import DatasetValidationError
 from railconfirm.domain.status import MAPPING_VERSION
-from railconfirm.training.origins import describe_result, run_rolling_origins
+from railconfirm.training.origins import (
+    RollingOriginResult,
+    describe_result,
+    run_rolling_origins,
+)
 from railconfirm.training.report import build_origin_report, write_origin_report
 
 DATASET_FIELDS = {
@@ -229,10 +233,12 @@ def test_a_verdict_that_holds_at_every_cutoff_is_stated_as_holding():
 
 def test_describe_result_prints_one_line_per_origin_then_the_aggregate():
     text = describe_result(run())
-    assert text.count("origin ") == 2
+    origin_lines = [line for line in text.splitlines() if line.startswith("origin ")]
+    assert len(origin_lines) == 2
     assert "Aggregate over 2 origin(s), 2 of which produced a score" in text
     assert "1/2 beat it" in text
     assert "rows scored 4 of 4" in text
+    assert "pooled over scored rows" in text
     assert "Brier ranged" in text
 
 
@@ -313,3 +319,192 @@ def test_the_summary_reads_as_a_table():
         "Origins beating the base rate: 1/2 scoring origins (distribution), 1/2 (event)"
         in summary
     )
+    assert "Aggregations vs their own baselines: distribution agree, event agree" in summary
+
+
+# ── Two aggregations, published side by side ──────────────────────────────────
+
+
+def card(
+    index: int,
+    *,
+    brier: float | None,
+    baseline: float | None,
+    event: float | None,
+    event_baseline: float | None,
+    scored_rows: int,
+):
+    """A scorecard built to exact numbers, so the aggregation arithmetic is what is tested."""
+    from railconfirm.training.metrics import Scorecard
+
+    def skill(model: float | None, reference: float | None) -> float | None:
+        if model is None or not reference:
+            return None
+        return round(1 - model / reference, 6)
+
+    return Scorecard(
+        partition=f"origin_{index}",
+        target="final_chart_cnf",
+        rows=scored_rows,
+        scored_rows=scored_rows,
+        abstained_rows=0,
+        coverage=1.0 if scored_rows else 0.0,
+        brier=brier,
+        log_loss=brier,
+        baseline_brier=baseline,
+        baseline_log_loss=baseline,
+        brier_skill=skill(brier, baseline),
+        event_brier=event,
+        event_log_loss=event,
+        event_baseline_brier=event_baseline,
+        event_brier_skill=skill(event, event_baseline),
+        event_reliability=[],
+        reliability={},
+        segment_calibration=[],
+        segments=[],
+        outcome_distribution={"CNF": scored_rows},
+        min_segment_rows=25,
+        group=None,
+    )
+
+
+def result_from(cards) -> RollingOriginResult:
+    """A result an evaluation would have produced, without re-running the pipeline."""
+    from railconfirm.data.preprocessing import OriginWindow, RollingOriginPlan
+    from railconfirm.training.origins import OriginScore
+
+    windows = tuple(
+        OriginWindow(
+            index=index,
+            train=pd.DataFrame(),
+            scored=pd.DataFrame(),
+            train_dates=(f"2026-02-{index + 1:02d}",),
+            scored_dates=(f"2026-02-{index + 2:02d}",),
+            gap_days=0,
+        )
+        for index in range(len(cards))
+    )
+    return RollingOriginResult(
+        plan=RollingOriginPlan(
+            windows=windows,
+            eligible=True,
+            reasons=(),
+            date_column="journey_date",
+            min_train_dates=2,
+            horizon_dates=1,
+            step_dates=1,
+            gap_days=0,
+        ),
+        scores=tuple(
+            OriginScore(
+                window=window,
+                scorecard=scorecard,
+                cohort_count=1,
+                rows_excluded={},
+            )
+            for window, scorecard in zip(windows, cards, strict=True)
+        ),
+        target="final_chart_cnf",
+    )
+
+
+def test_pooling_weights_by_scored_rows_where_the_mean_weights_by_origin():
+    """A two-row horizon and a ninety-row one are not the same amount of evidence."""
+    result = result_from(
+        [
+            card(0, brier=0.1, baseline=0.5, event=0.1, event_baseline=0.5, scored_rows=10),
+            card(1, brier=0.6, baseline=0.5, event=0.6, event_baseline=0.5, scored_rows=90),
+        ]
+    )
+    assert result.mean_brier == pytest.approx(0.35, abs=1e-6)
+    assert result.pooled_brier == pytest.approx((0.1 * 10 + 0.6 * 90) / 100, abs=1e-6)
+    assert result.pooled_event_brier == pytest.approx(0.55, abs=1e-6)
+    assert result.pooled_baseline_brier == pytest.approx(0.5, abs=1e-6)
+    assert result.scored_rows_spread == (10, 90)
+    # The unequal weighting is stated in the terminal output, not left to be inferred.
+    assert "scored rows per origin ranged 10 to 90" in describe_result(result)
+
+
+def test_the_two_aggregations_are_named_as_disagreeing_rather_than_one_chosen():
+    result = result_from(
+        [
+            card(0, brier=0.1, baseline=0.5, event=0.1, event_baseline=0.5, scored_rows=10),
+            card(1, brier=0.6, baseline=0.5, event=0.6, event_baseline=0.5, scored_rows=90),
+        ]
+    )
+    # Mean over origins beats the baseline; pooled over rows loses to it.
+    assert result.mean_brier < result.mean_baseline_brier
+    assert result.pooled_brier > result.pooled_baseline_brier
+    assert result.distribution_agreement == "disagree"
+    assert result.event_agreement == "disagree"
+
+    report = report_of(result)
+    conclusions = " ".join(report.conclusions)
+    assert "The two aggregations disagree about the distribution" in conclusions
+    assert "The two aggregations disagree about the target event too" in conclusions
+    assert "neither is published here as" in conclusions
+    limitations = " ".join(report.limitations)
+    assert "Origins scored between 10 and 90 rows" in limitations
+    assert "not interchangeable" in limitations
+
+
+def test_agreement_names_the_pooled_figure_when_both_aggregations_point_the_same_way():
+    result = result_from(
+        [
+            card(0, brier=0.1, baseline=0.5, event=0.1, event_baseline=0.5, scored_rows=10),
+            card(1, brier=0.2, baseline=0.5, event=0.2, event_baseline=0.5, scored_rows=90),
+        ]
+    )
+    assert result.distribution_agreement == "agree"
+    assert result.event_agreement == "agree"
+    conclusions = " ".join(report_of(result).conclusions)
+    assert "Pooled over the 100 scored rows" in conclusions
+    assert "points the same way against its baseline as the mean over origins" in conclusions
+
+
+def test_an_aggregation_with_nothing_to_compare_is_undetermined_not_agreement():
+    result = result_from(
+        [card(0, brier=0.1, baseline=0.5, event=0.1, event_baseline=0.5, scored_rows=5)]
+    )
+    assert result.distribution_agreement == "agree"
+    empty = result_from([])
+    assert empty.distribution_agreement == "undetermined"
+    assert empty.pooled_brier is None
+    assert empty.event_agreement == "undetermined"
+    assert empty.scored_rows_spread is None
+
+
+def test_pooling_ignores_origins_that_scored_nothing():
+    """An abstaining origin is not a zero and must not drag either average down."""
+    silent = card(
+        1,
+        brier=None,
+        baseline=None,
+        event=None,
+        event_baseline=None,
+        scored_rows=0,
+    )
+    result = result_from(
+        [card(0, brier=0.4, baseline=0.5, event=0.4, event_baseline=0.5, scored_rows=20), silent]
+    )
+    assert result.origins_with_scores == 1
+    assert result.mean_brier == pytest.approx(0.4, abs=1e-6)
+    assert result.pooled_brier == pytest.approx(0.4, abs=1e-6)
+    assert result.rows_scored == 20
+
+
+def test_the_two_aggregations_coincide_when_every_origin_scored_the_same_rows():
+    """The published pair is not decoration: on a balanced plan the figures must meet."""
+    result = run()
+    assert result.scored_rows_spread == (2, 2)
+    assert result.pooled_brier == pytest.approx(result.mean_brier, abs=1e-6)
+    assert result.pooled_event_brier == pytest.approx(result.mean_event_brier, abs=1e-6)
+    assert result.distribution_agreement == "agree"
+
+
+def test_the_report_defines_both_aggregations_it_publishes():
+    definitions = report_of(run()).to_dict()["metric_definitions"]
+    assert "mean_over_origins" in definitions
+    assert "pooled_over_scored_rows" in definitions
+    assert "weighted by the rows" in definitions["pooled_over_scored_rows"]
+    assert "Each origin counts once" in definitions["mean_over_origins"]

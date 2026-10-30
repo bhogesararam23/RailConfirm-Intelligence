@@ -10,7 +10,10 @@ follows it. Two things it deliberately does not do:
   a single measurement under a plural name is how a trend gets invented.
 
 Every number here comes from the same ``fit_cohorts`` and ``score_partition`` calls the
-single-cutoff pipeline uses, so the two cannot drift apart.
+single-cutoff pipeline uses, so the two cannot drift apart. The aggregate publishes two
+summary figures per score rather than one: a mean over origins and a mean pooled over
+scored rows. They answer different questions and can disagree, so the report says which
+way each one points against its own baseline rather than picking a flattering one.
 """
 
 from __future__ import annotations
@@ -101,6 +104,99 @@ class RollingOriginResult:
             return None
         return min(values), max(values)
 
+    def _pooled(self, attribute: str) -> float | None:
+        """``attribute`` pooled over scored rows instead of averaged over origins.
+
+        Each origin's score is itself a mean over the rows it scored, so the plain mean of
+        those means weights a two-row horizon exactly as much as a two-thousand-row one.
+        Both figures are published, because they answer different questions: the mean says
+        how the fitting procedure did per cutoff, and the pooled figure says what a passenger
+        actually received per prediction across the whole run. Leading with the wrong one is
+        how a run of mostly-empty horizons reads as evidence.
+        """
+        total = 0.0
+        rows = 0
+        for score in self.scores:
+            value = getattr(score.scorecard, attribute)
+            if value is None:
+                continue
+            scored = score.scorecard.scored_rows
+            if scored <= 0:
+                continue
+            total += float(value) * scored
+            rows += scored
+        if rows == 0:
+            return None
+        return round(total / rows, 6)
+
+    def _scored_row_counts(self) -> list[int]:
+        return [
+            score.scorecard.scored_rows
+            for score in self.scores
+            if score.scorecard.brier is not None
+        ]
+
+    @property
+    def pooled_brier(self) -> float | None:
+        return self._pooled("brier")
+
+    @property
+    def pooled_baseline_brier(self) -> float | None:
+        return self._pooled("baseline_brier")
+
+    @property
+    def pooled_event_brier(self) -> float | None:
+        return self._pooled("event_brier")
+
+    @property
+    def pooled_event_baseline_brier(self) -> float | None:
+        return self._pooled("event_baseline_brier")
+
+    @property
+    def scored_rows_spread(self) -> tuple[int, int] | None:
+        """Smallest and largest scored-row count among origins that scored at all."""
+        counts = self._scored_row_counts()
+        if not counts:
+            return None
+        return min(counts), max(counts)
+
+    def _verdict(self, value: float | None, baseline: float | None) -> bool | None:
+        if value is None or baseline is None:
+            return None
+        return value < baseline
+
+    def _agreement(
+        self,
+        mean: float | None,
+        pooled: float | None,
+        baseline_mean: float | None,
+        baseline_pooled: float | None,
+    ) -> str:
+        """Whether the two aggregations point the same way against their baselines."""
+        per_origin = self._verdict(mean, baseline_mean)
+        per_row = self._verdict(pooled, baseline_pooled)
+        if per_origin is None or per_row is None:
+            return "undetermined"
+        return "agree" if per_origin == per_row else "disagree"
+
+    @property
+    def distribution_agreement(self) -> str:
+        return self._agreement(
+            self.mean_brier,
+            self.pooled_brier,
+            self.mean_baseline_brier,
+            self.pooled_baseline_brier,
+        )
+
+    @property
+    def event_agreement(self) -> str:
+        return self._agreement(
+            self.mean_event_brier,
+            self.pooled_event_brier,
+            self.mean_event_baseline_brier,
+            self.pooled_event_baseline_brier,
+        )
+
     @property
     def mean_brier(self) -> float | None:
         return self._mean("brier")
@@ -169,6 +265,15 @@ class RollingOriginResult:
                 "mean_baseline_brier": self.mean_baseline_brier,
                 "mean_event_brier": self.mean_event_brier,
                 "mean_event_baseline_brier": self.mean_event_baseline_brier,
+                "pooled_brier": self.pooled_brier,
+                "pooled_baseline_brier": self.pooled_baseline_brier,
+                "pooled_event_brier": self.pooled_event_brier,
+                "pooled_event_baseline_brier": self.pooled_event_baseline_brier,
+                "scored_rows_spread": (
+                    list(self.scored_rows_spread) if self.scored_rows_spread else None
+                ),
+                "distribution_agreement": self.distribution_agreement,
+                "event_agreement": self.event_agreement,
                 "brier_spread": list(self.brier_spread) if self.brier_spread else None,
                 "event_brier_spread": (
                     list(self.event_brier_spread)
@@ -286,8 +391,28 @@ def describe_result(result: RollingOriginResult) -> str:
         f"  event {_fmt(result.mean_event_brier)} vs baseline "
         f"{_fmt(result.mean_event_baseline_brier)}, "
         f"{result.origins_beating_event_baseline}/{event_scored} beat it",
+        f"  pooled over scored rows: Brier {_fmt(result.pooled_brier)} vs baseline "
+        f"{_fmt(result.pooled_baseline_brier)}, event "
+        f"{_fmt(result.pooled_event_brier)} vs "
+        f"{_fmt(result.pooled_event_baseline_brier)}",
         f"  rows scored {result.rows_scored} of {result.rows_seen}",
     ]
+    rows_spread = result.scored_rows_spread
+    if rows_spread and rows_spread[0] != rows_spread[1]:
+        aggregate.append(
+            f"  scored rows per origin ranged {rows_spread[0]} to {rows_spread[1]}, so the "
+            "mean over origins and the pooled mean weight the horizons differently"
+        )
+    if result.distribution_agreement == "disagree":
+        aggregate.append(
+            "  the two aggregations disagree about beating the baseline: the mean over "
+            "origins and the pooled-per-scored-row figure point opposite ways. Quote both "
+            "or neither."
+        )
+    if result.event_agreement == "disagree":
+        aggregate.append(
+            "  the two aggregations disagree about the target event for the same reason."
+        )
     spread = result.brier_spread
     if spread:
         aggregate.append(f"  Brier ranged {_fmt(spread[0])} to {_fmt(spread[1])} across origins")

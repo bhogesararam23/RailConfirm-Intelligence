@@ -1757,3 +1757,62 @@ whether its data may be stored, transformed, trained on, distributed or used com
 - Training remains blocked exactly as before. This pass removed one plausible-looking
   candidate from the search space with evidence instead of assumption.
 
+## 2026-10-30 — Evaluation reliability: the aggregate that beat the base rate on rows that lost to it (ADR-0028)
+
+### Scope
+Audit of the rolling-origin aggregate, continuing the evaluation-reliability workstream: what
+the published number actually averages, and whether a reader can tell when it flatters the
+table. The one-defect-at-a-time rule applied — the defect below was found by reading the
+aggregation against the scoring loop, then reproduced as a constructed plan in a test.
+
+### Changed
+- **One aggregate was published, and it was the mean of means (ADR-0028).** Each origin's
+  scorecard is a mean over the rows that origin scored, so `mean_brier` gives a horizon with
+  two rows the same weight as a horizon with two thousand. A plan whose last horizon is a
+  partial date block — the normal case — therefore had a published figure that answered "how
+  did the fitting procedure do per cutoff" while reading as "what did a passenger get per
+  prediction". The two can land on opposite sides of the same baseline: nine small horizons
+  that scored well and one large one that scored badly produce a mean that beats the base rate
+  beside a pooled error that loses to it.
+- **Both figures are now computed and published**, with `scored_rows_spread` and two verdicts
+  (`distribution_agreement`, `event_agreement`) that compare each aggregation against its own
+  baseline and return `agree`, `disagree` or `undetermined`. An abstaining origin contributes
+  to neither figure, which keeps the existing rule that a coverage failure is not a bad score.
+- **Disagreement is a conclusion, not a footnote.** The report prints both pairs of numbers
+  and states that which figure a reader quotes decides the verdict, so neither is presented as
+  *the* result; an agreement names the pooled figure as the one a statement about served
+  predictions should rest on. Uneven horizons add a limitation; the terminal output prints the
+  range and does not warn when every origin scored the same number of rows, because a warning
+  that fires on every balanced run is a warning nobody reads.
+- `ORIGIN_REPORT_SCHEMA_VERSION` → `1.1.0` (additive keys, no change of meaning).
+  `ORIGIN_AGGREGATE_DEFINITIONS` now travels in the origin report's `metric_definitions` and is
+  deliberately absent from the single-cutoff and decay reports, which publish no aggregate over
+  origins.
+
+### Found while writing the tests
+- **The spread line fired on balanced runs.** `describe_result` printed "scored rows per origin
+  ranged 2 to 2, so the mean over origins and the pooled mean weight the horizons differently"
+  — a false statement on every plan whose horizons are equal in size. Both the terminal line
+  and the report limitation now require the two counts to differ.
+- **An existing test counted a substring rather than lines.**
+  `test_describe_result_prints_one_line_per_origin_then_the_aggregate` asserted
+  `text.count("origin ") == 2`, which passed only because no other line contained that
+  substring; the new spread sentence made it fail for the right reason. It now counts lines
+  beginning with `origin `.
+
+### Checks run
+- `python -m pytest tests/training/test_origins.py -q` → 26 passed.
+- `python -m pytest -q` → **1050 passed** (60.9 s).
+- `python -m ruff check .` → clean. `python -m mypy railconfirm` → clean, 44 source files.
+- Figures in the ADR and the tests are hand-computed from the constructed scorecards, not taken
+  from a run's output.
+
+### Unresolved
+- The pooled figure is a weighted mean of per-origin means that were already rounded to six
+  decimal places. The difference is far below the precision at which these numbers mean
+  anything, but it is recorded in ADR-0028 rather than left to be rediscovered.
+- Rolling origins still overlap by construction, so neither aggregation is an independent
+  sample: no interval, multiplicity correction or test statistic is attached to either. The
+  remaining evaluation work is the same as before — the pipeline has never run on approved real
+  data, and every figure above comes from synthetic fixtures.
+
