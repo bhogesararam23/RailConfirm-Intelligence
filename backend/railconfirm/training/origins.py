@@ -383,14 +383,19 @@ def describe_result(result: RollingOriginResult) -> str:
     lines: Sequence[str] = [window.describe() for window in result.plan.windows]
     scored = result.origins_with_scores
     event_scored = result.origins_with_event_scores
+    event_line = (
+        f"  event {_fmt(result.mean_event_brier)} vs baseline "
+        f"{_fmt(result.mean_event_baseline_brier)}, "
+        f"{result.origins_beating_event_baseline}/{event_scored} beat it"
+        if event_scored
+        else "  event not measured: no origin produced a target-event score"
+    )
     aggregate = [
         f"Aggregate over {result.origin_count} origin(s), {scored} of which produced a "
         f"score: mean Brier {_fmt(result.mean_brier)} vs baseline "
         f"{_fmt(result.mean_baseline_brier)}, {result.origins_beating_baseline}/{scored} "
         "beat it",
-        f"  event {_fmt(result.mean_event_brier)} vs baseline "
-        f"{_fmt(result.mean_event_baseline_brier)}, "
-        f"{result.origins_beating_event_baseline}/{event_scored} beat it",
+        event_line,
         f"  pooled over scored rows: Brier {_fmt(result.pooled_brier)} vs baseline "
         f"{_fmt(result.pooled_baseline_brier)}, event "
         f"{_fmt(result.pooled_event_brier)} vs "

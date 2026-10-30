@@ -6,6 +6,7 @@ full distribution but not on the target's own event has to appear both ways.
 """
 
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -172,6 +173,56 @@ def test_scoring_a_different_target_than_the_artifact_declares_is_a_limitation()
         and "declares 'final_chart_cnf'" in item
         for item in report.limitations
     )
+
+
+def test_a_partition_names_the_event_of_the_target_it_was_scored_for():
+    """The mismatch is a limitation, not a licence to pair one target with another's event."""
+    report = make_report(
+        cohorts=CONCLUSIVE,
+        frame=rows([("GNWL/10", "CNF")] * 4),
+        target="final_chart_cnf_or_rac",
+        artifact_target="final_chart_cnf",
+    )
+    assert report.target == "final_chart_cnf"
+    assert report.target_event_classes == ["CNF"]
+    assert report.validation.target == "final_chart_cnf_or_rac"
+    joined = " ".join(report.conclusions)
+    assert "target event final_chart_cnf_or_rac (CNF/RAC)" in joined
+    assert "final_chart_cnf_or_rac (CNF)" not in joined
+
+
+def test_a_missing_event_verdict_is_not_a_disagreement():
+    """A partition measured on the distribution but not on the event said nothing there."""
+    frame = rows([("GNWL/10", "CNF")] * 4)
+    card = score_partition(
+        frame,
+        estimator_for(LEAKY),
+        prevalence=PREVALENCE,
+        partition="validation",
+    )
+    assert card.beats_baseline is True
+    assert card.event_beats_baseline is False
+    silent_event = replace(
+        card,
+        event_brier=None,
+        event_baseline_brier=None,
+        event_brier_skill=None,
+    )
+    assert silent_event.event_beats_baseline is None
+    report = build_report(
+        metadata=artifact_metadata(target="final_chart_cnf"),
+        dataset_id="report-fixture",
+        dataset_sha256="d" * 64,
+        dataset_rows=len(frame),
+        fit=fit_summary(LEAKY),
+        split=chronological_split(frame),
+        validation=silent_event,
+        test=None,
+        generated_on="2026-05-01",
+    )
+    joined = " ".join(report.conclusions)
+    assert "target event" not in joined
+    assert "disagree about beating" not in joined
 
 
 def test_an_unscored_partition_reports_no_event_verdict():

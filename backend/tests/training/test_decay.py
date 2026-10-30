@@ -270,6 +270,34 @@ def without_a_score(card):
     )
 
 
+def without_an_event_score(card):
+    """The same window scored on the distribution but not on the target's event."""
+    return replace(
+        card,
+        event_brier=None,
+        event_log_loss=None,
+        event_baseline_brier=None,
+        event_brier_skill=None,
+    )
+
+
+def mute_event_scores(result, indices):
+    """The same run with the named horizons carrying no target-event figure."""
+    return replace(
+        result,
+        scores=tuple(
+            HorizonScore(
+                window=score.window,
+                scorecard=without_an_event_score(score.scorecard)
+                if score.window.index in indices
+                else score.scorecard,
+                cohort_count=score.cohort_count,
+            )
+            for score in result.scores
+        ),
+    )
+
+
 def mute(result, indices):
     """The same run with the named horizons abstaining on everything."""
     muted = tuple(
@@ -305,7 +333,7 @@ def test_the_drift_says_which_horizons_it_measured(tmp_path):
     assert "in the window nearest the cutoff" not in joined
     assert "at horizon 1, not the window nearest the cutoff" in joined
     assert "in the furthest" in joined
-    assert "Horizon 0 produced no score" in joined
+    assert "Horizon 0 produced no target-event score" in joined
     assert "the two ends of this difference are the two ends that were measured" in joined
     assert "h1" in report.summary_lines()
 
@@ -316,9 +344,114 @@ def test_a_single_scored_horizon_is_not_reported_as_a_decay_curve(tmp_path):
     muted = mute(result, set(range(1, result.horizon_count)))
     assert muted.horizons_with_scores == 1
     joined = " ".join(report_of(muted, dataset).conclusions)
-    assert "Only horizon 0 produced a score" in joined
+    assert "Only horizon 0 produced a target-event score" in joined
     assert "single measurement" in joined
     assert "drift of" not in joined
+
+
+def rescored_event(result, *, event: float | None, event_baseline: float | None):
+    """The same run with each horizon's target-event figures replaced by exact numbers."""
+    return replace(
+        result,
+        scores=tuple(
+            HorizonScore(
+                window=score.window,
+                scorecard=replace(
+                    score.scorecard,
+                    event_brier=event,
+                    event_baseline_brier=event_baseline,
+                    event_brier_skill=None,
+                ),
+                cohort_count=score.cohort_count,
+            )
+            for score in result.scores
+        ),
+    )
+
+
+def test_every_horizon_beating_the_frozen_baseline_is_stated_as_holding(tmp_path):
+    """The claim the drift section rests on, said only when every horizon earned it."""
+    loaded, dataset, _ = artifact(tmp_path)
+    result = run_frozen_decay(dataset, loaded, horizon_dates=1, step_dates=1)
+    beating = rescored_event(result, event=0.01, event_baseline=0.20)
+    assert beating.horizons_beating_event_baseline == beating.horizons_with_event_scores
+    joined = " ".join(report_of(beating, dataset).conclusions)
+    assert (
+        f"All {beating.horizons_with_event_scores} horizons that produced a target-event "
+        "score beat the frozen prevalence baseline"
+    ) in joined
+
+
+def test_no_horizon_beating_the_frozen_baseline_is_stated_against_the_table(tmp_path):
+    loaded, dataset, _ = artifact(tmp_path)
+    result = run_frozen_decay(dataset, loaded, horizon_dates=1, step_dates=1)
+    losing = rescored_event(result, event=0.30, event_baseline=0.20)
+    assert losing.horizons_beating_event_baseline == 0
+    joined = " ".join(report_of(losing, dataset).conclusions)
+    assert (
+        "No horizon with a target-event score beat the frozen baseline for the target "
+        "event (CNF)"
+    ) in joined
+    assert "does not separate the outcomes in any window after it" in joined
+
+
+def test_a_partial_event_table_is_not_reported_as_a_full_decay_curve(tmp_path):
+    """The drift line counts event readings, not distribution scores with an event beside them."""
+    loaded, dataset, _ = artifact(tmp_path)
+    result = run_frozen_decay(dataset, loaded, horizon_dates=1, step_dates=1)
+    assert result.horizon_count >= 3
+    partial = mute_event_scores(result, {1})
+    assert partial.horizons_with_scores == result.horizon_count
+    assert partial.horizons_with_event_scores == result.horizon_count - 1
+    joined = " ".join(report_of(partial, dataset).conclusions)
+    assert (
+        f"Across {partial.horizons_with_event_scores} horizons that produced a "
+        "target-event score"
+    ) in joined
+    assert f"Across {partial.horizons_with_scores} scored horizons" not in joined
+    assert "Horizon 1 produced no target-event score" in joined
+
+
+def test_one_event_reading_among_several_scored_horizons_is_not_a_decay_curve(tmp_path):
+    """A single event reading cannot be a drift, however many distributions were scored."""
+    loaded, dataset, _ = artifact(tmp_path)
+    result = run_frozen_decay(dataset, loaded, horizon_dates=1, step_dates=1)
+    assert result.horizon_count >= 2
+    lonely = mute_event_scores(result, set(range(1, result.horizon_count)))
+    assert lonely.horizons_with_scores > 1
+    assert lonely.horizons_with_event_scores == 1
+    joined = " ".join(report_of(lonely, dataset).conclusions)
+    assert "Only horizon 0 produced a target-event score" in joined
+    assert "drift of" not in joined
+    assert "All 1" not in joined
+
+
+def test_one_event_reading_above_the_baseline_is_not_called_every_horizon(tmp_path):
+    """A single winning reading is one measurement, not a claim that holds across horizons."""
+    loaded, dataset, _ = artifact(tmp_path)
+    result = run_frozen_decay(dataset, loaded, horizon_dates=1, step_dates=1)
+    winning = rescored_event(result, event=0.01, event_baseline=0.20)
+    lonely = mute_event_scores(winning, set(range(1, result.horizon_count)))
+    assert lonely.horizons_with_event_scores == 1
+    assert lonely.horizons_beating_event_baseline == 1
+    joined = " ".join(report_of(lonely, dataset).conclusions)
+    assert (
+        "The only horizon with a target-event score beat the frozen prevalence baseline"
+    ) in joined
+    assert "All 1" not in joined
+
+
+def test_a_run_with_no_event_measurement_makes_no_event_claim(tmp_path):
+    """Zero horizons above a baseline is not every horizon beating it."""
+    loaded, dataset, _ = artifact(tmp_path)
+    result = run_frozen_decay(dataset, loaded, horizon_dates=1, step_dates=1)
+    silent = rescored_event(result, event=None, event_baseline=None)
+    assert silent.horizons_with_scores == silent.horizon_count
+    assert silent.horizons_with_event_scores == 0
+    joined = " ".join(report_of(silent, dataset).conclusions)
+    assert "All 0" not in joined
+    assert "No horizon produced a target-event score" in joined
+    assert "no better than the base rate" not in joined
 
 
 def test_describe_result_prints_one_line_per_horizon_and_names_the_cutoff(tmp_path):
@@ -329,6 +462,37 @@ def test_describe_result_prints_one_line_per_horizon_and_names_the_cutoff(tmp_pa
     assert result.cutoff in text
     assert "frozen" in text.lower()
     assert text.encode("cp1252")  # a Windows console must not kill a finished run
+
+
+def test_describe_result_does_not_call_one_event_reading_a_drift(tmp_path):
+    loaded, dataset, _ = artifact(tmp_path)
+    result = run_frozen_decay(dataset, loaded, horizon_dates=1, step_dates=1)
+    lonely = mute_event_scores(result, set(range(1, result.horizon_count)))
+    text = describe_result(lonely)
+    assert "1 with an event score" in text
+    assert "single reading is not a drift" in text
+    assert "hNone" not in text
+
+
+def test_describe_result_makes_no_event_claim_without_an_event_measurement(tmp_path):
+    loaded, dataset, _ = artifact(tmp_path)
+    result = run_frozen_decay(dataset, loaded, horizon_dates=1, step_dates=1)
+    silent = rescored_event(result, event=None, event_baseline=None)
+    text = describe_result(silent)
+    assert "No horizon produced a target-event score" in text
+    assert "0/0" not in text
+    assert "hNone" not in text
+    assert "Drift" not in text
+
+
+def test_the_written_summary_names_no_drift_that_was_not_measured(tmp_path):
+    loaded, dataset, _ = artifact(tmp_path)
+    result = run_frozen_decay(dataset, loaded, horizon_dates=1, step_dates=1)
+    silent = rescored_event(result, event=None, event_baseline=None)
+    summary = report_of(silent, dataset).summary_lines()
+    assert "hNone" not in summary
+    assert "Drift: no target-event score" in summary
+    assert "0/0 (event)" not in summary
 
 
 # ── Refusals ───────────────────────────────────────────────────────────────────

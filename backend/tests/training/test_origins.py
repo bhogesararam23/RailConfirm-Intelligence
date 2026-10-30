@@ -173,7 +173,7 @@ def test_one_of_two_is_reported_as_instability_not_as_a_result():
     conclusions = " ".join(report_of(run()).conclusions)
     assert "1 of 2 scoring origins beat their prevalence baseline" in conclusions
     assert "not stable across cutoffs" in conclusions
-    assert "1 of 2 origins beat the target-event baseline" in conclusions
+    assert "1 of 2 origins with a target-event score beat the target-event baseline" in conclusions
     assert "Brier ranged from 0.396694 to 1.135802" in conclusions
     assert "the spread is a description of instability, not a tested difference" in conclusions
 
@@ -228,7 +228,10 @@ def test_a_verdict_that_holds_at_every_cutoff_is_stated_as_holding():
 
     conclusions = " ".join(report_of(result).conclusions)
     assert "All 2 scoring origins beat their own training-period prevalence baseline" in conclusions
-    assert "All 2 origins beat the baseline for the target event (CNF)" in conclusions
+    assert (
+        "All 2 origins with a target-event score beat the baseline for the target "
+        "event (CNF)"
+    ) in conclusions
 
 
 def test_describe_result_prints_one_line_per_origin_then_the_aggregate():
@@ -500,6 +503,78 @@ def test_the_two_aggregations_coincide_when_every_origin_scored_the_same_rows():
     assert result.pooled_brier == pytest.approx(result.mean_brier, abs=1e-6)
     assert result.pooled_event_brier == pytest.approx(result.mean_event_brier, abs=1e-6)
     assert result.distribution_agreement == "agree"
+
+
+def test_every_origin_beating_the_event_baseline_is_stated_as_holding():
+    result = result_from(
+        [
+            card(0, brier=0.1, baseline=0.5, event=0.1, event_baseline=0.5, scored_rows=10),
+            card(1, brier=0.2, baseline=0.5, event=0.2, event_baseline=0.5, scored_rows=90),
+        ]
+    )
+    assert result.origins_beating_event_baseline == 2
+    conclusions = " ".join(report_of(result).conclusions)
+    assert (
+        "All 2 origins with a target-event score beat the baseline for the target "
+        "event (CNF)"
+    ) in conclusions
+
+
+def test_no_origin_beating_the_event_baseline_says_the_headline_is_the_base_rate():
+    result = result_from(
+        [
+            card(0, brier=0.1, baseline=0.5, event=0.6, event_baseline=0.5, scored_rows=10),
+            card(1, brier=0.2, baseline=0.5, event=0.7, event_baseline=0.5, scored_rows=90),
+        ]
+    )
+    assert result.origins_beating_event_baseline == 0
+    conclusions = " ".join(report_of(result).conclusions)
+    assert "No origin with a target-event score beat the baseline for the target event (CNF)" in conclusions
+    assert "no better than the base rate at any cutoff" in conclusions
+
+
+def test_a_run_with_no_event_measurement_makes_no_event_claim():
+    """Zero origins above a baseline is not every origin beating it."""
+    result = result_from(
+        [
+            card(0, brier=0.1, baseline=0.5, event=None, event_baseline=None, scored_rows=10),
+            card(1, brier=0.2, baseline=0.5, event=None, event_baseline=None, scored_rows=90),
+        ]
+    )
+    assert result.origins_with_event_scores == 0
+    conclusions = " ".join(report_of(result).conclusions)
+    assert "All 0" not in conclusions
+    assert "No origin produced a target-event score" in conclusions
+    assert "no better than the base rate" not in conclusions
+
+
+def test_a_partial_event_table_names_the_origins_that_were_measured():
+    """One event reading among two scoring origins is not every origin beating it."""
+    result = result_from(
+        [
+            card(0, brier=0.1, baseline=0.5, event=0.1, event_baseline=0.5, scored_rows=10),
+            card(1, brier=0.2, baseline=0.5, event=None, event_baseline=None, scored_rows=90),
+        ]
+    )
+    assert result.origins_with_event_scores == 1
+    conclusions = " ".join(report_of(result).conclusions)
+    assert "The only origin with a target-event score beat" in conclusions
+    assert "All 1 origins beat" not in conclusions
+
+
+def test_describe_result_does_not_print_a_zero_event_denominator():
+    result = result_from(
+        [
+            card(0, brier=0.1, baseline=0.5, event=None, event_baseline=None, scored_rows=10),
+            card(1, brier=0.2, baseline=0.5, event=None, event_baseline=None, scored_rows=90),
+        ]
+    )
+    text = describe_result(result)
+    assert "event not measured" in text
+    assert "0/0 beat it" not in text
+    summary = report_of(result).summary()
+    assert "0/0 (event)" not in summary
+    assert "not measured (event)" in summary
 
 
 def test_the_report_defines_both_aggregations_it_publishes():

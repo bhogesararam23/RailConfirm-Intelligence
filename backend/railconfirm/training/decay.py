@@ -438,19 +438,34 @@ def describe_result(result: FrozenDecayResult) -> str:
             f"{_fmt(card.event_brier)} vs {_fmt(card.event_baseline_brier)}, coverage "
             f"{card.coverage:.1%} ({card.scored_rows}/{card.rows})"
         )
+    event_scores = result.horizons_with_event_scores
+    if not event_scores:
+        lines.append(
+            f"Coverage across {result.horizon_count} horizons "
+            f"({result.horizons_with_scores} scored): "
+            f"{_fmt(result.first_coverage)} -> {_fmt(result.last_coverage)}"
+        )
+        lines.append(
+            "No horizon produced a target-event score, so the frozen event baseline was "
+            "never compared."
+        )
+        return "\n".join(lines)
     lines.append(
         f"Drift across {result.horizon_count} horizons "
-        f"({result.horizons_with_scores} scored): event Brier "
-        f"h{result.first_scored_horizon} {_fmt(result.first_event_brier)} -> "
-        f"h{result.last_scored_horizon} {_fmt(result.last_event_brier)} "
-        f"({result.event_brier_drift if result.event_brier_drift is not None else 'n/a'}), "
-        f"coverage {_fmt(result.first_coverage)} -> {_fmt(result.last_coverage)}"
+        f"({result.horizons_with_scores} scored, {event_scores} with an event score): "
+        f"coverage {_fmt(result.first_coverage)} -> {_fmt(result.last_coverage)}; "
+        f"event Brier h{result.first_scored_horizon} "
+        f"{_fmt(result.first_event_brier)} -> h{result.last_scored_horizon} "
+        f"{_fmt(result.last_event_brier)} "
+        f"({result.event_brier_drift if result.event_brier_drift is not None else 'n/a'})"
     )
     lines.append(
         f"  event beat the frozen base rate in "
-        f"{result.horizons_beating_event_baseline}/"
-        f"{result.horizons_with_event_scores} scored horizons"
+        f"{result.horizons_beating_event_baseline}/{event_scores} horizons with an "
+        "event score"
     )
+    if event_scores == 1:
+        lines.append("  A single reading is not a drift.")
     return "\n".join(lines)
 
 

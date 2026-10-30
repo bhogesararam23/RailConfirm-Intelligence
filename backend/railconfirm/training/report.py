@@ -401,17 +401,23 @@ def build_report(
             )
         if scorecard.event_beats_baseline is not None:
             verdict = "beats" if scorecard.event_beats_baseline else "does not beat"
+            # The partition's own target, not the artifact's: when a caller scores one
+            # target against another artifact, naming the card's target beside the
+            # artifact's classes would describe an event the number never measured.
+            scored_event = "/".join(TARGET_EVENTS[scorecard.target])
             conclusion = (
-                f"{label}: target event {scorecard.target} ({'/'.join(event_classes)}) "
-                f"Brier {scorecard.event_brier} {verdict} its prevalence baseline "
+                f"{label}: target event {scorecard.target} ({scored_event})"
+                f" Brier {scorecard.event_brier} {verdict} its prevalence baseline "
                 f"{scorecard.event_baseline_brier} (skill "
                 f"{scorecard.event_brier_skill})."
             )
             if not scorecard.event_beats_baseline:
                 conclusion += " The headline probability is no better than the base rate."
             conclusions.append(conclusion)
-        if scorecard.beats_baseline is not None and (
-            scorecard.beats_baseline != scorecard.event_beats_baseline
+        if (
+            scorecard.beats_baseline is not None
+            and scorecard.event_beats_baseline is not None
+            and scorecard.beats_baseline != scorecard.event_beats_baseline
         ):
             conclusions.append(
                 f"{label}: the distribution and the target event disagree about beating "
@@ -597,6 +603,12 @@ class RollingOriginReport:
                 f"{origin['cohorts']} cohorts"
             )
         aggregate = self.aggregate
+        event_beating = (
+            f"{aggregate['origins_beating_event_baseline']}/"
+            f"{aggregate['origins_with_event_scores']} (event)"
+            if aggregate["origins_with_event_scores"]
+            else "not measured (event)"
+        )
         lines += [
             "",
             f"Aggregate over scored rows: Brier {_fmt(aggregate['pooled_brier'])} vs "
@@ -612,8 +624,7 @@ class RollingOriginReport:
                 f"Origins beating the base rate: "
                 f"{aggregate['origins_beating_baseline']}/"
                 f"{aggregate['origins_with_scores']} scoring origins (distribution), "
-                f"{aggregate['origins_beating_event_baseline']}/"
-                f"{aggregate['origins_with_event_scores']} (event)"
+                f"{event_beating}"
             ),
             (
                 f"Aggregations vs their own baselines: distribution "
@@ -758,21 +769,31 @@ def _origin_conclusions(result: RollingOriginResult) -> list[str]:
         )
 
     event_beats = result.origins_beating_event_baseline
-    if event_beats == event_scored:
+    if not event_scored:
         conclusions.append(
-            f"All {event_scored} origins beat the baseline for the target event "
-            f"({'/'.join(TARGET_EVENTS[result.target])})."
+            "No origin produced a target-event score, so the event baseline was never "
+            "compared: the distribution figures above are the only ones measured here."
+        )
+    elif event_scored == 1 and event_beats == 1:
+        conclusions.append(
+            "The only origin with a target-event score beat the baseline for the target "
+            f"event ({'/'.join(TARGET_EVENTS[result.target])})."
+        )
+    elif event_beats == event_scored:
+        conclusions.append(
+            f"All {event_scored} origins with a target-event score beat the baseline for "
+            f"the target event ({'/'.join(TARGET_EVENTS[result.target])})."
         )
     elif event_beats == 0:
         conclusions.append(
-            f"No origin beat the baseline for the target event "
+            f"No origin with a target-event score beat the baseline for the target event "
             f"({'/'.join(TARGET_EVENTS[result.target])}); the headline probability is "
             "no better than the base rate at any cutoff."
         )
     else:
         conclusions.append(
-            f"{event_beats} of {event_scored} origins beat the target-event baseline: "
-            "the headline claim holds at some cutoffs and not others."
+            f"{event_beats} of {event_scored} origins with a target-event score beat the "
+            "target-event baseline: the headline claim holds at some cutoffs and not others."
         )
 
     if result.event_agreement == "disagree":
@@ -892,20 +913,34 @@ class FrozenDecayReport:
                 f"{score['coverage']:.1%} ({score['scored_rows']}/{score['rows']})"
             )
         summary = self.summary
-        lines += [
-            "",
-            (
+        if summary["horizons_with_event_scores"]:
+            drift_line = (
                 f"Drift: event Brier h{summary['first_scored_horizon']} "
                 f"{_fmt(summary['first_event_brier'])} -> "
                 f"h{summary['last_scored_horizon']} {_fmt(summary['last_event_brier'])} "
                 f"({_fmt(summary['event_brier_drift'])}), coverage "
                 f"{_fmt(summary['first_coverage'])} -> "
                 f"{_fmt(summary['last_coverage'])} ({_fmt(summary['coverage_drift'])})"
-            ),
-            (
-                f"Horizons beating the frozen base rate: "
+            )
+            event_beating = (
                 f"{summary['horizons_beating_event_baseline']}/"
-                f"{summary['horizons_with_event_scores']} (event), "
+                f"{summary['horizons_with_event_scores']} (event)"
+            )
+            if summary["horizons_with_event_scores"] == 1:
+                event_beating += " — one reading, not a drift"
+        else:
+            drift_line = (
+                "Drift: no target-event score was produced, so the frozen event baseline "
+                "was never compared; coverage "
+                f"{_fmt(summary['first_coverage'])} -> "
+                f"{_fmt(summary['last_coverage'])} ({_fmt(summary['coverage_drift'])})"
+            )
+            event_beating = "not measured (event)"
+        lines += [
+            "",
+            drift_line,
+            (
+                f"Horizons beating the frozen base rate: {event_beating}, "
                 f"{summary['horizons_beating_baseline']}/"
                 f"{summary['horizons_with_scores']} (distribution)"
             ),
@@ -1017,13 +1052,25 @@ def _decay_conclusions(result: FrozenDecayResult) -> list[str]:
         )
         return conclusions
 
+    if not result.horizons_with_event_scores:
+        # Every scored card carries an event Brier, so this cannot come from score_partition.
+        # A card that has one without the other still must not be read as "no horizon beat
+        # the baseline", and the drift cannot be dated against a horizon that has none.
+        conclusions.append(
+            "No horizon produced a target-event score, so the frozen event baseline was "
+            "never compared and no drift can be read: the distribution figures are the "
+            "only ones measured here."
+        )
+        return conclusions
+
     first_index = result.first_scored_horizon
     last_index = result.last_scored_horizon
-    if scored == 1:
+    event_scored = result.horizons_with_event_scores
+    if event_scored == 1:
         conclusions.append(
-            f"Only horizon {first_index} produced a score: its target event Brier is "
-            f"{result.first_event_brier:.6f}, one future window is a single measurement and "
-            "not a decay curve, and no drift can be read from it."
+            f"Only horizon {first_index} produced a target-event score: its target event "
+            f"Brier is {result.first_event_brier:.6f}, one future window is a single "
+            "measurement and not a decay curve, and no drift can be read from it."
         )
     else:
         window_phrase = (
@@ -1043,14 +1090,15 @@ def _decay_conclusions(result: FrozenDecayResult) -> list[str]:
         ]
         caveat = (
             f" Horizon{'s' if len(silent_horizons) > 1 else ''} "
-            f"{', '.join(str(index) for index in silent_horizons)} produced no score, so "
-            "the two ends of this difference are the two ends that were measured."
+            f"{', '.join(str(index) for index in silent_horizons)} produced no "
+            "target-event score, so the two ends of this difference are the two ends that "
+            "were measured."
             if silent_horizons
             else ""
         )
         conclusions.append(
-            f"Across {scored} scored horizons the target event Brier ran from "
-            f"{result.first_event_brier:.6f} {window_phrase} to "
+            f"Across {event_scored} horizons that produced a target-event score the target "
+            f"event Brier ran from {result.first_event_brier:.6f} {window_phrase} to "
             f"{result.last_event_brier:.6f} {tail_phrase}, a drift of "
             f"{result.event_brier_drift:+.6f}.{caveat}"
         )
@@ -1062,20 +1110,27 @@ def _decay_conclusions(result: FrozenDecayResult) -> list[str]:
             "trend."
         )
     beating = result.horizons_beating_event_baseline
-    if beating == result.horizons_with_event_scores:
+    if event_scored == 1 and beating == 1:
         conclusions.append(
-            f"All {beating} scored horizons beat the frozen prevalence baseline for the "
-            f"target event ({'/'.join(TARGET_EVENTS[result.target])})."
+            "The only horizon with a target-event score beat the frozen prevalence "
+            f"baseline for the target event ({'/'.join(TARGET_EVENTS[result.target])})."
+        )
+    elif beating == event_scored:
+        conclusions.append(
+            f"All {beating} horizons that produced a target-event score beat the frozen "
+            f"prevalence baseline for the target event "
+            f"({'/'.join(TARGET_EVENTS[result.target])})."
         )
     elif beating == 0:
         conclusions.append(
-            f"No scored horizon beat the frozen baseline for the target event "
-            f"({'/'.join(TARGET_EVENTS[result.target])}): against the population it was "
-            "fitted on, this table does not separate the outcomes in any window after it."
+            f"No horizon with a target-event score beat the frozen baseline for the target "
+            f"event ({'/'.join(TARGET_EVENTS[result.target])}): against the population it "
+            "was fitted on, this table does not separate the outcomes in any window after "
+            "it."
         )
     else:
         conclusions.append(
-            f"{beating} of {result.horizons_with_event_scores} scored horizons beat the "
+            f"{beating} of {event_scored} horizons with a target-event score beat the "
             "frozen target-event baseline, so the headline claim holds in some later "
             "windows and not others."
         )

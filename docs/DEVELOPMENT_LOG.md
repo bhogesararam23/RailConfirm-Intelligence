@@ -2328,3 +2328,59 @@ while its frame is another's. That is the same class of mismatch one field furth
 it is not reachable without constructing `RowScores` by hand today.
 - Nothing in this batch is evidence about railway behaviour; all rows are synthetic fixtures.
 
+## 2026-10-31 — A report claimed more than it measured (ADR-0038)
+
+### Changed
+- **The per-partition conclusion reads the card's target.** It printed
+`scorecard.target` beside `TARGET_EVENTS[metadata.target]`, so scoring
+`final_chart_cnf_or_rac` against a `final_chart_cnf` artifact published the merged event's
+Brier captioned with the confirmed event's classes — the limitation in the same report said
+the two were not comparable. The classes now come from the target the partition was scored
+for; the payload still declares the artifact's own target.
+- **A missing event verdict is no longer a disagreement.** The comparison was
+`beats_baseline != event_beats_baseline` with no `None` check, so `True != None` printed
+"the distribution and the target event disagree". Both sides must exist.
+- **Zero event scores make no event claim.** The origin conclusions printed
+`All 0 origins beat …`; the decay conclusions printed the same and then crashed formatting
+`None` as a float. Each now states that no target-event score exists and the event baseline
+was never compared.
+- **Event counts count event readings.** The decay drift sentence counted distribution-scored
+horizons and applied that number to event Brier values. With six distributions and one event
+reading it printed `Across 6 scored horizons … a drift of +0.000000`, dating both ends to the
+same horizon. It now counts horizons that produced a target-event score, names a horizon
+without one, and calls a single reading a measurement rather than a curve.
+- **Terminal and written descriptions follow the same rule.** The decay `describe_result` no
+longer prints `hNone n/a -> hNone n/a` or `0/0 scored horizons`; `FrozenDecayReport.summary_lines`
+no longer prints `0/0 (event)` and says the event baseline was never compared when that is
+the case. A one-reading run is marked `one reading, not a drift`. The rolling-origin
+`describe_result` and `OriginReport.summary_lines` no longer print `0/0 beat it` or
+`0/0 (event)`, and the origin conclusion calls a single measured origin "the only origin
+with a target-event score" rather than "all 1 origins".
+
+### Found while writing the tests
+- The partial-event table was not reachable from `run_frozen_decay`: every card
+`score_partition` builds carries both scores. It was reachable from a `Scorecard` assembled
+by a caller, which is why the report is the layer that must refuse to over-read it.
+- The zero-event decay branch did not merely phrase a false claim; it raised `TypeError` from
+`f"{result.first_event_brier:.6f}"`, so the report could not be written at all. The new
+zero-event test exercises the branch directly.
+- Four existing decay assertions pinned the old wording ("Only horizon 0 produced a score",
+"All N scored horizons beat"). They now pin the event-counting wording; the behaviour they
+protect is unchanged.
+
+### Checks run
+- Red state verified: restoring the pre-fix modules made twelve of the sixteen new tests
+fail, including the partial-table, terminal-description and single-winning-reading cases;
+four positive sentences passed before and after and remain as regression pins.
+- `pytest tests/ -q --cov=railconfirm --cov-fail-under=90` → **1105 passed**, total coverage
+**96.51%** (163.9 s).
+- `ruff check railconfirm/ tests/` → clean. `mypy railconfirm` → no issues in 44 source
+files.
+- Frontend untouched by this batch; its last measured state was 118 tests, type check, lint
+and production build green at `9e49050`.
+
+### Unresolved
+- No promoted artifact or real dataset was involved; the fixture rows are synthetic and the
+reports say so.
+- No approved real dataset exists, so no report can claim railway accuracy.
+
