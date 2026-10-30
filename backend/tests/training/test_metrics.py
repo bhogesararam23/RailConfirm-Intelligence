@@ -16,6 +16,7 @@ from railconfirm.inference.baseline import FrequencyTableProvenance
 from railconfirm.training.metrics import (
     OUTCOME_CLASSES,
     TARGET_EVENTS,
+    _bands,
     _binary_log_loss,
     _brier_one,
     _event_probability,
@@ -28,9 +29,9 @@ COHORTS = {("SL", "GN", "WL"): {"CNF": 90, "RAC": 0, "WL": 10, "CANCELLED": 0, "
 PREVALENCE = {"CNF": 0.5, "RAC": 0.0, "WL": 0.5, "CANCELLED": 0.0, "OTHER": 0.0}
 
 
-def estimator(threshold: int = 5):
+def estimator(threshold: int = 5, cohorts: dict | None = None):
     return build_estimator(
-        COHORTS,
+        COHORTS if cohorts is None else cohorts,
         FrequencyTableProvenance(
             dataset_id="scoring-fixture",
             sha256="c" * 64,
@@ -181,6 +182,38 @@ def test_reliability_bands_carry_counts():
     top = max(cnf_bands, key=lambda band: band.count)
     assert 0.0 <= top.mean_predicted <= 1.0
     assert 0.0 <= top.observed_frequency <= 1.0
+
+
+def test_a_prediction_on_a_band_boundary_is_counted_once():
+    """Bands must partition the scored rows, not overlap at the edges.
+
+    A smoothed cohort hits a round number often: 1 CNF among 15 rows with alpha 1.0 over
+    five classes is exactly 2/20 = 0.1. Both band edges used to be inclusive, so that row
+    was counted in [0.0, 0.1] and in [0.1, 0.2]: a reliability table could report two rows
+    for one prediction, and the observed frequency in each band averaged the same row twice.
+    """
+    boundary = {
+        ("SL", "GN", "WL"): {"CNF": 1, "RAC": 0, "WL": 14, "CANCELLED": 0, "OTHER": 0}
+    }
+    card = score_partition(
+        rows([("GNWL/10", "CNF")]),
+        estimator(cohorts=boundary),
+        prevalence=PREVALENCE,
+        partition="test",
+    )
+    assert card.scored_rows == 1
+    cnf_bands = card.reliability["CNF"]
+    assert [(band.lower, band.upper, band.count) for band in cnf_bands] == [(0.1, 0.2, 1)]
+    assert cnf_bands[0].mean_predicted == pytest.approx(0.1)
+    assert sum(band.count for band in card.event_reliability) == card.scored_rows
+
+
+def test_bands_cover_both_endpoints_and_each_row_once():
+    """0.0 belongs to the first band and 1.0 to the last, with no double counting."""
+    bands = _bands([(0.0, 0.0), (0.5, 1.0), (1.0, 1.0)], bins=2)
+    assert sum(band.count for band in bands) == 3
+    assert (bands[0].lower, bands[0].count) == (0.0, 1)
+    assert (bands[-1].upper, bands[-1].count) == (1.0, 2)
 
 
 def test_scoring_requires_a_label_column():

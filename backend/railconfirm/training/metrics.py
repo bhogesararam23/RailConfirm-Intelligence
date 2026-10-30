@@ -65,7 +65,12 @@ This name stays because the reports are written against it."""
 
 @dataclass(frozen=True)
 class ReliabilityBin:
-    """One predicted-probability band for a single outcome class."""
+    """One predicted-probability band for a single outcome class.
+
+    The band is half-open, ``[lower, upper)``, except the last one, which includes 1.0. A
+    predicted probability that lands exactly on a boundary therefore belongs to the band it
+    opens, and to that band only.
+    """
 
     lower: float
     upper: float
@@ -280,15 +285,22 @@ def _bands(pairs: list[tuple[float, float]], *, bins: int) -> list[ReliabilityBi
 
     This is calibration *description*, not a calibration claim: it shows how observed
     frequency tracks predicted probability, with counts so thin bands are visible.
+
+    Bands are half-open on the upper edge (the last one keeps 1.0), so every row lands in
+    exactly one band and the counts sum to the rows scored. Both edges were inclusive, which
+    put a predicted probability sitting on a boundary — and a smoothed cohort hits 0.1, 0.2,
+    … exactly, often — into the band above and the band below, so a reliability table could
+    report two rows for one prediction and an observed frequency computed from it twice.
     """
     rows: list[ReliabilityBin] = []
     for index in range(bins):
         lower = index / bins
         upper = (index + 1) / bins
+        last = index == bins - 1
         in_band = [
             (predicted, observed)
             for predicted, observed in pairs
-            if lower <= predicted <= upper or (index == bins - 1 and predicted == 1.0)
+            if lower <= predicted < upper or (last and predicted == upper)
         ]
         if not in_band:
             continue

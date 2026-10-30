@@ -103,7 +103,9 @@ METRIC_DEFINITIONS: dict[str, str] = {
     ),
     "reliability": (
         "Per-class bands of predicted probability against observed frequency with "
-        "counts. A description of calibration, not a calibration fit."
+        "counts. Bands are half-open ([lower, upper), the last one including 1.0), so the "
+        "counts sum to the rows scored and a prediction on a boundary is counted once. A "
+        "description of calibration, not a calibration fit."
     ),
     "event_brier": (
         "Binary Brier score for the target's own event (for final_chart_cnf: the "
@@ -120,7 +122,8 @@ METRIC_DEFINITIONS: dict[str, str] = {
         "1 - event_brier / event_baseline_brier for the target's event."
     ),
     "event_reliability": (
-        "Reliability bands for the target's event probability."
+        "Reliability bands for the target's event probability, with the same half-open "
+        "edges as `reliability`."
     ),
     "segment_calibration": (
         "For each slice (class, quota, booked status, as-of status): the mean predicted "

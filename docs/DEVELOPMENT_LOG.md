@@ -1952,3 +1952,55 @@ suite asserted the skip-silent behaviour as if it were intended.
 - Nothing above is evidence about railway behaviour. Every number involved comes from synthetic
   fixtures.
 
+## 2026-10-30 — A reliability band counted one prediction twice (ADR-0031)
+
+### Scope
+Continuing the evaluation-reliability workstream into `backend/railconfirm/training/metrics.py`:
+the reliability bands every scorecard publishes, and whether their counts describe the rows they
+claim to. Found by reading the band-membership condition against what the band is used for, then
+reproduced with a cohort chosen to make a probability land exactly on an edge.
+
+### Changed
+- **Both band edges were inclusive.** `_bands` used
+  `lower <= predicted <= upper or (index == bins - 1 and predicted == 1.0)`, so a prediction on
+  a boundary was a member of the band below and the band above. With ten bins and a smoothed
+  table producing `(count + 1) / (n + 5)`, boundaries are ordinary: one confirmation in a
+  fifteen-row cohort is exactly `2/20 = 0.1`.
+- Reproduced before the fix, on one scored row predicted at `p_cnf = 0.1`:
+  `CNF 0.0–0.1 count 1 mean 0.1` and `CNF 0.1–0.2 count 1 mean 0.1` — `sum(count) == 2` for
+  `scored_rows == 1`, and the event bands overlapped the same way.
+- Bands are now half-open, `[lower, upper)`, with the last one including `1.0`, so they
+  partition the scored rows. `ReliabilityBin`'s docstring states the rule and `_bands` records
+  what the overlapping version did.
+- `METRIC_DEFINITIONS["reliability"]` and `["event_reliability"]` now state the half-open rule
+  and the invariant, because a reader summing the counts needs to know what the total should be.
+  No schema version changes: no key was added, renamed or reinterpreted, and the payload shape
+  is identical.
+- No score, Brier value, calibration fit or artifact is affected.
+
+### Found while writing the tests
+- **The existing assertion was already there and could not fail.**
+  `test_reliability_bands_carry_counts` already asserted
+  `sum(band.count for band in cnf_bands) == card.scored_rows`; its fixture predicts `91/105`,
+  which is not on an edge, so the invariant held by accident. The regression test therefore had
+  to construct a cohort whose probability is exactly `0.1` — hence the new optional `cohorts`
+  argument on the file's `estimator` helper.
+- The other direction had to be pinned too: a half-open rule that drops `1.0` would silently
+  lose a certain prediction, so `test_bands_cover_both_endpoints_and_each_row_once` passes
+  `0.0`, `0.5` and `1.0` through two bins and checks both endpoints are held.
+
+### Checks run
+- `pytest tests/training/test_metrics.py` → **27 passed** (1.9 s) after the change.
+- `pytest` over the whole backend → **1065 passed** (161.0 s).
+- `ruff check .` clean; `mypy railconfirm` clean, 44 source files; the hygiene script passed.
+- The probe that reproduced the overlap was a throwaway script outside the suite; it was deleted
+  after its output was recorded here and in ADR-0031.
+
+### Unresolved
+- A band's `mean_predicted` and `observed_frequency` are rounded to four decimals while the
+  counts are exact, so a reader recomputing a band mean from published rows would not reproduce
+  it to the last digit. The report says the bands are a description, not a fit, but it does not
+  say the means are rounded; that belongs in the shared metric block and was left for the same
+  wider edit as the spread definition above.
+- Nothing above is evidence about railway behaviour. The fixture is synthetic.
+
