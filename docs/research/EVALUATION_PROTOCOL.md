@@ -160,6 +160,15 @@ Accept new features only when the preregistered evaluation shows incremental ben
   candidate that fails is reported as `baseline` with each failing condition printed at its own
   numbers, and a locked period with no rows both models answered is `undetermined` rather than a
   tie. Neither model is promoted by the run.
+- Implemented (ADR-0023): the comparison refuses before it scores when it would not be one.
+  Both models must name the same `(dataset_id, sha256)` pair and that pair must be the file
+  being scored; `status_mapping_version`, `cohort_semantics`, `outcome_classes` and
+  `feature_schema_version` must match, because each changes what a row means; and
+  `laplace_alpha` and `min_sample_threshold` must match, because a delta across a smoothing
+  change cannot be attributed to the model. Partition summaries matching by dates and row
+  counts is not enough: each partition's rows are fingerprinted in stored order, since
+  scoring walks the baseline's frames for both models and pairing is by position. Pairing
+  itself refuses a repeated position and a partition total below the rows answered.
 - Synthetic data is allowed for unit and UI tests, but must not appear in empirical performance reporting.
 
 ## Minimum experiment record

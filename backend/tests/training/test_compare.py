@@ -6,6 +6,7 @@ accounting is therefore tested at its own level — hand-built scored rows with 
 and the real-fixture verdict is only asserted to be consistent with what the rule computes.
 """
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -131,6 +132,19 @@ def test_the_brier_used_for_pairing_is_the_event_brier_not_the_distribution_one(
     assert paired.candidate_wins == 0
     assert paired.candidate_losses == 0
     assert paired.ties == 1  # same event error; the distribution difference is ignored here
+
+
+def test_a_repeated_position_is_refused_rather_than_paired_arbitrarily():
+    """A position identifies one reservation; two of them means the alignment is unknown."""
+    with pytest.raises(DatasetValidationError, match="more than once"):
+        pair_scores([row(0, 0.5, 1.0), row(0, 0.4, 0.0)], [row(0, 0.5, 1.0)])
+
+
+def test_a_partition_total_below_the_rows_answered_is_refused():
+    """`neither_scored` is a subtraction, so a short total would publish a negative count."""
+    baseline = [row(0, 0.5, 1.0), row(1, 0.5, 0.0)]
+    with pytest.raises(DatasetValidationError, match="declares 1"):
+        pair_scores(baseline, [row(0, 0.5, 1.0)], rows_total=1)
 
 
 # ── The verdict rule ───────────────────────────────────────────────────────────
@@ -384,6 +398,104 @@ def test_models_fitted_for_different_targets_are_refused(tmp_path):
     )
     with pytest.raises(DatasetValidationError, match="target"):
         run_model_comparison(dataset, baseline=baseline, candidate=candidate)
+
+
+def test_a_model_fitted_on_another_file_is_not_scored_against_this_one(tmp_path):
+    """The report names one dataset; a model from another file makes that name false."""
+    dataset, baseline, _ = fitted_pair(tmp_path)
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+    other_csv = write_balanced_dataset(other_dir, count=248)
+    other_manifest = write_approved_manifest(other_csv, other_dir)
+    elsewhere = load_approved_dataset(
+        other_csv, other_manifest, allow_synthetic_for_testing=True
+    )
+    candidate = fit_baseline(
+        elsewhere,
+        version="b",
+        min_sample_threshold=5,
+        train_frac=0.5,
+        val_frac=0.25,
+        estimator=QUEUE_ESTIMATOR_ID,
+    )
+    # Same dataset id, different content: the pair is what identifies a file, not the name.
+    with pytest.raises(DatasetValidationError, match="different content"):
+        run_model_comparison(dataset, baseline=baseline, candidate=candidate)
+
+
+def test_two_models_from_different_dataset_ids_are_refused(tmp_path):
+    dataset, baseline, _ = fitted_pair(tmp_path)
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+    other_csv = write_balanced_dataset(other_dir)
+    other_manifest = write_approved_manifest(
+        other_csv, other_dir, dataset_id="another-fixture"
+    )
+    elsewhere = load_approved_dataset(
+        other_csv, other_manifest, allow_synthetic_for_testing=True
+    )
+    candidate = fit_baseline(
+        elsewhere,
+        version="b",
+        min_sample_threshold=5,
+        train_frac=0.5,
+        val_frac=0.25,
+        estimator=QUEUE_ESTIMATOR_ID,
+    )
+    with pytest.raises(DatasetValidationError, match="fitted on dataset 'another-fixture'"):
+        run_model_comparison(dataset, baseline=baseline, candidate=candidate)
+
+
+@pytest.mark.parametrize(
+    "field,value,fragment",
+    [
+        ("status_mapping_version", "0.9", "different mappings"),
+        ("cohort_semantics", "initial_status only", "different statuses"),
+        ("feature_schema_version", "1.0.0", "different feature schemas"),
+        ("outcome_classes", ("CNF", "WL"), "different label spaces"),
+        ("laplace_alpha", 2.0, "different settings"),
+        ("min_sample_threshold", 9, "different settings"),
+    ],
+)
+def test_models_describing_different_contracts_are_refused(
+    tmp_path, field, value, fragment
+):
+    """One change at a time: a mapping, schema or smoothing difference is not the model."""
+    dataset, baseline, candidate = fitted_pair(tmp_path)
+    mutated = replace(candidate, metadata=replace(candidate.metadata, **{field: value}))
+    with pytest.raises(DatasetValidationError, match=fragment):
+        run_model_comparison(dataset, baseline=baseline, candidate=mutated)
+
+
+def test_matching_dates_and_counts_are_not_proof_of_the_same_rows(tmp_path):
+    """Two partitions can record one window and one count while holding a different order.
+
+    The scoring walks the baseline's frames for both models, so a candidate fitted on a
+    differently ordered partition would be published with numbers from rows it never saw.
+    Reversing one partition is the cheapest way to build that shape: the summaries still
+    match, and pairing by position would silently compare the wrong reservations.
+    """
+    dataset, baseline, candidate = fitted_pair(tmp_path)
+    reordered = replace(
+        candidate,
+        split=replace(
+            candidate.split,
+            val=candidate.split.val.iloc[::-1].reset_index(drop=True),
+        ),
+    )
+    with pytest.raises(DatasetValidationError, match="but not on rows"):
+        run_model_comparison(dataset, baseline=baseline, candidate=reordered)
+
+
+def test_an_explicit_target_must_be_the_one_both_models_were_fitted_for(tmp_path):
+    dataset, baseline, candidate = fitted_pair(tmp_path)
+    with pytest.raises(DatasetValidationError, match="neither artifact"):
+        run_model_comparison(
+            dataset,
+            baseline=baseline,
+            candidate=candidate,
+            target="final_chart_cnf_or_rac",
+        )
 
 
 def test_score_rows_numbers_match_the_scorecards_the_comparison_publishes(tmp_path):
