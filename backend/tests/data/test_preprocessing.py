@@ -20,7 +20,9 @@ from railconfirm.data.preprocessing import (
     chronological_split,
     extract_features,
     feature_frame,
+    frozen_horizon_windows,
     require_status_columns,
+    rolling_origin_windows,
     strip_labels,
 )
 from railconfirm.domain.exceptions import DatasetValidationError
@@ -333,7 +335,34 @@ def test_booking_group_crossing_partitions_blocks_the_split():
     )
     result = chronological_split(df)
     assert result.eligible is False
-    assert any("more than one partition" in reason for reason in result.reasons)
+    # B1's two dates both fall in training under the default fractions, so the split is
+    # blocked for the other reason: one booking cannot own two journey dates at all.
+    assert any(
+        "more than one date inside a single partition" in reason for reason in result.reasons
+    )
+    assert not any("not confined to one partition" in reason for reason in result.reasons)
+
+
+def test_a_group_spanning_two_partitions_is_reported_as_leakage():
+    """A booking split across the boundary is the reason the rule names first.
+
+    Six dates put 2026-01-01 in training and 2026-01-06 in test. The refusal must say
+    that the booking crosses the boundary, because that is what would put one outcome in
+    the fit and in the evaluation; the earlier message claimed this for any booking seen
+    twice, including two dates in the same partition.
+    """
+    df = frame(
+        [
+            {"journey_date": f"2026-01-{day:02d}", "booking_group_id": group}
+            for day, group in zip(range(1, 7), ["B1", "B2", "B3", "B4", "B5", "B1"], strict=True)
+        ]
+    )
+    result = chronological_split(df)
+    assert result.eligible is False
+    assert any("not confined to one partition" in reason for reason in result.reasons)
+    assert not any(
+        "more than one date inside a single partition" in reason for reason in result.reasons
+    )
 
 
 def test_gap_days_enforces_separation_from_the_training_period():
@@ -362,6 +391,40 @@ def test_min_rows_per_partition_is_enforced():
 )
 def test_invalid_split_parameters_are_rejected(kwargs, fragment):
     with pytest.raises(DatasetValidationError, match=fragment):
+        chronological_split(dates(10), **kwargs)
+
+
+@pytest.mark.parametrize("value", ["2", 2.5, True])
+def test_a_gap_that_is_not_a_whole_number_of_days_is_refused(value):
+    """The gap is a day count, and a count is an int in every planner.
+
+    A string raised ``TypeError`` from the comparison that used it, so the caller saw a
+    crash that named neither the argument nor the function. A float passed the negative
+    check and was compared against a whole-day separation as if a fraction of a day were
+    meaningful, and ``True`` — an int in Python — was read as a one-day gap by a caller
+    who wrote it as a flag.
+    """
+    with pytest.raises(DatasetValidationError, match="whole number of days"):
+        chronological_split(dates(10), gap_days=value)
+    with pytest.raises(DatasetValidationError, match="whole number of days"):
+        rolling_origin_windows(dates(10), gap_days=value)
+    with pytest.raises(DatasetValidationError, match="whole number of days"):
+        frozen_horizon_windows(dates(10), fitted_to="2026-01-01", gap_days=value)
+
+
+@pytest.mark.parametrize("value", ["5", 2.5])
+def test_a_row_floor_that_is_not_a_whole_number_is_refused(value):
+    """A fraction as a row floor thresholds a count against a number that is not one."""
+    with pytest.raises(DatasetValidationError, match="min_rows_per_partition"):
+        chronological_split(dates(10), min_rows_per_partition=value)
+
+
+@pytest.mark.parametrize(
+    "kwargs", [{"train_frac": "0.7"}, {"val_frac": None}, {"train_frac": True}]
+)
+def test_a_split_fraction_that_is_not_a_number_is_refused(kwargs):
+    """The fractions are compared as numbers, so a non-number is refused as one."""
+    with pytest.raises(DatasetValidationError, match="fraction between 0 and 1"):
         chronological_split(dates(10), **kwargs)
 
 

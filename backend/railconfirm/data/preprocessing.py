@@ -265,6 +265,34 @@ def feature_frame(df: pd.DataFrame) -> pd.DataFrame:
     return features[list(FEATURE_COLUMNS)]
 
 
+def _require_positive_int(name: str, value: Any) -> None:
+    """Refuse a count that is not a positive whole number.
+
+    Every planner cuts data by counting dates or rows. ``True`` is the quietest bad
+    value, because Python makes it an int: a flag passed where a count belongs would be
+    accepted as one.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise DatasetValidationError(f"{name} must be a positive integer, got {value!r}.")
+
+
+def _require_gap_days(value: Any) -> None:
+    """Refuse a gap that is not a whole number of days.
+
+    The gap is a day count, and a day count is an int. A string raised ``TypeError`` from
+    the comparison that used it, a float was accepted and compared against an integer day
+    separation as if a fraction of a day were meaningful, and ``True`` was accepted as a
+    one-day gap by a caller who wrote it as a flag. All three are refused here, where the
+    argument can be named in the message.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise DatasetValidationError(
+            f"gap_days must be a whole number of days, got {value!r}."
+        )
+    if value < 0:
+        raise DatasetValidationError("gap_days cannot be negative.")
+
+
 def chronological_split(
     df: pd.DataFrame,
     *,
@@ -288,15 +316,18 @@ def chronological_split(
         raise DatasetValidationError(
             f"Cannot perform a chronological split without '{date_column}'."
         )
+    for name, fraction in (("train_frac", train_frac), ("val_frac", val_frac)):
+        if isinstance(fraction, bool) or not isinstance(fraction, (int, float)):
+            raise DatasetValidationError(
+                f"{name} must be a fraction between 0 and 1, got {fraction!r}."
+            )
     if not 0 < train_frac < 1 or not 0 < val_frac < 1 or train_frac + val_frac >= 1:
         raise DatasetValidationError(
             f"train_frac + val_frac must be below 1 with both positive; got "
             f"train_frac={train_frac}, val_frac={val_frac}."
         )
-    if isinstance(min_rows_per_partition, bool) or min_rows_per_partition < 1:
-        raise DatasetValidationError("min_rows_per_partition must be a positive integer.")
-    if gap_days < 0:
-        raise DatasetValidationError("gap_days cannot be negative.")
+    _require_positive_int("min_rows_per_partition", min_rows_per_partition)
+    _require_gap_days(gap_days)
 
     work = df.copy()
     work["_partition_date"] = _parse_dates(work[date_column], date_column)
@@ -357,15 +388,45 @@ def chronological_split(
             )
 
     if GROUP_COLUMN in work.columns:
+        # A booking covers one journey, so a group id on more than one date is refused
+        # whatever the boundary does with it: split across partitions its outcome is
+        # evaluated beside the outcome it was fitted on, and held inside one partition it
+        # would be counted once per date as if it were two bookings. The two cases get
+        # their own reason, because they are not the same defect and a message that names
+        # the wrong one sends a reader looking at the boundary for a problem in the data.
         membership = work.groupby(GROUP_COLUMN)["_partition_date"].nunique()
-        crossing = membership[membership > 1]
-        if len(crossing):
-            sample = list(crossing.index[:5])
-            reasons.append(
-                f"{len(crossing)} {GROUP_COLUMN} values appear on dates falling in more "
-                f"than one partition (for example {sample}); the same outcome would then "
-                "appear in training and evaluation."
-            )
+        spanning = membership[membership > 1]
+        if len(spanning):
+            partition_of_date = {
+                partition_date: name
+                for name, block in (
+                    ("train", train_dates),
+                    ("validation", val_dates),
+                    ("test", test_dates),
+                )
+                for partition_date in block
+            }
+            dates_per_group = work.groupby(GROUP_COLUMN)["_partition_date"].agg(set)
+            across: list[str] = []
+            inside: list[str] = []
+            for group in spanning.index:
+                seen = dates_per_group[group]
+                if len({partition_of_date[date] for date in seen}) > 1:
+                    across.append(str(group))
+                else:
+                    inside.append(str(group))
+            if across:
+                reasons.append(
+                    f"{GROUP_COLUMN} values are not confined to one partition: {len(across)} "
+                    f"(for example {across[:5]}); the same outcome would then appear in "
+                    "training and evaluation."
+                )
+            if inside:
+                reasons.append(
+                    f"{GROUP_COLUMN} values appear on more than one date inside a single "
+                    f"partition: {len(inside)} (for example {inside[:5]}); one booking covers "
+                    "one journey, so its outcome cannot be attributed to a date or counted once."
+                )
 
     partitions = (
         _summarise("train", train, date_column="_partition_date"),
@@ -556,12 +617,8 @@ def rolling_origin_windows(
         ("step_dates", step_dates),
         ("min_scored_rows", min_scored_rows),
     ):
-        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-            raise DatasetValidationError(
-                f"{name} must be a positive integer, got {value!r}."
-            )
-    if gap_days < 0:
-        raise DatasetValidationError("gap_days cannot be negative.")
+        _require_positive_int(name, value)
+    _require_gap_days(gap_days)
     if step_dates < horizon_dates:
         raise DatasetValidationError(
             f"step_dates={step_dates} is below horizon_dates={horizon_dates}, which "
@@ -823,10 +880,7 @@ def frozen_horizon_windows(
         ("step_dates", step_dates),
         ("min_scored_rows", min_scored_rows),
     ):
-        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-            raise DatasetValidationError(
-                f"{name} must be a positive integer, got {value!r}."
-            )
+        _require_positive_int(name, value)
     if isinstance(min_horizons, bool) or not isinstance(min_horizons, int):
         raise DatasetValidationError(
             f"min_horizons must be an integer of at least {MIN_HORIZONS}, "
@@ -837,8 +891,7 @@ def frozen_horizon_windows(
             f"min_horizons={min_horizons} asks for fewer than {MIN_HORIZONS} horizons, "
             "which is a single holdout under another name."
         )
-    if gap_days < 0:
-        raise DatasetValidationError("gap_days cannot be negative.")
+    _require_gap_days(gap_days)
     if step_dates < horizon_dates:
         raise DatasetValidationError(
             f"step_dates={step_dates} is below horizon_dates={horizon_dates}, which "

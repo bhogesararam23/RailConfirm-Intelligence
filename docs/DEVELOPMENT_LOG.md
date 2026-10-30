@@ -2058,3 +2058,51 @@ the published `baseline_brier_all_cnf` is not comparable between partitions with
 booking-size mixes. It is stated in the definition and not otherwise corrected.
 - Nothing above is evidence about railway behaviour. Every number comes from synthetic fixtures.
 
+## 2026-10-30 — A split accepted arguments it could not read and named the wrong reason (ADR-0033)
+
+### Scope
+`backend/railconfirm/data/preprocessing.py`: the argument handling of the three planners and
+the group-crossing refusal in `chronological_split`. Both were found by reading the code
+against the rules the same functions already follow for their other settings.
+
+### Changed
+- **`gap_days` was the one count nobody type-checked.** The two multi-window planners refused
+  a non-integer for every count but `gap_days`, and `chronological_split` did the same for
+  `min_rows_per_partition`. Reproduced for all three planners: `"2"` raised `TypeError` from
+  a comparison; `2.5` was accepted and compared against a whole-day separation; `True` was
+  accepted as a one-day gap. `train_frac="0.7"` and `val_frac=None` raised the same
+  `TypeError`, and `min_rows_per_partition=2.5` was accepted.
+- `_require_gap_days` and `_require_positive_int` now hold those rules, the two duplicated
+  inline loops call the helpers, and `chronological_split` checks the fractions for being
+  numbers before comparing them to the range.
+- **The group-crossing reason described a boundary case that had not happened.** The check is
+  `nunique() > 1` — a group id on more than one journey date — and the message always said
+  the dates fell in more than one partition. On the repository's own fixture for this rule
+  both of B1's dates are inside training, so the message sent a reader to the boundary while
+  the defect was in the record. The two cases are now counted and reported separately: a
+  boundary crossing is a leakage risk, two dates inside one partition is an identity problem
+  (one booking covers one journey).
+
+### Found while writing the tests
+- The existing test for this rule asserted `"more than one partition" in reason` on a fixture
+  whose group never crossed one, so it was asserting the defect. It now asserts the accurate
+  phrase *and* the absence of the other, and a second test builds the true crossing case.
+- The CLI passes `type=int` for `gap_days`, so none of this was reachable from the command
+  line; it is reachable through `fitter`, `origins` and `decay`, which forward their own
+  arguments, and through the library API the tests call.
+- `bool` is the quiet case in all three helpers because Python makes it an `int`. The same
+  check was already in place elsewhere in this file for `min_rows_per_partition`; only that
+  one argument had it, which is how `gap_days` stayed unguarded.
+
+### Checks run
+- `pytest tests/data/test_preprocessing.py` → **59 passed** (1.0 s).
+- `pytest` over the whole backend → **1076 passed** (85.5 s).
+- `ruff check .` clean; `mypy railconfirm` clean, 44 source files; the hygiene script passed.
+
+### Unresolved
+- The fraction check lets an `int` through its type gate, but every `int` is then refused by
+  the range itself (`0 < x < 1` excludes `0` and `1`), so nothing invalid is accepted; the
+  type gate exists to name a string or `None`, not to duplicate the arithmetic.
+- No eligible split, metric, report field or artifact changes, so no published number moved.
+  Nothing here is evidence about railway behaviour.
+
