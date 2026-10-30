@@ -1684,3 +1684,76 @@ product. Every defect below was reproduced against the running code before it wa
   cleared the intake checklist, so every requirement above is still verified only against
   synthetic fixtures.
 
+## 2026-10-30 — Second-pass dataset review: the Railofy competition matrix
+
+### Scope
+Review the candidate named in the current directive — `github.com/Yogalakshmi4784/PNR-Prediction`,
+whose README points at the Railofy Kaggle competition — using primary evidence, and decide
+whether its data may be stored, transformed, trained on, distributed or used commercially.
+
+### What was read
+- Repository metadata, the full blob listing with byte sizes, the `LICENSE` text and the
+  README, all through the GitHub API. Created and last pushed the same day (2024-08-09),
+  one star, GPL-3.0 at the root, 10 blobs, 18.8 MB.
+- The two CSVs the README names, opened **once, read-only, outside the product runtime**,
+  to establish the header, dtypes and summary statistics. The repository's own intake gate
+  was then run against a temporary copy under `%TEMP%`. Both copies deleted afterwards.
+- Not opened: `PNR_Confirmation.pkl` (a fitted model of unknown provenance in a format that
+  executes code on load, refused by `data/loader.py` by design) and `sweetviz_report.html`.
+
+### Findings
+- **The data licence question the README invites does not resolve in the uploader's favour.**
+  The `LICENSE` is verbatim GPLv3; the string "dataset" appears in it zero times. A code
+  licence establishes nothing about the CSVs, and the copyleft terms mean none of that code
+  may be copied into this Apache-2.0 project. That the competition CSVs sit in a public
+  third-party repository is a redistribution by someone who is not the rights holder — not
+  a grant.
+- **The file cannot satisfy the row contract at any price.** 36,775 labelled rows of 17
+  scaled floats (13 outside `[0, 1]`), one `QT` code (`GN`/`PQ`/`RL`), five integer flags, an
+  11-digit `pk` that is not a PNR and not unique (three values repeat, each with a different
+  quota), and a **binary** `target` with base rate 0.3148. `JD`, which the README's glossary
+  calls Journey Date, is a float. `python -m railconfirm.data validate` → **0 valid rows,
+  exit 1**, seven required columns missing. No dates means no chronological split (ADR-0014),
+  no decay horizon (ADR-0018) and no one-clear-day horizon (ADR-0026); no status string means
+  `asof_statuses()` has nothing to read, so neither estimator can be fitted or scored; a
+  binary label cannot carry the CNF/RAC/WL distinction (ADR-0003).
+- **The README's metrics are not evidence.** F1 0.872 and MCC 0.815 for KNN, with no split
+  description, no baseline against the 0.3148 base rate, and no time ordering. Measured
+  univariate association with the label tops out at `GROP` 0.293 (`CURP` 0.250, `RPW` 0.220,
+  `NDTD` −0.206, `CANP` 0.187, `CUCA` 0.164, `GRCA` −0.128), which does not explain such an
+  MCC. The glossary also lists `CCA` as availability *after chart preparation* and `RPW` as a
+  pre-computed confirmation weight; the correlations do not show `CCA` dominating, so this is
+  recorded as a question about an undocumented transformation, not asserted as proven leakage.
+- **Rights remain unreadable, and that is the blocker.** The competition's rules, data and
+  About-Dataset pages are client-rendered and return only a page title to an automated fetch;
+  `https://www.kaggle.com/api/v1/competitions/list?search=railofy` answers **HTTP 401** without
+  an account, and this environment has no Kaggle credentials. Search metadata establishes only
+  that the competition is titled "Indian Railways Challenge", hosted by Railofy, and marked
+  "Late Submission" (closed). Behind that sits a second question: what Railofy itself was
+  permitted to publish from a private PNR-tracking service.
+
+### Decisions recorded
+- `SOURCE_REGISTER.md`: Kaggle `railofy-challenge` → **Quarantined, terms unreadable from this
+  environment**; `Yogalakshmi4784/PNR-Prediction` → **Rejected for training on content**, code
+  not reusable. No manifest was generated, because a manifest would imply a candidate worth
+  deciding on. No ADR: nothing was approved, and the gate refused the file.
+- `CANDIDATE_DATASET_REVIEW.md` now documents a third disqualifying shape — reservation data
+  whose semantics were destroyed by an undocumented scaling before publication — and the
+  method of the pass, including that the earlier "raw files deliberately were not fetched"
+  sentence is superseded and why.
+
+### Checks run
+- `python -m railconfirm.data validate <temporary copy>` → 0 valid of 36,775, exit 1 (output
+  quoted in the review).
+- Summary statistics computed with pandas in this environment; the figures above are the
+  measured ones.
+- No test suite, lint or type check was needed: this pass changed documentation only. The
+  repository hygiene check and the Markdown link check were run before committing.
+
+### Unresolved
+- The Railofy competition terms, and Railofy's own rights to the records it supplied. Closing
+  either requires an authenticated Kaggle session or contact with the host — maintainer
+  actions, not agent actions.
+- Training remains blocked exactly as before. This pass removed one plausible-looking
+  candidate from the search space with evidence instead of assumption.
+
