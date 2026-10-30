@@ -115,6 +115,18 @@ class CalibrationSpec:
                 "probability rises the observed rate would have to fall, which is a "
                 "correction fitted to noise rather than a calibration layer."
             )
+        # The count is checked for type before it is compared: a hand-edited artifact
+        # declaring "120" or null raised TypeError out of the loader, which the registry
+        # does not catch and the CLI cannot print, and a fractional 120.5 or a boolean True
+        # was accepted as a row count that cannot exist. A block whose provenance does not
+        # survive its own arithmetic is not describing a fit.
+        if isinstance(self.fitted_rows, bool) or not isinstance(self.fitted_rows, int):
+            raise ModelArtifactError(
+                f"Calibration declares fitted_rows {self.fitted_rows!r} of type "
+                f"{type(self.fitted_rows).__name__}; a row count is an integer, and a "
+                "block that cannot state how many rows it was fitted on cannot be "
+                "checked against the fit that produced it."
+            )
         if self.fitted_rows < 1:
             raise ModelArtifactError(
                 f"Calibration declares {self.fitted_rows} fitted rows; a correction "

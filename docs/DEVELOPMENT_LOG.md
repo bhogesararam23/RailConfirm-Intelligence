@@ -1854,14 +1854,27 @@ reproduced in a script before any code was changed.
   status inside a known class/quota pair is answerable. The fixture now moves the locked rows to
   an unseen quota (`TQ`), which no fallback can reach. That fallback is a real property of the
   lookup and is recorded in the test and in ADR-0029 rather than left as a puzzle.
+- **A malformed row count escaped the artifact boundary as `TypeError`.** `CalibrationSpec`
+  compared `fitted_rows < 1` without checking the type, so an artifact declaring `"120"` or
+  `null` raised `TypeError` out of `spec_from_mapping` — past the registry's
+  `except ModelArtifactError` handler and past the CLI's, which turns a rejectable artifact into
+  an unhandled exception. A fraction (`120.5`) and a boolean (`true`) were *accepted* as row
+  counts. Reproduced against the loader for six values (`120` accepted; `"120"` and `null`
+  `TypeError`; `120.5` and `True` accepted; `0` and `-3` correctly refused), then fixed by
+  checking the type before the comparison, the same rule the artifact metadata already applies
+  to `min_sample_threshold` and `laplace_alpha`. Seven regression cases were added to
+  `tests/inference/test_calibration.py`.
 
 ### Checks run
-- `python -m pytest tests/training/test_calibration.py -q` → 44 passed.
-- `python -m pytest -q` → **1054 passed** (77.2 s).
-- `python -m ruff check .` → clean. `python -m mypy railconfirm` → clean, 44 source files.
-- `python scripts/check_repository_hygiene.py` → passed (22 required files, 240 tracked files).
-- The crash path was reproduced with a standalone script against a fitted fixture before the
-  fix; the assertion message quoted above is from that run.
+- Before the first commit (the tri-state change): `pytest tests/training/test_calibration.py` →
+  44 passed; `pytest` over the whole backend → **1054 passed** (77.2 s); `ruff check .` clean;
+  `mypy railconfirm` clean, 44 source files; the hygiene script passed (22 required files, 240
+  tracked files).
+- After the second fix (the row count): `pytest tests/inference/test_calibration.py` → 49
+  passed; `pytest` over the whole backend → **1061 passed** (79.4 s); Ruff clean; mypy clean, 44
+  source files; the hygiene script passed.
+- Both defects were reproduced before they were fixed: the crash path with a standalone script
+  against a fitted fixture, and the loader with a six-value probe whose output is quoted above.
 
 ### Unresolved
 - A calibrated artifact whose locked period could not be scored is still written, and still

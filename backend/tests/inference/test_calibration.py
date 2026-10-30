@@ -190,6 +190,11 @@ def test_the_description_names_the_rows_and_period_behind_the_correction():
         ({"intercept": float("inf")}, "must be finite"),
         ({"slope": -0.01}, "must not be negative"),
         ({"fitted_rows": 0}, "at least one observation"),
+        # A row count that is not an integer is not a smaller count: "120" and null used
+        # to raise TypeError out of the loader, and 120.5 and True used to be accepted.
+        ({"fitted_rows": "120"}, "row count is an integer"),
+        ({"fitted_rows": 120.5}, "row count is an integer"),
+        ({"fitted_rows": True}, "row count is an integer"),
         ({"event_classes": ()}, "name the event classes"),
         ({"target": "departure_status"}, "whose event this build does not define"),
         # The event is a property of the target. A block naming one target while carrying
@@ -263,4 +268,19 @@ def test_a_block_declaring_another_event_for_the_same_target_is_refused_at_load(
     block = spec(1.0, 0.0).to_mapping()
     block["event_classes"] = ["CNF", "RAC"]
     with pytest.raises(ModelArtifactError, match="whose event is"):
+        spec_from_mapping(block, artifact_target="final_chart_cnf")
+
+
+@pytest.mark.parametrize("bad", ["120", None, 120.5, True])
+def test_a_malformed_row_count_is_refused_by_the_loader_and_not_raised_through_it(bad):
+    """A hand-edited artifact must be rejected, not crash the component reading it.
+
+    The registry catches `ModelArtifactError` and reports `artifact_invalid`; a `TypeError`
+    escapes it, so a malformed calibration block became an unhandled exception on the
+    resolution path rather than a refusal with a reason. A fraction and a boolean were
+    worse still: they were accepted as row counts that cannot exist.
+    """
+    block = spec(1.0, 0.0).to_mapping()
+    block["fitted_rows"] = bad
+    with pytest.raises(ModelArtifactError, match="row count is an integer"):
         spec_from_mapping(block, artifact_target="final_chart_cnf")
