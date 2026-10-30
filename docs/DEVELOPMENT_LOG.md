@@ -2209,3 +2209,71 @@ against the methods that produce the probabilities showed it was a scoring error
   is this ADR rather than a version a consumer could branch on.
 - Nothing above is evidence about railway behaviour. Every number comes from a synthetic frame.
 
+## 2026-10-30 — A report named one target and described another (ADR-0036)
+
+### Scope
+`backend/railconfirm/api/v1/predictions.py`, `railconfirm/api/v1/schemas.py`, the target table in
+`railconfirm/domain/prediction.py`, and `frontend/src/components/prediction/PassengerOutcomeCard.tsx`.
+The first task of the frontend/API parity workstream: compare what a report says it answers with
+what the request asked, field by field, instead of assuming the label and the arithmetic agree.
+
+### Changed
+- **`target_definition` was one hard-coded sentence for every target.** It read "Probability of
+each final-chart outcome for each passenger (CNF = …, RAC = …)", so a
+`final_chart_cnf_or_rac` response named the merged question and then described the confirmed
+one. `TARGET_DEFINITIONS` now lives in the domain beside `EVENT_CLASSES_BY_TARGET`, one sentence
+per target naming its own event, and the route reads it by the target it just scored.
+- **The merged event's probability was not published at all.** A client that wanted "confirmed or
+RAC" had to add `p_cnf` and `p_rac` itself, with its own rounding, and the browser never did:
+the card printed `p_cnf` under a heading that, for the merged target, also counts RAC, with the
+fine print "CNF and RAC … are not added together here" directly beneath a control that had asked
+for that sum. `PassengerOutcome.probability_of(classes)` now sums the classes an event covers from
+the one distribution the report published, the response publishes it as `p_target_event`, and the
+card renders it as the headline figure with an explanation that depends on the target.
+- **An unknown class name is refused, not skipped.** A typo in an event's class list would
+otherwise shrink the probability quietly — the failure mode where "confirmed or RAC" becomes
+"RAC". `probability_of` raises `ValueError` naming the unknown classes and the ones it knows,
+and an empty class list is refused too: it would return `0.0`, a certain non-outcome for a
+question that was never defined.
+- **`p_target_event` is null exactly when the passenger abstains**, the same rule the five class
+fields follow, so a client never prints 0% for an absent estimate.
+- The API contract, the ADR index and `CHANGELOG.md` were updated with the new field and the
+reworded definition; the ADR states that stored reports are not recomputed and keep the
+definition they were served with.
+
+### Found while writing the tests
+- Reproduction against the shared fixture artifact (`SL`/`GN`/`WL`, n=105): under
+`final_chart_cnf_or_rac` the response carried the CNF definition with `p_cnf = 0.645455` and
+`p_rac = 0.190909`, and no field held `0.836364` — the figure the evaluation scores for that
+target. The correct number existed only inside a client that chose to compute it.
+- The frontend never read `target_definition`; it labelled the card from its own `TARGET_LABELS`
+table. A response field that no client reads, and that is wrong when read, is a caption rather
+than a contract, which is why the wording moved into the domain next to the event classes
+instead of being fixed in one place and left to drift in another.
+- `p_target_event` is optional in the TypeScript type on purpose: a report stored before the
+field existed must still render, and the project's rule is that reopening shows what was served
+(ADR-0012), not a recomputation. The card keeps the headline block for such a report and prints
+`—` through the existing `formatProbability` path, which is how every absent figure already
+renders, rather than summing two classes into a figure the stored report never published.
+- The first frontend assertion used `getByText('64.5%')`, which matched both the headline and the
+class grid; the headline now carries `data-testid="target-event-probability"` and the tests
+assert its text content directly.
+
+### Checks run
+- `pytest tests/domain/test_prediction.py tests/api/test_contract.py` → **53 passed** (1.4 s).
+- `pytest tests/api tests/domain` → **143 passed** (3.4 s).
+- `pytest` over the whole backend → **1088 passed** (169.2 s).
+- `ruff check railconfirm/ tests/` clean; `mypy` clean, 44 source files; the hygiene script passed.
+- Frontend: `npm test` → **118 passed** (6 files); `npm run type-check`, `npm run lint` and
+`npm run build` all succeeded.
+
+### Unresolved
+- Nothing here is evidence about railway behaviour. The fixture artifact is synthetic, and its
+`0.836364` is an arithmetic check, not a prediction.
+- A report stored before this change keeps the old `target_definition` on reopen, by design. No
+migration rewrites stored payloads, so any future consumer that wants the corrected definition
+must generate a new report rather than reinterpret an old one.
+- The frontend still holds its own short labels (`TARGET_LABELS`) for the request control; those
+are UI copy for a choice, not a claim about an answer, and they now sit beside the served
+definition rather than replacing it.
+

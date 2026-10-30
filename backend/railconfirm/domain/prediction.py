@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import math
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
@@ -56,6 +56,25 @@ need that definition, and if any of them described the event differently the sam
 artifact would produce two numbers for one claim. It lives in the domain layer because
 it is a property of the target, not of any pipeline that consumes it; the training
 metrics re-export it as ``TARGET_EVENTS`` and keep the name reports already use."""
+
+
+TARGET_DEFINITIONS: dict[str, str] = {
+    PredictionTarget.FINAL_CHART_CNF.value: (
+        "Probability that the passenger is confirmed (CNF) at final chart "
+        "preparation. The per-passenger probabilities published beside it describe "
+        "the full outcome distribution this figure sums over."
+    ),
+    PredictionTarget.FINAL_CHART_CNF_OR_RAC.value: (
+        "Probability that the passenger is confirmed or at least RAC (classes CNF and "
+        "RAC) at final chart preparation. RAC is seated travel, not a berth, so this "
+        "event is broader than confirmed and never identical to it."
+    ),
+}
+"""What each target asks, in the words the API publishes.
+
+A served report that names a target and then describes a different question is not a
+contract, it is a caption. The definition lives beside the event classes it belongs to,
+so the text and the arithmetic cannot name different events (ADR-0036)."""
 
 
 FEATURE_SCHEMA_VERSION = "3.0.0"
@@ -214,6 +233,33 @@ class PassengerOutcome:
             outcome: float(getattr(self, field))
             for outcome, field in self._PROBABILITY_FIELDS.items()
         }
+
+    def probability_of(self, classes: Sequence[str]) -> float | None:
+        """The probability that this passenger's outcome is one of ``classes``.
+
+        A target's event is the sum of the classes it covers — the same arithmetic the
+        evaluation applies to the scored distribution — so serving it here keeps a
+        client from re-deriving the published figure with its own rounding. Returns
+        ``None`` when abstaining: an absent estimate is not 0.
+
+        An unknown class name is refused rather than skipped. A typo would otherwise
+        shrink the event silently, which is the failure mode where a probability of
+        confirmed-or-RAC quietly becomes a probability of RAC. An empty class list is
+        refused for the sharper version of the same reason: it would return 0.0, a
+        certain non-outcome, for an event that was never defined.
+        """
+        if not classes:
+            raise ValueError("an event must cover at least one outcome class.")
+        distribution = self.as_distribution()
+        if distribution is None:
+            return None
+        unknown = [name for name in classes if name not in self._PROBABILITY_FIELDS]
+        if unknown:
+            raise ValueError(
+                f"{unknown} are not outcome classes; the known classes are "
+                f"{sorted(self._PROBABILITY_FIELDS)}."
+            )
+        return sum(distribution[name] for name in classes)
 
     def with_distribution(self, distribution: Mapping[str, float]) -> PassengerOutcome:
         """The same outcome carrying a different distribution, basis kept for context.

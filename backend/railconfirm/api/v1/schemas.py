@@ -237,6 +237,16 @@ class PassengerOutcomeResponse(BaseModel):
         default=None,
         description="Probability of other recognized outcome. Null when abstaining.",
     )
+    p_target_event: float | None = Field(
+        default=None,
+        description=(
+            "Probability that this passenger's outcome is covered by the request's "
+            "target event: the CNF class for `final_chart_cnf`, the CNF and RAC classes "
+            "for `final_chart_cnf_or_rac`. It is the sum of the classes that event "
+            "covers, computed from the served distribution rather than re-derived by a "
+            "client. Null when abstaining, because an absent estimate is not zero."
+        ),
+    )
     is_supported: bool = Field(
         description="True if a probability estimate is available; False if abstaining.",
     )
@@ -288,7 +298,10 @@ class PredictionResponse(BaseModel):
         description="Prediction target this answer addresses, e.g. 'final_chart_cnf'.",
     )
     target_definition: str = Field(
-        description="Human-readable name of the prediction target.",
+        description=(
+            "What the target asks, in words: the event whose probability "
+            "`p_target_event` gives. It names the same event the target's classes do."
+        ),
     )
     prediction_at: datetime = Field(
         description="Offset-aware timestamp at which the prediction was made.",

@@ -35,6 +35,10 @@ from railconfirm.api.v1.schemas import (
 )
 from railconfirm.domain.journey import make_journey
 from railconfirm.domain.passenger import StatusObservation, make_observation
+from railconfirm.domain.prediction import (
+    EVENT_CLASSES_BY_TARGET,
+    TARGET_DEFINITIONS,
+)
 from railconfirm.domain.validation import ReasonCode
 from railconfirm.inference.engine import InferenceEngine
 from railconfirm.storage.predictions import PredictionStorageError, PredictionStore
@@ -136,6 +140,7 @@ async def predict_manual(
     )
 
     # ── Build per-passenger response objects ───────────────────────────────────
+    target_event_classes = EVENT_CLASSES_BY_TARGET[request.target.value]
     passenger_responses: list[PassengerOutcomeResponse] = []
     for inp, outcome in zip(
         passenger_inputs, prediction.passenger_outcomes, strict=True
@@ -161,6 +166,7 @@ async def predict_manual(
                 p_wl=outcome.p_wl,
                 p_cancelled=outcome.p_cancelled,
                 p_other=outcome.p_other,
+                p_target_event=outcome.probability_of(target_event_classes),
                 is_supported=outcome.is_supported(),
                 abstention_reason=(
                     outcome.abstention_reason.value
@@ -193,12 +199,7 @@ async def predict_manual(
     response = PredictionResponse(
         prediction_id=prediction.prediction_id,
         target=prediction.target.value,
-        target_definition=(
-            "Probability of each final-chart outcome for each passenger "
-            "(CNF = confirmed berth, RAC = Reservation Against Cancellation, "
-            "WL = waitlisted, CANCELLED = cancelled, OTHER = other outcome). "
-            "These are mutually exclusive and exhaustive over the supported population."
-        ),
+        target_definition=TARGET_DEFINITIONS[prediction.target.value],
         prediction_at=prediction.prediction_at,
         created_at=prediction.created_at,
         model_version=prediction.model_version,

@@ -73,7 +73,7 @@ Response (`200`, shown in the current abstaining state):
 {
   "prediction_id": "6b1d1c2e-…",
   "target": "final_chart_cnf",
-  "target_definition": "Probability of each final-chart outcome for each passenger …",
+  "target_definition": "Probability that the passenger is confirmed (CNF) at final chart preparation. …",
   "prediction_at": "2026-10-21T08:00:00Z",
   "created_at": "2026-10-23T04:10:22.119289Z",
   "model_version": "no_model_v0",
@@ -94,6 +94,7 @@ Response (`200`, shown in the current abstaining state):
       "p_wl": null,
       "p_cancelled": null,
       "p_other": null,
+      "p_target_event": null,
       "is_supported": false,
       "abstention_reason": "no_trained_model",
       "basis": null,
@@ -122,6 +123,7 @@ Reading the response:
 
 - `evidence_coverage` is `sufficient` when every passenger has an estimate, `partial` when some do, and `insufficient` when none do. Top-level `is_supported` means *at least one* passenger has an estimate; a mixed group is `partial`, not `sufficient`.
 - Per-passenger probabilities are all `null` exactly when `is_supported` is `false`, and all non-`null` and summing to 1.0 when it is `true`. A client must not coerce a `null` probability into `0`.
+- `target_definition` names the event the answer is about, and `p_target_event` is that event's probability for the passenger: the `CNF` class for `final_chart_cnf`, the `CNF` and `RAC` classes for `final_chart_cnf_or_rac`. The server sums the classes it published, so a client renders the figure the evaluation scores instead of re-deriving it; `p_target_event` is `null` exactly when the passenger abstains (ADR-0036). A report stored before the field existed reopens with the definition it was served with and no `p_target_event`, rather than being recomputed.
 - `basis` names the evidence cohort and its sample size, says whether a broad-cohort fallback was used, and — when the served artifact carries one — records `calibrated=platt_logistic_v1`. A fallback is a weaker claim than a cohort match. The cohort is `(class_code, quota_code, as-of status)`, the same key the baseline was fitted under (ADR-0013, ADR-0017).
 - When the active artifact declares the position estimator (ADR-0020), `basis` also names the queue-position band that answered — `band=8-15 n=41 position-aware cell used` — or records why the cohort answered instead: `band=8-15 n=1 below the 2-row band floor, cohort rate used`, or `as-of queue position unavailable; cohort rate used`. A request never receives a band label it cannot interpret, and a reader can tell a position answer from a cohort answer without seeing the artifact.
 - `limitations` carries the calibration statement in full: method, fitted partition, row count, period, slope and intercept, and that the split between the classes inside the event keeps the model's own proportions. Uncalibrated artifacts keep the existing "Probabilities are not calibrated" limitation instead; the two are mutually exclusive.
@@ -263,4 +265,5 @@ Recent contract changes:
 - `persist` on the request and `stored` / `report_url` / `retention_expires_at` on the response added, with `GET /v1/predictions/{prediction_id}` and `prediction_history` in `/v1/health`; nothing is stored unless the server enables history *and* the request asks. ADR-0012.
 - A served probability can now be the output of a calibration layer: when the active artifact declares one, `p_*` values are the corrected ones, `basis` records `calibrated=platt_logistic_v1`, and `limitations` names the fitted partition, rows, period and both parameters. ADR-0017.
 - Two estimators can now serve. Which one is decided by the artifact's `estimator` and `artifact_format`, and the response shape does not change: `model_version`, `feature_schema_version`, `basis` and `p_*` mean the same thing for either. What differs is `basis`, which names the position band when one answered, and `limitations`, which for a position artifact states the band floor and how many fitted rows carried no position. An artifact whose declared estimator, format, band block and `features_used` do not agree is refused at load and the request abstains with `model_artifact_invalid` (ADR-0020).
+- Per-passenger `p_target_event` added, and `target_definition` now names the requested target's event rather than describing the five-class distribution whatever the target was. The addition is backward compatible: the field defaults to `null`, so a report stored under the previous contract still validates and reopens unchanged. ADR-0036.
 - `basis` now names the cohort keyed by the **as-of status**: for a served request that is `current_status`, the latest status the caller supplies at or before `prediction_at` (in dataset rows the same rule reads `current_status` and falls back to `initial_status` when the source recorded no later look). `feature_schema_version` reports the schema this build derives (`3.0.0` today) on every record, including one that abstains, and an artifact whose declared feature schema or status mapping differs from this build is refused at load rather than served: the cohort key's third part is that normalized status, so a table counted under another derivation would be read with a rule it was never keyed by (ADR-0034). A request whose as-of status has no exact cohort is answered from the broad class/quota cohort or abstains, and an artifact whose declared `cohort_semantics` differs from this build is refused at load rather than reinterpreted. ADR-0013.

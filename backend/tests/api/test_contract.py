@@ -72,6 +72,33 @@ def test_response_echoes_the_requested_target(client: TestClient):
     assert all(o["p_cnf"] is None for o in body["passenger_outcomes"])
 
 
+def test_the_definition_describes_the_event_the_target_names(client: TestClient):
+    """A report that names one question and describes another is not a contract.
+
+    The served definition used to describe the full five-class distribution whatever the
+    target was, so a `final_chart_cnf_or_rac` request was captioned with the confirmed
+    question. Each answer now names the event its own classes cover.
+    """
+    definitions = {
+        target: client.post(PREDICTION_URL, json=valid_payload(target=target))
+        .json()["target_definition"]
+        for target in ("final_chart_cnf", "final_chart_cnf_or_rac")
+    }
+    confirmed = definitions["final_chart_cnf"]
+    merged = definitions["final_chart_cnf_or_rac"]
+    assert "confirmed (CNF)" in confirmed
+    assert "RAC" not in confirmed
+    assert "CNF" in merged and "RAC" in merged
+    assert merged != confirmed
+
+
+def test_an_abstaining_outcome_publishes_no_target_event_probability(client: TestClient):
+    body = client.post(PREDICTION_URL, json=valid_payload()).json()
+    for outcome in body["passenger_outcomes"]:
+        assert "p_target_event" in outcome
+        assert outcome["p_target_event"] is None
+
+
 def test_rejected_target_value_is_a_validation_error(client: TestClient):
     response = client.post(PREDICTION_URL, json=valid_payload(target="departure_cnf"))
     assert response.status_code == 422
@@ -127,6 +154,25 @@ def test_injected_ready_artifact_serves_estimates_through_the_api(
     assert outcome["is_supported"] is True
     assert outcome["basis"] == "cohort=SL/GN/WL n=105 exact_status_match=true"
     assert body["group_outcome"]["method"] == "single_passenger"
+    # The target's event is published beside the distribution, so a client shows the
+    # figure the evaluation scores instead of adding classes itself.
+    assert outcome["p_target_event"] == pytest.approx(outcome["p_cnf"])
+
+
+def test_a_merged_target_serves_confirmed_or_rac_as_its_event(make_client, tmp_path):
+    """`final_chart_cnf_or_rac` must answer with CNF plus RAC, not with confirmed alone."""
+    write(tmp_path, target="final_chart_cnf_or_rac")
+    engine = InferenceEngine(
+        registry=ModelRegistry(models_dir=tmp_path, active_version="fixture_v1")
+    )
+    body = make_client(engine).post(
+        PREDICTION_URL, json=valid_payload(target="final_chart_cnf_or_rac")
+    ).json()
+    outcome = body["passenger_outcomes"][0]
+    assert body["registry_status"] == "ready"
+    assert outcome["is_supported"] is True
+    assert outcome["p_target_event"] == pytest.approx(outcome["p_cnf"] + outcome["p_rac"])
+    assert outcome["p_target_event"] > outcome["p_cnf"]
 
 
 # ── Temporal rules at the boundary ─────────────────────────────────────────────
@@ -377,6 +423,10 @@ def test_openapi_documents_the_verified_fields(client: TestClient):
     props = schema["components"]["schemas"][name]["properties"]
     assert set(props) == {"journey", "prediction_at", "target", "passengers", "persist"}
     assert "basis" in schema["components"]["schemas"]["PassengerOutcomeResponse"]["properties"]
+    assert (
+        "p_target_event"
+        in schema["components"]["schemas"]["PassengerOutcomeResponse"]["properties"]
+    )
     response_props = schema["components"]["schemas"]["PredictionResponse"]["properties"]
     assert "registry_status" in response_props
     for field in ("stored", "report_url", "retention_expires_at"):

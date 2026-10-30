@@ -78,6 +78,10 @@ export function PredictionResult({ result, onReset }: PredictionResultProps) {
           </Row>
         </dl>
 
+        {result.target_definition && (
+          <p className="mt-3 text-[11px] text-gray-500">{result.target_definition}</p>
+        )}
+
         {result.stored && (
           <p className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
             <span className="font-semibold">Kept on this machine.</span> Reopen it later
@@ -105,6 +109,7 @@ export function PredictionResult({ result, onReset }: PredictionResultProps) {
               key={outcome.passenger_id || index}
               index={index}
               outcome={outcome}
+              target={result.target}
             />
           ))}
         </div>

@@ -40,6 +40,7 @@ const supportedOutcome: PassengerOutcome = {
   p_wl: 0.1000001,
   p_cancelled: 0.0545454,
   p_other: 0.0090909,
+  p_target_event: 0.6454545,
   is_supported: true,
   abstention_reason: null,
   basis: 'cohort=SL/GN/WL n=105 exact_status_match=true',
@@ -56,6 +57,7 @@ const abstainingOutcome: PassengerOutcome = {
   p_wl: null,
   p_cancelled: null,
   p_other: null,
+  p_target_event: null,
   is_supported: false,
   abstention_reason: 'no_approved_data',
   basis: null,
@@ -102,7 +104,9 @@ const response = (overrides: Partial<PredictionResponse> = {}): PredictionRespon
 
 describe('PassengerOutcomeCard', () => {
   it('shows both observed statuses, which the old shape never rendered', () => {
-    const { container } = render(<PassengerOutcomeCard index={0} outcome={supportedOutcome} />);
+    const { container } = render(
+      <PassengerOutcomeCard index={0} outcome={supportedOutcome} target="final_chart_cnf" />,
+    );
     const text = container.textContent ?? '';
     expect(text).toContain('As booked:');
     expect(text).toContain('Observed now:');
@@ -111,20 +115,65 @@ describe('PassengerOutcomeCard', () => {
   });
 
   it('renders the evidence cohort and sample size', () => {
-    render(<PassengerOutcomeCard index={0} outcome={supportedOutcome} />);
+    render(
+      <PassengerOutcomeCard index={0} outcome={supportedOutcome} target="final_chart_cnf" />,
+    );
     expect(screen.getByText(/105 historical records/)).toBeInTheDocument();
   });
 
   it('surfaces parse warnings from the server', () => {
-    render(<PassengerOutcomeCard index={0} outcome={abstainingOutcome} />);
+    render(
+      <PassengerOutcomeCard index={0} outcome={abstainingOutcome} target="final_chart_cnf" />,
+    );
     expect(screen.getByText(/is not verified/)).toBeInTheDocument();
   });
 
   it('shows an abstention with its own reason, not a zeroed distribution', () => {
-    render(<PassengerOutcomeCard index={0} outcome={abstainingOutcome} />);
+    render(
+      <PassengerOutcomeCard index={0} outcome={abstainingOutcome} target="final_chart_cnf" />,
+    );
     expect(screen.getByRole('status', { name: 'Estimate not available' })).toBeInTheDocument();
     expect(screen.getByText(/no historical dataset has been approved/i)).toBeInTheDocument();
     expect(screen.queryByText(/64\.5%/)).not.toBeInTheDocument();
+  });
+
+  it('headlines the target event the server computed', () => {
+    const confirmed = render(
+      <PassengerOutcomeCard index={0} outcome={supportedOutcome} target="final_chart_cnf" />,
+    );
+    expect(confirmed.getByText('Chance of a confirmed berth')).toBeInTheDocument();
+    expect(confirmed.getByTestId('target-event-probability').textContent).toBe('64.5%');
+    confirmed.unmount();
+
+    const merged = render(
+      <PassengerOutcomeCard
+        index={0}
+        outcome={{ ...supportedOutcome, p_target_event: 0.8363635 }}
+        target="final_chart_cnf_or_rac"
+      />,
+    );
+    expect(merged.getByText('Chance of CNF or RAC')).toBeInTheDocument();
+    // 83.6 is the sum the server published, not 64.5 re-labelled as the merged event.
+    expect(merged.getByTestId('target-event-probability').textContent).toBe('83.6%');
+  });
+
+  it('shows the merged target does not claim two outcomes are the same thing', () => {
+    const { container } = render(
+      <PassengerOutcomeCard index={0} outcome={supportedOutcome} target="final_chart_cnf_or_rac" />,
+    );
+    const text = container.textContent ?? '';
+    expect(text).toContain('combined only in the figure above');
+    expect(text).not.toContain('not added together');
+  });
+
+  it('shows a dash rather than a number when a stored report predates the figure', () => {
+    const older = { ...supportedOutcome };
+    delete older.p_target_event;
+    const { container, getByTestId } = render(
+      <PassengerOutcomeCard index={0} outcome={older} target="final_chart_cnf" />,
+    );
+    expect(container.textContent).toContain('Chance of a confirmed berth');
+    expect(getByTestId('target-event-probability').textContent).toBe('—');
   });
 });
 

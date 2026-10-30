@@ -78,6 +78,14 @@ export interface PassengerOutcome {
   p_wl: number | null;
   p_cancelled: number | null;
   p_other: number | null;
+  /**
+   * Probability that this passenger's outcome is covered by the request's target
+   * event: CNF for `final_chart_cnf`, CNF or RAC for `final_chart_cnf_or_rac`. The
+   * server sums the classes, so the browser must not re-derive it. Null when
+   * abstaining — and absent on a report stored before the field existed, which is why
+   * it is optional: an older kept report is shown as it was served, not recomputed.
+   */
+  p_target_event?: number | null;
   is_supported: boolean;
   abstention_reason: AbstentionReason | null;
   /** Evidence cohort and sample size, e.g. "cohort=SL/GN/WL n=105 exact_status_match=true". */
