@@ -1587,3 +1587,100 @@ Changed: `inference/baseline.py`, `inference/artifacts.py`, `inference/engine.py
 - `min_band_rows` has no CLI flag; it is settable through the fitting API and recorded on the
   artifact. Documented as such rather than implied.
 
+## 2026-10-30 — Hardening sweep: refusals instead of coercions, and a cross-stack gate (ADR-0022 to ADR-0027)
+
+### Scope
+End-to-end audit of the implemented foundation with the directive "harden what already
+exists before adding more": calibration identity, model comparison, group arithmetic, queue
+bands, the prediction horizon, and then a check that actually starts both halves of the
+product. Every defect below was reproduced against the running code before it was changed.
+
+### Changed
+- **Calibration identity (ADR-0022).** A calibration block could declare `target:
+  final_chart_cnf` with `event_classes: [CNF, RAC]`, and the same artifact then produced
+  `0.103448` on the served path and `0.058824` on the scored path — one artifact, two numbers
+  for one claim. The target → event table now lives in the domain module and is read by
+  fitting, scoring and serving; a contradictory or unknown target, an empty event and any
+  partition other than `validation` are refused at construction.
+- **Comparison identity (ADR-0023).** `run_model_comparison` stamped the dataset's id and hash
+  into its report without checking either model against it, and compared partitions by
+  `(name, start_date, end_date, row_count)` only — while the scoring loop walked the
+  *baseline's* frames for both models. Matching dates and counts are not the same rows. Both
+  models must now name the `(dataset_id, sha256)` pair, each partition's rows are
+  fingerprinted in stored order, and `pair_scores` refuses a repeated position. The verdict
+  rule is unchanged: refusals only.
+- **Group arithmetic (ADR-0024).** Marginals were clamped into range before being tested, so
+  `1.5` and `NaN` contributed certainty; an unknown method name fell through to the
+  independence branch and returned a product of marginals under a name the module does not
+  implement; and `GroupOutcome` validated nothing, so `P(all CNF) = 0.7` beside
+  `P(all CNF or RAC) = 0.6` was constructible and the two count tables could disagree about
+  the same event. Invalid input now raises `ProbabilityError` naming the passenger, the
+  method list is closed, and every joint figure and count-table entry is checked on
+  construction.
+- **Queue bands (ADR-0025).** A band cell labelled `1-3` or `128` loaded, counted towards
+  `band_count` and was written back, though `position_band` can never return it; the key's
+  status part was never validated; and a band cell whose cohort has no row loaded too, which
+  `estimate` can never reach. Labels are now derived from `band_labels()`, the cohort part
+  uses the cohort table's own rule, and `validate_band_cohorts` refuses orphans in
+  `load_tables`, `build_artifact_document` and `load_artifact`. The shared position fixture
+  was itself built on orphan `ALL` cells and was corrected.
+- **Prediction horizon (ADR-0026).** Serving has always refused a `prediction_at` on or after
+  the journey date; the row contract refused only `observation_date > journey_date`, so a
+  record observed *on* its journey date was fitted with `lead_days = 0` — the one horizon the
+  service will not answer, and the one a date-only record cannot order against the final
+  chart. `MIN_LEAD_DAYS = 1` is now imported by both paths, same-day observations are refused
+  under their own reason (`observation_on_journey_date`) and counted separately from
+  `date_order_violations`, and the row contract is versioned (`1.1.0`) with every report
+  naming the version it applied.
+- **Cross-stack gate (ADR-0027).** `scripts/smoke_full_stack.py` starts the API under uvicorn
+  and the production frontend build under `next start` on loopback ports and checks health, an
+  abstention, a field-level refusal, the same-day horizon refusal, store / reopen / list /
+  delete / delete-again, a PNR-shaped id, an unrouted path, the CORS preflight and the rendered
+  pages; it fails when no built chunk names the backend it started, and runs the client's own
+  `api.ts` against that server via `npm run test:live`. CI runs it as a fourth job and uploads
+  the server logs on failure. `scripts/` is now linted under the declared Ruff config.
+
+### Found by running it, not by reading it
+- **jsdom made every live client call look like an outage.** `api.ts` wraps each request in an
+  `AbortController`; under jsdom that controller is jsdom's while `fetch` is Node's, and Node's
+  fetch rejects a foreign `AbortSignal` with `TypeError: RequestInit: Expected signal
+  ("AbortSignal {}") to be an instance of AbortSignal`. The client reported that as a network
+  failure, so all five live checks failed with "the backend may not be running" while the
+  backend was running and answering. The live suite runs in the `node` environment now.
+- **A suite that skips is a suite that passes.** The first draft of the live file skipped
+  itself when `RAILCONFIRM_LIVE_API_URL` was unset, and `npm test` would have collected it in
+  every offline run. The config now throws without the variable, the file repeats the refusal,
+  and `npm test` excludes it.
+
+### Checks run
+- `python -m pytest tests/ -q --cov=railconfirm --cov-fail-under=90` → **1043 passed**, total
+  coverage **96.18%** (exit 0). One earlier run reported five failures in
+  `tests/api/test_prediction_history.py` and `tests/api/test_contract.py`; they were caused by
+  `RAILCONFIRM_PERSIST_PREDICTIONS` and `RAILCONFIRM_STORAGE_DIR` left set in the developer
+  shell by the smoke script's manual run, not by the code — both files pass (60 tests) once
+  those variables are cleared, and CI never sets them.
+- `ruff check railconfirm/ tests/` → clean. `mypy` → clean, 44 source files.
+  `ruff check --config backend/pyproject.toml scripts/` → clean.
+- `python scripts/check_repository_hygiene.py` → 22 required files, 238 tracked files scanned.
+- `npm test` → 115 passed, 6 files. `npx vitest run --config vitest.live.config.ts` → 5 passed
+  against a running backend.
+- `python scripts/smoke_full_stack.py` → **11 checks passed** (eight backend, the client suite,
+  two frontend pages) against a production build made with
+  `NEXT_PUBLIC_API_URL=http://127.0.0.1:8010`.
+- CI verified independently with `gh run list`: success through `127a254`. The run for the
+  smoke-gate commit is the evidence for the new job and is recorded in the commit that
+  follows this entry.
+
+### Decisions
+- ADR-0022, ADR-0023, ADR-0024, ADR-0025, ADR-0026, ADR-0027.
+- Where a value could be coerced into range or a label into a near neighbour, the choice was to
+  refuse: a coerced number is a claim nobody made.
+
+### Unresolved
+- No browser runs in CI. Interactions, focus order, screen-reader output and visual regression
+  are unverified end to end; `npm run test:live` proves the client's request/response handling,
+  not how a page behaves.
+- Dataset research is the standing blocker and is unchanged by this sweep: no candidate has
+  cleared the intake checklist, so every requirement above is still verified only against
+  synthetic fixtures.
+

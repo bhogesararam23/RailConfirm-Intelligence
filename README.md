@@ -4,7 +4,7 @@ An evidence-driven Indian Railways ticket confirmation probability predictor for
 
 RailConfirm is developed as both an open research project and a web application. The goal is not to produce a percentage that looks arbitrarily precise; the goal is to estimate meaningful probabilities, evaluate them against real outcomes, and be transparent about where the model does and does not have sufficient evidence.
 
-> **Current status:** A local-first application core exists and is tested — FastAPI backend, Next.js frontend, domain contracts, a dataset intake pipeline whose training gate enforces **technical eligibility** and passes on only validated rows, reproducible baseline fitting with target-event scoring, **rolling-origin evaluation** and **frozen-artifact decay** across successive horizons, dependent group outcome distributions with queue-clearing bounds, an opt-in logistic **calibration** layer measured on a locked test, **two estimators** — the cohort frequency table and a cohort model that also reads the as-of queue position — a **paired model comparison** that decides between them only on the locked period, a validated model registry, and opt-in prediction history (947 backend tests, 96.2% branch coverage, CI green). **No prediction is produced yet and nothing has been validated against real railway data,** because no candidate dataset has cleared the intake checklist and no artifact is promoted. The system therefore returns a structured abstention (`no_trained_model`, `registry_status: no_active_version`) to every request, which is the intended behaviour rather than a placeholder. The frontend is written against the shipped contract, with 115 tests, and both the abstaining and supported paths have been exercised against a locally running backend; see `docs/PROJECT_STATUS.md`. External live data integrations remain planned core capabilities in roadmap Phases 8–10 (ADR-0008).
+> **Current status:** A local-first application core exists and is tested — FastAPI backend, Next.js frontend, domain contracts, a dataset intake pipeline whose training gate enforces **technical eligibility** and passes on only validated rows, reproducible baseline fitting with target-event scoring, **rolling-origin evaluation** and **frozen-artifact decay** across successive horizons, dependent group outcome distributions with queue-clearing bounds, an opt-in logistic **calibration** layer measured on a locked test, **two estimators** — the cohort frequency table and a cohort model that also reads the as-of queue position — a **paired model comparison** that decides between them only on the locked period, a validated model registry, and opt-in prediction history (1043 backend tests, 96.2% branch coverage, CI green). **No prediction is produced yet and nothing has been validated against real railway data,** because no candidate dataset has cleared the intake checklist and no artifact is promoted. The system therefore returns a structured abstention (`no_trained_model`, `registry_status: no_active_version`) to every request, which is the intended behaviour rather than a placeholder. The frontend is written against the shipped contract, with 115 tests, and CI starts both processes for real — a production frontend build against a running backend, over sockets — as a fourth job that also drives the client's own request-building module against the live server (ADR-0027); see `docs/PROJECT_STATUS.md`. External live data integrations remain planned core capabilities in roadmap Phases 8–10 (ADR-0008).
 
 ## Quickstart (Local Development)
 
@@ -25,7 +25,7 @@ source .venv/bin/activate       # On Linux/macOS
 
 pip install -e ".[dev]"
 
-# Test suite (947 tests, no live API dependencies) with coverage floor
+# Test suite (1043 tests, no live API dependencies) with coverage floor
 pytest tests/ --cov=railconfirm --cov-fail-under=90
 
 # Lint and type-check, both configured in pyproject.toml
@@ -47,6 +47,7 @@ cd frontend
 npm ci
 npm run type-check
 npm run lint
+npm test                        # 115 tests, no backend needed; the live cross-stack suite has its own command (section 4)
 npm run dev
 ```
 
@@ -68,7 +69,33 @@ cd ..
 python scripts/check_repository_hygiene.py                  # docs links, secrets, PNR-shaped data
 ```
 
-### 4. Fitting and evaluation
+### 4. Full-stack check
+
+CI runs this on every push, and it is the only check that starts both halves of the
+product (ADR-0027). Build the frontend against the backend origin it will start, then
+run the script from the repository root:
+
+```bash
+cd frontend
+npm ci
+NEXT_PUBLIC_API_URL=http://127.0.0.1:8010 npm run build
+cd ..
+python scripts/smoke_full_stack.py                # backend + frontend + client suite
+python scripts/smoke_full_stack.py --skip-frontend # backend + client suite only
+```
+
+It starts the API on `127.0.0.1:8010` with prediction history enabled, checks health,
+an abstention, a field-level refusal, the same-day horizon refusal, the store / reopen /
+list / delete round trip, a PNR-shaped id, an unrouted path and the CORS preflight, then
+starts the production build on `127.0.0.1:3010` and fetches its pages. It also asserts
+that the built bundle names the backend it just started, and runs
+`npm run test:live` — the client's own `src/lib/api.ts` against that server.
+
+What it does not do: no browser runs, so the pages are checked for content only and a
+JavaScript-only failure would still pass; and with no promoted artifact every prediction
+must abstain, so this says nothing about railway accuracy.
+
+### 5. Fitting and evaluation
 
 ```bash
 cd backend

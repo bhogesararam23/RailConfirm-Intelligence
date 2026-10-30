@@ -42,6 +42,7 @@ This boundary does not mean research agents may never browse websites. Agent-ass
 - Tests must use fixtures or explicitly configured local data.
 - No test should call a live provider by default.
 - External dependency switches, if introduced for later work, must default to disabled and require a documented ADR.
+- The cross-stack smoke check (`scripts/smoke_full_stack.py`, ADR-0027) binds loopback only and fetches nothing off the machine: it starts two local processes and talks to them over `127.0.0.1`. Nothing in it needs a credential, a provider or an internet connection, which is why it can be a CI gate rather than an opt-in test.
 - Do not add API keys to .env.example with real values or commit secrets.
 
 ## Data directory policy

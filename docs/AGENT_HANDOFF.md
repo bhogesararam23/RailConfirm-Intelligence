@@ -16,7 +16,7 @@ Do not assume any of the following exist, because none do: an accuracy figure, a
 |---|---|---|
 | Domain contracts, status mapping v1.1.0, temporal integrity rules, abstention reasons, API contract and error envelope (including unrouted paths), dataset loader/validator/manifest/verification, a training gate that enforces **technical eligibility** and passes on only validated rows, chronological splitting, **rolling-origin evaluation with per-cutoff refitting**, **frozen-artifact decay across successive horizons (ADR-0018)**, **paired baseline-vs-candidate comparison judged on the locked period (ADR-0021)**, one shared as-of status rule across fit/score/serve, **two estimators behind one response shape, with a second artifact format and load-time estimator/format/band agreement (ADR-0020)**, artifact registry with promotion gate and load-time cohort-contract check, baseline fitting and target-event evaluation with deterministic reports, **logistic calibration fitted on the validation partition, embedded only when it strictly improves it and always measured on the locked test (ADR-0017)**, **subgroup calibration measured per segment with a row floor on the claim (ADR-0019)**, opt-in prediction history with list and per-row deletion, **group outcome distribution & queue-clearing bounds (ADR-0016)**, **group-event scoring in scorecards**, frontend written and tested against the shipped contract, CI | Historical-frequency baseline and the cohort-position estimator (neither ever loaded with real data), the training and evaluation pipeline (never run on approved data), calibration (fitted only on labelled synthetic rows, so no railway probability has ever been corrected), frozen-artifact decay (the ordering is measurable now, but only ever over synthetic periods), group outcomes (Poisson-binomial baseline and queue bounds, never evaluated on real multi-passenger data), prediction history (never enabled by default, so untested against concurrent real users) | A per-segment calibration correction, empirical copula/correlation group model, label feedback on stored reports, approved dataset, promoted artifact |
 
-947 backend tests at 96.17% branch coverage, 115 frontend tests. CI was green on `main` at the last recorded push — re-check rather than trust this line.
+1043 backend tests at 96.18% branch coverage, 115 frontend tests, 5 live cross-stack tests behind their own command. CI runs four jobs, one of which starts the real API and a production frontend build and checks them over sockets (ADR-0027). It was green on `main` at the last recorded push — re-check rather than trust this line.
 
 ## Read first
 
@@ -26,7 +26,7 @@ Do not assume any of the following exist, because none do: an accuracy figure, a
 4. `docs/ROADMAP.md`
 5. `docs/architecture/API_CONTRACT.md` — matches the shipped surface
 6. `docs/data/DATA_CONTRACT.md` and `docs/data/DATASET_INTAKE_CHECKLIST.md`
-7. ADR index, especially ADR-0007 (local-first boundary), ADR-0008 (future integration phases), ADR-0009 (artifact trust boundaries), ADR-0010 (declared check configurations), ADR-0011 (training gate and target-event scoring), ADR-0012 (prediction history and its retention rules), ADR-0013 (the eligibility-enforced gate and the single as-of cohort rule), ADR-0014 (rolling-origin evaluation and what a single cutoff cannot show), ADR-0015 (history listing and per-row deletion), and ADR-0016 (dependent group outcomes, Poisson-binomial distribution, queue bounds, and group evaluation), and ADR-0017 (logistic calibration fitted on validation, embedded only when it helps, always measured on the locked test) and ADR-0018 (frozen-artifact decay: the artifact's own cutoff, one frozen baseline, two horizons minimum), and ADR-0019 (subgroup calibration measured per segment, with the row floor that decides what may be claimed from it), and ADR-0020 (the second estimator: cohort cells split by fixed as-of queue position bands, and the artifact contract that keeps the two apart), and ADR-0021 (the paired comparison: one split or no comparison, rows paired by position, coverage as a condition, verdict on the locked period only)
+7. ADR index, especially ADR-0007 (local-first boundary), ADR-0008 (future integration phases), ADR-0009 (artifact trust boundaries), ADR-0010 (declared check configurations), ADR-0011 (training gate and target-event scoring), ADR-0012 (prediction history and its retention rules), ADR-0013 (the eligibility-enforced gate and the single as-of cohort rule), ADR-0014 (rolling-origin evaluation and what a single cutoff cannot show), ADR-0015 (history listing and per-row deletion), and ADR-0016 (dependent group outcomes, Poisson-binomial distribution, queue bounds, and group evaluation), and ADR-0017 (logistic calibration fitted on validation, embedded only when it helps, always measured on the locked test) and ADR-0018 (frozen-artifact decay: the artifact's own cutoff, one frozen baseline, two horizons minimum), and ADR-0019 (subgroup calibration measured per segment, with the row floor that decides what may be claimed from it), and ADR-0020 (the second estimator: cohort cells split by fixed as-of queue position bands, and the artifact contract that keeps the two apart), and ADR-0021 (the paired comparison: one split or no comparison, rows paired by position, coverage as a condition, verdict on the locked period only), and ADR-0026 (the eligible prediction horizon is one clear day, enforced by the gate and by serving from one constant) and ADR-0027 (the cross-stack smoke gate: two real processes, the client's own module, and no suite that skips itself)
 8. `docs/research/EVALUATION_PROTOCOL.md` before writing any metric code
 
 ## Working here
@@ -44,7 +44,17 @@ python -m railconfirm.training decay ... --artifact models/<v>.json  # one froze
 cd ..
 python scripts/check_repository_hygiene.py
 cd frontend && npm ci && npm test && npm run type-check && npm run lint && npm run build
+# cross-stack, from the repository root; needs the build above with the backend origin inlined
+NEXT_PUBLIC_API_URL=http://127.0.0.1:8010 npm --prefix frontend run build
+python scripts/smoke_full_stack.py
 ```
+
+The smoke script is the only check that starts both halves together (ADR-0027). It uses
+fixed loopback ports (backend 8010, frontend 3010) because the frontend inlines its API
+origin at build time; `--skip-frontend` and `--skip-client` narrow it when one half is
+not the thing you changed, and `RAILCONFIRM_SMOKE_LOG_DIR` keeps the server logs.
+`npm test` excludes `src/lib/__tests__/liveApi.test.ts` on purpose — that file needs a
+server, and it refuses to run rather than skipping.
 
 Run the app locally: `uvicorn railconfirm.api.app:app --port 8000` from `backend/`, then
 `npm run dev` from `frontend/`. The backend allows CORS only from origins listed in

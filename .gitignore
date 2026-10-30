@@ -67,6 +67,10 @@ htmlcov/
 .coverage
 coverage.xml
 
+# Cross-stack smoke output (RAILCONFIRM_SMOKE_LOG_DIR): server logs and a throwaway
+# prediction store, kept only so a failure can be inspected
+smoke-logs/
+
 # Research pipeline outputs
 reports/
 experiments/

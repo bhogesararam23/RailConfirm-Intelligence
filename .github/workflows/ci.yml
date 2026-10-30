@@ -99,6 +99,68 @@ jobs:
           # No real API endpoint during CI build — the frontend must build without a live backend
           NEXT_PUBLIC_API_URL: http://localhost:8000
 
+  full-stack-smoke:
+    name: Full-stack — real backend, real frontend build, real sockets
+    runs-on: ubuntu-latest
+
+    # This job exists because the three jobs above can all pass while the two halves
+    # disagree: the backend tests use FastAPI's test client, the frontend tests mock
+    # fetch, and neither notices a changed field name, a different error envelope or a
+    # build pointed at the wrong origin. Here both processes start for real and the
+    # client's own request-building code is what the server answers.
+    #
+    # No browser runs, so page interaction is still unverified. No model is promoted,
+    # so every prediction here must abstain — the smoke asserts that it does.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      # Runtime dependencies only: the smoke drives the server, it does not measure
+      # it, so pytest, ruff and mypy are not installed here.
+      - name: Install the backend
+        working-directory: backend
+        run: |
+          pip install uv
+          uv venv .venv
+          source .venv/bin/activate
+          uv pip install -e .
+
+      - name: Install and build the frontend against the smoke's backend origin
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+        env:
+          # Inlined into the bundle at build time. The smoke checks the built bundle
+          # names exactly this origin, so a mismatch fails the run instead of quietly
+          # testing two servers that never talk to each other.
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8010
+
+      - name: Start both servers and check them over a socket
+        run: backend/.venv/bin/python scripts/smoke_full_stack.py
+        env:
+          # Kept rather than discarded, so the upload step below has something to send.
+          RAILCONFIRM_SMOKE_LOG_DIR: smoke-logs
+
+      - name: Upload the server logs when the smoke fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-stack-smoke-logs
+          path: smoke-logs/
+          if-no-files-found: ignore
+
   repository-hygiene:
     name: Documentation, privacy and link checks
     runs-on: ubuntu-latest
@@ -113,6 +175,15 @@ jobs:
 
       - name: Run repository hygiene checks
         run: python scripts/check_repository_hygiene.py
+
+      - name: Lint the repository scripts
+        # `scripts/` holds the gates themselves, so a defect there weakens every other
+        # check. The declared configuration is backend/pyproject.toml: run from the
+        # repository root, Ruff would fall back to its own defaults and judge these
+        # files by rules the rest of the repository does not use.
+        run: |
+          pip install --quiet "ruff~=0.16.9"
+          ruff check --config backend/pyproject.toml scripts/
 
       - name: Verify the workflow file is syntactically valid YAML
         run: |

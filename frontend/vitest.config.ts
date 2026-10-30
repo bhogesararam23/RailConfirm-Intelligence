@@ -12,5 +12,10 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.test.{ts,tsx}'],
+    // The cross-stack suite needs a running backend and its own command
+    // (`npm run test:live`), which is what CI's smoke job provides. Leaving it here
+    // would either fail every offline run or turn into a skip nobody reads, and a
+    // skipped test reports success without evidence.
+    exclude: ['**/node_modules/**', 'src/lib/__tests__/liveApi.test.ts'],
   },
 });

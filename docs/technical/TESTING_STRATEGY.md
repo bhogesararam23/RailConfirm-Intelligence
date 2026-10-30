@@ -1,8 +1,65 @@
 # Testing strategy
 
-Status: test plan for implementation; no test suite is claimed to exist yet.
+Status: this describes what the repository runs, not what it intends to run. Where a
+layer below is still a plan, it says so.
+
+Current totals on a developer machine: **1043 backend tests** at 96.2% branch coverage
+(`--cov-fail-under=90`), **115 frontend tests**, **5 live cross-stack tests** that need a
+running backend, and one **full-stack smoke script** that starts both processes. Every
+suite below that exercises the model pipeline uses clearly-labelled synthetic fixtures;
+none of them measures railway accuracy, because there is no approved real dataset.
+
+## Commands
+
+```bash
+# Backend, from backend/
+pytest tests/ --cov=railconfirm --cov-fail-under=90
+ruff check railconfirm/ tests/
+mypy
+
+# Frontend, from frontend/
+npm run type-check
+npm run lint
+npm test                     # excludes the live suite
+
+# Cross-stack, from the repository root (needs a frontend build first)
+python scripts/smoke_full_stack.py
+python scripts/check_repository_hygiene.py
+```
+
+`npm test` deliberately excludes `src/lib/__tests__/liveApi.test.ts`: that file needs a
+server, and a suite that skips itself when the server is absent reports success without
+evidence. `vitest.live.config.ts` refuses to start without `RAILCONFIRM_LIVE_API_URL`
+(ADR-0027).
 
 ## Testing layers
+
+### Full-stack smoke
+
+The only layer that starts both halves of the product (ADR-0027).
+`scripts/smoke_full_stack.py` runs the API under uvicorn and the production frontend build
+under `next start` on loopback ports, then checks over real sockets:
+
+- `/` and `/v1/health` report the empty registry, history enabled, and the governing
+  sample threshold;
+- a schema-valid request **abstains** with `no_trained_model`, carries no probability, and
+  its group outcome abstains for the same reason with a limitation naming
+  `no_active_version`;
+- a field error answers 422 with `details[0].field`, `X-Request-ID` on both the envelope and
+  the header, and the documented codes;
+- a `prediction_at` on the journey date is refused with `INVALID_PREDICTION_AT`;
+- store, reopen, list, delete and delete-again behave as documented, the listing summary
+  carries only the five non-ticket fields, and a delete returns no body;
+- a PNR-shaped id is a 404 `not_found`, not a lookup;
+- an unrouted path uses the same error envelope;
+- the CORS preflight allows the frontend origin;
+- the built client bundle names the backend that is running (a build pointed elsewhere
+  fails here rather than passing two separate checks);
+- `npm run test:live` — the client's own `api.ts` — runs against that server.
+
+What it does not cover: no browser, so a JavaScript-only failure still passes and no
+interaction, focus order or accessibility check happens end to end. A browser driver is
+the obvious next layer and is not configured.
 
 ### Unit tests
 Cover pure logic and edge cases:
@@ -96,7 +153,23 @@ At minimum, evaluation automation should assert:
 
 ## CI expectations
 
-Once code exists, CI should run formatting, linting, type checks, unit/contract tests and safe integration tests. Research tests that need a protected dataset should validate the pipeline with synthetic fixtures while keeping empirical score generation as a separate controlled workflow.
+`.github/workflows/ci.yml` runs four jobs, all without credentials or third-party network
+access:
+
+1. **backend-checks** — Ruff (declared rule set), mypy (declared config), and pytest with
+   `--cov-fail-under=90`.
+2. **frontend-checks** — `tsc --noEmit`, ESLint, `npm test`, and a production build.
+3. **full-stack-smoke** — installs the backend's runtime dependencies, builds the frontend
+   against `http://127.0.0.1:8010`, and runs `scripts/smoke_full_stack.py`, uploading the
+   server logs when it fails (ADR-0027).
+4. **repository-hygiene** — required documentation present, relative Markdown links resolve,
+   no secret material, no PNR-shaped value outside synthetic-labelled files, `scripts/`
+   linted under the same declared Ruff configuration, and the workflow YAML parses.
+
+Research tests that need a protected dataset validate the pipeline with synthetic fixtures;
+empirical score generation stays a separate controlled workflow. A CI run proves the
+software behaves as specified on fixtures. It does not establish that the product predicts
+railway outcomes, and no green run should be described that way.
 
 ## Reporting
 
