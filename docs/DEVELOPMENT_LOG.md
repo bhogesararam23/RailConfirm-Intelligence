@@ -2434,3 +2434,56 @@ build green at `9e49050`.
   test of whether six discordant locked rows are practically available, not of whether the
   level is correct.
 
+## 2026-10-31 — Deleting an expired report confirmed it had existed (ADR-0040)
+
+### Changed
+- **DELETE is gated on availability, not rowcount.** `GET` and the list treat a report past
+retention as absent, but `DELETE` removed the still-present expired row and answered 204,
+confirming an id the read routes refuse even to acknowledge. ADR-0015 decision 3 and
+`docs/architecture/API_CONTRACT.md` both say expired answers 404. The route now calls the
+new `PredictionStore.delete_live(id, now=…)`, a single SQL delete conditioned on
+`expires_at > now`: a live report answers 204, an expired one answers the identical 404 body
+an unknown id receives.
+- **The expired row is still cleared, without confirmation.** When the live delete removes
+nothing, the route calls the unconditional `delete()` as housekeeping. This keeps ADR-0015's
+intent that an explicit request should not wait for a purge that never runs, while removing
+the leak. Deletion does not hydrate the payload, so a corrupt row inside retention can still
+be removed; `GET` keeps surfacing `storage_unavailable` for it.
+- **The store keeps two explicit operations.** `delete_live` is availability-gated and
+atomic; `delete` remains the unconditional hard delete used for housekeeping and pinned by
+the existing storage tests. `delete_live` refuses a naive clock before touching the row.
+
+### Found while writing the tests
+- The two ADR-0015 statements only looked contradictory. "Deleted a row" means a *kept*
+  report was removed; clearing an expired row is not the deletion the caller asked for. The
+  route had conflated the two by reading rowcount as confirmation.
+- The fix could have been made by changing the docs to say 204; that would have deleted the
+  privacy check rather than the leak. The contract already had the right answer.
+- Using `get()` then `delete()` would have left a window between availability and removal
+  and would hydrate an unnecessary payload. One conditional statement is smaller and atomic.
+- `docs/SECURITY_AND_PRIVACY.md` still said "There is no per-row delete endpoint yet" long
+  after ADR-0015 added one. Corrected in the same change.
+
+### Checks run
+- The API test failed before the fix with `assert 204 == 404` on an expired id whose row was
+  still present; after the fix it passes and the table is empty.
+- `pytest tests/storage/test_predictions.py tests/api/test_prediction_history.py -q` → 64
+  passed.
+- `pytest tests/ -q --cov=railconfirm --cov-fail-under=90` → **1121 passed**, total coverage
+  **96.47%** (4967 statements, 114 missed; 1330 branches, 106 partial).
+- `ruff check railconfirm/ tests/` clean.
+- `mypy railconfirm` could not run after the change: Windows Application Control blocked the
+  installed mypy's compiled `mypy.server.trigger` DLL (`DLL load failed ... An Application
+  Control policy has blocked this file`). It passed at the previous commit; CI's backend job
+  runs mypy and is the verification for this change. No system policy was bypassed.
+- Frontend untouched; last measured state 118 tests, type check, lint and production build
+  green at `9e49050`.
+
+### Unresolved
+- `purge_expired()` is still not scheduled. Aggressive delete requests can now clear expired
+  rows one at a time, but nothing clears them in bulk without an operator call.
+- History remains unauthenticated and off by default; nothing in this fix changes the
+  multi-user boundary, which still needs authentication and isolation before history could
+  be enabled as a service.
+- No railway claim or real data is involved.
+

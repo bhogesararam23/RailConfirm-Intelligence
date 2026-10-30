@@ -362,6 +362,25 @@ class PredictionStore:
             self._connection.commit()
         return cursor.rowcount > 0
 
+    def delete_live(self, prediction_id: str, *, now: datetime) -> bool:
+        """Remove a report only while retention still serves it (ADR-0040).
+
+        The condition and the delete are one statement, so a report cannot expire between
+        deciding it is available and removing it. An expired row is deliberately left for
+        `purge_expired` or an unconfirmed call to `delete`; a route that cleared it and
+        answered 204 would confirm an id the read route already treats as absent.
+        """
+        _aware(now, "delete instant")
+        if not prediction_id.strip():
+            return False
+        with self._lock:
+            cursor = self._connection.execute(
+                "DELETE FROM predictions WHERE prediction_id = ? AND expires_at > ?",
+                (prediction_id, _instant(now.astimezone(UTC))),
+            )
+            self._connection.commit()
+        return cursor.rowcount > 0
+
     def summaries(self, *, now: datetime | None = None) -> list[StoredSummary]:
         """Every report a reopen would still serve, newest first, without its contents.
 

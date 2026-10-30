@@ -3,6 +3,8 @@
 - **Status:** Accepted
 - **Date:** 2026-10-23
 - **Decision owner:** Project maintainer
+- **Amended by:** ADR-0040 — an expired row is still cleared, but DELETE answers 404 rather
+  than confirming it; the store gains an availability-gated delete.
 - **Related:** ADR-0005 (PNR privacy and retention), ADR-0012 (opt-in prediction history),
   `backend/railconfirm/storage/predictions.py`, `backend/railconfirm/api/v1/predictions.py`,
   `frontend/src/components/prediction/HistoryList.tsx`, `docs/SECURITY_AND_PRIVACY.md`,

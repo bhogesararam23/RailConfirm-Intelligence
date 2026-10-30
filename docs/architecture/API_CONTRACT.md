@@ -27,7 +27,7 @@ Status: describes the implemented `/v1` surface of `backend/railconfirm/api/`. F
 | `POST /v1/predictions/manual` | Manual journey and passenger input, per-passenger and group outcomes |
 | `GET /v1/predictions/{prediction_id}` | Reopen a stored report by the internal id that served it (ADR-0012) |
 | `GET /v1/predictions` | List kept reports as ids, clocks and provenance only (ADR-0015) |
-| `DELETE /v1/predictions/{prediction_id}` | Remove one kept report now instead of waiting for retention (ADR-0015) |
+| `DELETE /v1/predictions/{prediction_id}` | Remove one kept report now instead of waiting for retention (ADR-0015, ADR-0040) |
 
 ## `POST /v1/predictions/manual`
 

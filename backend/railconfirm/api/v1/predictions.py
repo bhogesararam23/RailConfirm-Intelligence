@@ -386,8 +386,13 @@ async def delete_prediction(
 ) -> None:
     """Hard-delete one stored report by internal id."""
     opened = _require_store(store, prediction_id)
-    removed = opened.delete(prediction_id)
+    # Availability decides the answer, not rowcount. A row past retention is no longer a
+    # kept report (GET and the list already treat it as absent), so confirming its removal
+    # would tell a caller which ids this machine once held. The expired row is still
+    # cleared below, which is housekeeping, not a confirmation.
+    removed = opened.delete_live(prediction_id, now=datetime.now(UTC))
     if not removed:
+        opened.delete(prediction_id)
         # Deliberately the same answer as "never existed": whether a report expired,
         # was deleted a minute ago, or was never kept is not information this route
         # should hand out to whoever holds an id.

@@ -313,6 +313,33 @@ def test_an_unknown_id_and_a_second_delete_answer_identically(client_with_histor
     assert second.json()["details"] == never.json()["details"]
 
 
+def test_deleting_an_expired_report_answers_like_an_unknown_id(client_with_history, history):
+    """Past retention is not a kept report, so DELETE must not confirm it existed (ADR-0015).
+
+    The row is still cleared, but the answer is the same 404 an id that never existed
+    receives: otherwise the route tells a caller which ids this machine once held.
+    """
+    served = client_with_history.post(MANUAL_URL, json=valid_payload(persist=True)).json()
+    aged = datetime.now(UTC) - timedelta(days=8)
+    history._connection.execute(
+        "UPDATE predictions SET recorded_at = ?, expires_at = ? WHERE prediction_id = ?",
+        (
+            aged.isoformat(timespec="seconds"),
+            (aged + timedelta(days=7)).isoformat(timespec="seconds"),
+            served["prediction_id"],
+        ),
+    )
+    history._connection.commit()
+    assert client_with_history.get(served["report_url"]).status_code == 404
+
+    expired = client_with_history.delete(served["report_url"])
+    never = client_with_history.delete("/v1/predictions/never-stored-0000-0000-0000-000000")
+    assert expired.status_code == 404
+    assert expired.json()["details"] == never.json()["details"]
+    # The expired row is cleared without being confirmed; retention and deletion agree.
+    assert history.size == 0
+
+
 @pytest.mark.parametrize("method", ["get", "delete"])
 def test_a_pnr_shaped_id_is_not_an_address_on_any_history_route(client_with_history, method):
     response = getattr(client_with_history, method)("/v1/predictions/1234567890")

@@ -243,6 +243,32 @@ def test_deleting_a_report_past_retention_removes_the_hidden_row(store: Predicti
     assert store.size == 0
 
 
+def test_delete_live_removes_only_a_report_retention_still_serves(store: PredictionStore) -> None:
+    """The route's confirmation is availability, not rowcount (ADR-0040)."""
+    save(store)
+    assert store.delete_live(DEFAULT_ID, now=RECORDED_AT + timedelta(days=29)) is True
+    assert store.size == 0
+    assert store.delete_live(DEFAULT_ID, now=RECORDED_AT) is False
+
+
+def test_delete_live_leaves_an_expired_row_for_the_purge_or_housekeeping(store: PredictionStore) -> None:
+    """A false answer is not permission to keep someone's expired ticket data on disk."""
+    save(store)
+    expired_at = RECORDED_AT + timedelta(days=30)
+    assert store.get(DEFAULT_ID, now=expired_at) is None
+    assert store.delete_live(DEFAULT_ID, now=expired_at) is False
+    assert store.size == 1
+    # The unconditional delete is still available as housekeeping, unconfirmed.
+    assert store.delete(DEFAULT_ID) is True
+    assert store.size == 0
+
+
+def test_delete_live_refuses_a_naive_clock(store: PredictionStore) -> None:
+    save(store)
+    with pytest.raises(PredictionStorageError, match="offset-aware"):
+        store.delete_live(DEFAULT_ID, now=datetime(2026, 10, 21, 12, 0))  # noqa: DTZ001
+
+
 def test_secure_delete_is_on_so_a_removed_row_is_not_left_in_a_free_page(store: PredictionStore) -> None:
     row = store._connection.execute("PRAGMA secure_delete").fetchone()
     assert int(row[0]) == 1

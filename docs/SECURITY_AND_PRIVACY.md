@@ -56,8 +56,11 @@ This is the one feature that can store submitted ticket data, so it is stated ex
   why this build is local-first (ADR-0007) and why history is off by default.
 - **Retention:** `RAILCONFIRM_PREDICTION_RETENTION_DAYS`, minimum 1 day, default 30. An
   expired id stops resolving immediately; `purge_expired()` removes the rows.
-- **Deletion:** delete the file. There is no per-row delete endpoint yet, and no
-  authenticated user to scope one to.
+- **Deletion:** `DELETE /v1/predictions/{id}` removes one kept report immediately
+  (ADR-0015, ADR-0040). An expired report answers the same 404 as an unknown id; its row is
+  cleared without confirming it existed. There is no authenticated user to scope deletion to,
+  so history remains local-first and off by default. Deleting the whole SQLite file removes
+  every stored report when history is disabled or the server is stopped.
 - **Third-party sharing:** none. No network call sends stored data anywhere, and the
   request path makes no third-party request at all (ADR-0007).
 - **Not collected, enforced at the write:** passenger names, PNRs and other personal

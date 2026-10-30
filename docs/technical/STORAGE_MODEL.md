@@ -26,9 +26,11 @@ exist, nothing joins to them, and the store answers one question — reopen this
 The write path refuses denied key names and PNR-shaped values, so the payload cannot grow
 an identifier by accident.
 
-Retention for this table is decided (default 30 days, minimum 1, purge to delete) because
+Retention for this table is decided (default 30 days, minimum 1) because
 the data is the user's own submission on their own machine, not provider-sourced records
-whose terms are still under review. The paragraph below still governs every other table.
+whose terms are still under review. An explicit DELETE removes one kept report immediately;
+expiry hides it, and `purge_expired()` eventually clears it (ADR-0015, ADR-0040). The
+paragraph below still governs every other table.
 
 ## Design rules
 
