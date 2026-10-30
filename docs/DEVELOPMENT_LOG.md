@@ -2052,7 +2052,9 @@ docstring was written with the wrong count first and corrected before the commit
 - `brier_all_cnf` and the other target-dependent group field names remain misleading for the
 merged target. Renaming them changes published report bytes and every consumer, so it is left
 for a release that is already moving the schema; the definition states the ambiguity instead,
-which is what ADR-0032 records.
+which is what ADR-0032 records. *(Resolved in ADR-0035: the figure now scores the all-CNF
+event whatever the target is, so its name is true without a rename and its baseline is measured
+on the same event.)*
 - The group baseline is a per-group reference (event prevalence raised to the group's size), so
 the published `baseline_brier_all_cnf` is not comparable between partitions with different
 booking-size mixes. It is stated in the definition and not otherwise corrected.
@@ -2155,4 +2157,55 @@ cohort keys were built.
   constants, and nothing is promoted. The stricter loader therefore has no migration path to
   exercise yet; when a real artifact exists and a schema bump is needed, the refit or migration
   is a documented step, not an interpretation at load.
+
+## 2026-10-30 — The all-CNF group score followed the run's target (ADR-0035)
+
+### Scope
+`backend/railconfirm/training/metrics.py` — `_group_scorecard` — and the group definitions in
+`report.py`. This continues the evaluation audit past ADR-0032: that entry recorded the
+target-dependence of `brier_all_cnf` as a naming problem left open, and reading the scoring loop
+against the methods that produce the probabilities showed it was a scoring error instead.
+
+### Changed
+- **The label used for `brier_all_cnf` came from the run's target, while the probability scored
+  against it was always `P(all CNF)`.** `compute_group_outcomes` and
+  `compute_queue_dependent_bounds` answer three fixed questions about a booking and the block
+  publishes all three on every run, so a target-relative label measured one claim against
+  another claim's outcome. Reproduced on a two-passenger booking labelled `(CNF, RAC)` in a
+  cohort at `p_cnf = 91/105`: `brier_all_cnf` 0.4096 under `final_chart_cnf` and 0.1296 under
+  `final_chart_cnf_or_rac`, against `brier_all_cnf_or_rac` 0.009506 on both — one number under
+  two names on the merged target, and a figure whose name says CNF reporting the merged event.
+- `baseline_brier_all_cnf` moved with it, because the prevalence it raised was the target
+  event's: 0.0625 against the CNF target, 0.2601 against the merged one, and
+  `brier_skill_all_cnf` went from -5.5536 to 0.50173 — a skill figure comparing the
+  independence approximation against a base rate of a different event.
+- `GROUP_ALL_CNF_EVENT` and `GROUP_CNF_OR_RAC_EVENT` are now read from the domain's
+  `EVENT_CLASSES_BY_TARGET`; `_group_scorecard` no longer takes `event_classes`, so the run's
+  target cannot reach the group arithmetic. The baseline is `prevalence["CNF"] ** passengers`.
+- The four affected definitions were rewritten to state the fixed event, and the caveat that
+  ADR-0032 added — "the label the field name suggests is only exact for the first target" — was
+  removed rather than left to contradict the code.
+
+### Found while writing the tests
+- `brier_all_cnf_or_rac` was already hardcoded to `("CNF", "RAC")`, so only one field of the
+  pair followed the target. The block was not consistently parameterised, which is why the
+  duplicate appeared on one side only.
+- The duplicate is invisible on the default target, and every fixture in the suite scores the
+  default target, so no existing test could see it. The regression scores the same booking under
+  both targets and asserts the invariance, which is a property rather than a per-target number.
+- The frames the existing group tests build hold bookings whose passengers all share a label,
+  so the file's new `booking` helper exists to make "one confirmed, one RAC" a one-liner.
+
+### Checks run
+- `pytest tests/training/test_metrics.py` → **29 passed** (6.1 s).
+- `pytest` over the whole backend → **1079 passed** (236.5 s).
+- `ruff check .` clean; `mypy railconfirm` clean, 44 source files; the hygiene script passed.
+
+### Unresolved
+- A report generated before this change under `final_chart_cnf_or_rac` carries the old
+  `brier_all_cnf`, `queue_brier_all_cnf`, `baseline_brier_all_cnf` and `brier_skill_all_cnf`,
+  and cannot be compared figure by figure with a new one. The report schema version was
+  deliberately not bumped: no key moved and the shape is unchanged, so the record of the change
+  is this ADR rather than a version a consumer could branch on.
+- Nothing above is evidence about railway behaviour. Every number comes from a synthetic frame.
 

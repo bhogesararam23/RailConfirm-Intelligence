@@ -398,6 +398,65 @@ def test_group_scoring_with_multi_passenger_bookings():
     assert payload["group"]["total_groups"] == 2
 
 
+def booking(labels: list[str]) -> pd.DataFrame:
+    """One booking, one row per passenger, all drawn from the same supported cohort."""
+    return pd.DataFrame(
+        [
+            {
+                "train_number": "12301",
+                "journey_date": "2026-04-01",
+                "class_code": "SL",
+                "quota_code": "GN",
+                "initial_status": "GNWL/10",
+                "current_status": "GNWL/10",
+                "final_chart_status": label,
+                "observation_date": "2026-03-20",
+                "passenger_record_id": f"P{index}",
+                "booking_group_id": "B1",
+            }
+            for index, label in enumerate(labels)
+        ]
+    )
+
+
+def test_the_all_cnf_group_score_is_scored_against_cnf_whatever_the_target_is():
+    """A figure named all-CNF is measured on CNF, not on the run's event.
+
+    The label used to be taken from the target's event classes, so on a
+    ``final_chart_cnf_or_rac`` run this figure was scored against "everyone confirmed or
+    RAC" — the label of the field beside it. Two published figures then carried one
+    number, and the skill figure compared it against the merged event's base rate.
+    """
+    frame = booking(["CNF", "RAC/4"])
+    p_all_cnf = (91 / 105) ** 2
+    cards = {
+        target: score_partition(
+            frame, estimator(), prevalence=PREVALENCE, partition="test", target=target
+        ).group
+        for target in (
+            PredictionTarget.FINAL_CHART_CNF.value,
+            PredictionTarget.FINAL_CHART_CNF_OR_RAC.value,
+        )
+    }
+    confirmed = cards[PredictionTarget.FINAL_CHART_CNF.value]
+    merged = cards[PredictionTarget.FINAL_CHART_CNF_OR_RAC.value]
+    assert confirmed is not None and merged is not None
+    # One passenger ended RAC, so "all confirmed" did not happen and the whole
+    # probability is the error. The merged event did happen, so its error is small.
+    assert confirmed.brier_all_cnf == pytest.approx(p_all_cnf**2, abs=1e-5)
+    assert merged.brier_all_cnf > merged.brier_all_cnf_or_rac
+    # One booking, one event, one number: the figure does not follow the target.
+    assert merged.brier_all_cnf == pytest.approx(confirmed.brier_all_cnf, abs=1e-9)
+    assert merged.queue_brier_all_cnf == pytest.approx(
+        confirmed.queue_brier_all_cnf, abs=1e-9
+    )
+    # The baseline is the training period's confirmed share raised to the booking's size.
+    assert confirmed.baseline_brier_all_cnf == pytest.approx((0.5**2) ** 2, abs=1e-6)
+    assert merged.baseline_brier_all_cnf == pytest.approx(
+        confirmed.baseline_brier_all_cnf, abs=1e-9
+    )
+
+
 def test_a_group_figure_that_is_absent_is_an_abstention_and_never_a_zero(monkeypatch):
     """A missing group probability must not be scored as "certainly did not happen".
 
@@ -425,7 +484,7 @@ def test_a_group_figure_that_is_absent_is_an_abstention_and_never_a_zero(monkeyp
         ),
     )
     card = metrics_module._group_scorecard(
-        group_members=members, event_classes=("CNF",), prevalence=PREVALENCE
+        group_members=members, prevalence=PREVALENCE
     )
     assert card is not None
     assert card.total_groups == 1

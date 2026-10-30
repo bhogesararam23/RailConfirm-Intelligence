@@ -62,6 +62,19 @@ The mapping itself lives in :mod:`railconfirm.domain.prediction`, because servin
 calibration need the same definition and a pipeline module is not the right owner of it.
 This name stays because the reports are written against it."""
 
+GROUP_ALL_CNF_EVENT = TARGET_EVENTS[PredictionTarget.FINAL_CHART_CNF.value]
+GROUP_CNF_OR_RAC_EVENT = TARGET_EVENTS[PredictionTarget.FINAL_CHART_CNF_OR_RAC.value]
+"""The two joint events the group block scores, fixed by the figure each one names.
+
+They are not taken from the run's target. The independence and queue methods answer one
+question each — every passenger confirmed, or every passenger confirmed or RAC — and both
+figures are published side by side on every run. Reading the event from the run's target
+therefore scored ``P(all CNF)`` against *whether everyone landed in the target's event*:
+on a ``final_chart_cnf_or_rac`` run that label is "all confirmed or RAC", so
+``brier_all_cnf`` and ``brier_all_cnf_or_rac`` became the same number published twice under
+two names, and ``brier_skill_all_cnf`` compared that against a base rate raised from the
+merged event's prevalence. A figure whose name says CNF is scored against CNF."""
+
 
 @dataclass(frozen=True)
 class ReliabilityBin:
@@ -652,7 +665,6 @@ def score_partition(
 
     group_card = _group_scorecard(
         group_members=scored_rows.group_members,
-        event_classes=event_classes,
         prevalence=prevalence,
     )
 
@@ -688,10 +700,16 @@ def score_partition(
 def _group_scorecard(
     *,
     group_members: Mapping[str, list[tuple[PassengerOutcome | None, str | None]]],
-    event_classes: tuple[str, ...],
     prevalence: Mapping[str, float],
 ) -> GroupScorecard | None:
-    """Score the joint group claims over bookings that were fully observed."""
+    """Score the joint group claims over bookings that were fully observed.
+
+    The two labels are the ones the published figures name — every passenger confirmed,
+    and every passenger confirmed or RAC — not the run's target event, so the same
+    booking scores the same way whatever the run asked. The baseline is the training
+    period's confirmed share raised to the booking's size, which is the reference the
+    all-CNF figure is measured against.
+    """
     if not group_members:
         return None
 
@@ -708,7 +726,7 @@ def _group_scorecard(
     queue_brier_cnf_rac_sum = 0.0
     queue_brier_wl_sum = 0.0
     baseline_brier_cnf_sum = 0.0
-    p_prev_event = _event_probability(prevalence, event_classes)
+    p_prev_all_cnf = _event_probability(prevalence, GROUP_ALL_CNF_EVENT)
 
     for _gid, members in group_members.items():
         n_passengers = len(members)
@@ -745,8 +763,10 @@ def _group_scorecard(
             continue
 
         scored_groups += 1
-        true_all_cnf = 1.0 if all(lbl in event_classes for lbl in labels) else 0.0
-        true_all_cnf_or_rac = 1.0 if all(lbl in ("CNF", "RAC") for lbl in labels) else 0.0
+        true_all_cnf = 1.0 if all(lbl in GROUP_ALL_CNF_EVENT for lbl in labels) else 0.0
+        true_all_cnf_or_rac = (
+            1.0 if all(lbl in GROUP_CNF_OR_RAC_EVENT for lbl in labels) else 0.0
+        )
         true_at_least_one_wl = 1.0 if any(lbl == "WL" for lbl in labels) else 0.0
 
         p_indep_cnf = indep.p_all_cnf
@@ -765,7 +785,7 @@ def _group_scorecard(
         queue_brier_cnf_rac_sum += (p_queue_cnf_rac - true_all_cnf_or_rac) ** 2
         queue_brier_wl_sum += (p_queue_wl - true_at_least_one_wl) ** 2
 
-        p_base_group = p_prev_event**n_passengers
+        p_base_group = p_prev_all_cnf**n_passengers
         baseline_brier_cnf_sum += (p_base_group - true_all_cnf) ** 2
 
     mean_indep_cnf = indep_brier_cnf_sum / scored_groups if scored_groups else None

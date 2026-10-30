@@ -135,12 +135,12 @@ METRIC_DEFINITIONS: dict[str, str] = {
     ),
     "brier_all_cnf": (
         "Mean squared error of the independence-method probability that every passenger in "
-        "the booking lands in the target's event classes — for `final_chart_cnf` that is "
-        "every berth confirmed, for `final_chart_cnf_or_rac` every berth confirmed or RAC, "
-        "so the label the field name suggests is only exact for the first target. Scored "
-        "over groups whose members all returned a supported estimate and a label; the "
-        "probability it scores treats passengers as independent, which is an approximation "
-        "and not a property of a booking."
+        "the booking is confirmed. The event is fixed by the figure's name and does not "
+        "follow the run's target: the merged 'confirmed or RAC' event is reported by the "
+        "field beside it, and scoring this one against that label instead published one "
+        "number under two names. Scored over groups whose members all returned a supported "
+        "estimate and a label; the probability it scores treats passengers as independent, "
+        "which is an approximation and not a property of a booking."
     ),
     "brier_all_cnf_or_rac": (
         "The same independence-method score against the label \"every passenger confirmed "
@@ -152,12 +152,12 @@ METRIC_DEFINITIONS: dict[str, str] = {
         "passenger in the booking ends on a waitlist, against whether one did."
     ),
     "queue_brier_all_cnf": (
-        "The same score computed from the queue-dependent comonotonic bound rather than "
-        "from an independence product. A Brier score of a bound is not a Brier score of a "
-        "calibrated probability: the bound is the extreme joint arrangement the marginals "
-        "allow under sequential clearing, so this figure says how close the bookings came "
-        "to that limit, not how accurate a group forecast was. It is a mathematical bound, "
-        "never an empirically validated claim about group behaviour."
+        "The same all-CNF event scored from the queue-dependent comonotonic bound rather "
+        "than from an independence product. A Brier score of a bound is not a Brier score "
+        "of a calibrated probability: the bound is the extreme joint arrangement the "
+        "marginals allow under sequential clearing, so this figure says how close the "
+        "bookings came to that limit, not how accurate a group forecast was. It is a "
+        "mathematical bound, never an empirically validated claim about group behaviour."
     ),
     "queue_brier_all_cnf_or_rac": (
         "The queue bound scored against the label \"every passenger confirmed or RAC\"."
@@ -167,11 +167,12 @@ METRIC_DEFINITIONS: dict[str, str] = {
         "whether one did."
     ),
     "baseline_brier_all_cnf": (
-        "The same event's training-period prevalence raised to the booking's passenger "
-        "count, scored against the same label — the \"everyone independently drawn from the "
-        "base rate\" reference. The exponent is the group's own size, so groups of different "
-        "sizes are averaged against baselines that differ by construction, and the reference "
-        "is not a real group model: it is the floor a learnt group claim has to clear."
+        "The same event's training-period prevalence — the share of training rows that "
+        "confirmed — raised to the booking's passenger count, scored against the same "
+        "label: the \"everyone independently drawn from the confirmed base rate\" "
+        "reference. The exponent is the group's own size, so groups of different sizes are "
+        "averaged against baselines that differ by construction, and the reference is not a "
+        "real group model: it is the floor a learnt group claim has to clear."
     ),
     "brier_skill_all_cnf": (
         "1 - `brier_all_cnf` / `baseline_brier_all_cnf`. Positive means the independence "
