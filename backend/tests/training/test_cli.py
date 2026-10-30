@@ -7,7 +7,9 @@ import pytest
 
 from railconfirm.training.__main__ import main
 from tests.support.datasets import (
+    GATE_ROW_COUNT,
     approved_decision,
+    gate_defects,
     write_approved_manifest,
     write_dataset,
     write_gate_dataset,
@@ -82,9 +84,14 @@ def test_fit_states_which_rows_validation_kept(tmp_path: Path, capsys):
     )
     printed = capsys.readouterr().out
     assert code == 0, printed
-    assert "Validation kept 23 of 32 rows (9 rejected" in printed
+    # Counted from the fixture, not hardcoded: every defect shape in gate_defects()
+    # is rejected, and P0001 goes with the contradiction it is part of.
+    total = GATE_ROW_COUNT + len(gate_defects())
+    kept = GATE_ROW_COUNT - 1
+    assert f"Validation kept {kept} of {total} rows ({total - kept} rejected" in printed
     assert "exact_duplicate_row=1" in printed
     assert "contradictory_labels=2" in printed
+    assert "observation_on_journey_date=1" in printed
     assert "Eligibility thresholds were NOT met" in printed
 
 

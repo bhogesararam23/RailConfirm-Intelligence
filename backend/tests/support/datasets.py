@@ -185,6 +185,9 @@ def gate_defects(synthetic: str = "true") -> dict[str, str]:
         "censored_label": f"12301,2026-04-03,SL,GN,GNWL/80,CENSORED,2026-03-03,B9001,P9001,{mark}",
         "unparseable_date": f"12301,04/05/2026,SL,GN,GNWL/81,CNF,2026-03-04,B9002,P9002,{mark}",
         "observation_after_journey": f"12301,2026-04-05,SL,GN,GNWL/82,CNF,2026-04-09,B9003,P9003,{mark}",
+        # Same calendar day for both dates: not an ordering violation, but not a
+        # forecast input either (ADR-0026).
+        "observation_on_journey_date": f"12301,2026-04-06,SL,GN,GNWL/85,CNF,2026-04-06,B9007,P9007,{mark}",
         "invalid_train_number": f"AB1234,2026-04-06,SL,GN,GNWL/83,CNF,2026-03-06,B9004,P9004,{mark}",
         "missing_required_value": f"12301,2026-04-06,,GN,GNWL/84,CNF,2026-03-06,B9005,P9005,{mark}",
         "unknown_initial_status": f"12301,2026-04-06,SL,GN,MYSTERY/4,CNF,2026-03-06,B9006,P9006,{mark}",

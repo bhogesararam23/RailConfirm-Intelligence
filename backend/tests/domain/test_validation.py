@@ -9,6 +9,7 @@ from railconfirm.domain.exceptions import (
     TemporalIntegrityError,
 )
 from railconfirm.domain.validation import (
+    MIN_LEAD_DAYS,
     ensure_aware,
     validate_journey_date,
     validate_observation_time,
@@ -106,6 +107,21 @@ def test_prediction_timestamp_must_be_aware():
 def test_prediction_after_departure_is_not_a_forecast(prediction_at, fragment):
     with pytest.raises(TemporalIntegrityError, match=fragment):
         validate_prediction_timing(JOURNEY_DATE, prediction_at, [("p-1", None)])
+
+
+def test_the_eligible_horizon_is_one_clear_day():
+    """One constant, two carriers: serving refuses anything nearer than this, and
+    ``railconfirm.data.validator`` imports the same value for its row rule."""
+    assert MIN_LEAD_DAYS == 1
+    assert validate_prediction_timing(
+        JOURNEY_DATE,
+        datetime(2026, 11, 14, 23, 59, tzinfo=UTC),
+        [("p-1", None)],
+    ) is None
+    with pytest.raises(TemporalIntegrityError, match="on or after journey date"):
+        validate_prediction_timing(
+            JOURNEY_DATE, datetime(2026, 11, 15, 0, 0, tzinfo=UTC), [("p-1", None)]
+        )
 
 
 def test_evidence_newer_than_the_prediction_timestamp_is_rejected():

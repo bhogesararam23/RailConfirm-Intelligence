@@ -18,6 +18,20 @@ from railconfirm.domain.exceptions import (
 _TRAIN_NUMBER_RE = re.compile(r"^\d{4,6}$")
 _STATION_CODE_RE = re.compile(r"^[A-Z][A-Z0-9]{1,9}$")
 
+MIN_LEAD_DAYS = 1
+"""The shortest observation-to-journey gap this product answers a prediction across.
+
+The served request and the dataset contract both carry calendar dates rather than
+timestamps, so a record observed *on* its journey date cannot say whether the
+observation preceded the final chart or followed it. The final chart is prepared on
+the journey date, which is why a same-day "prediction" is a retrodiction rather than
+a forecast. Both ends of the pipeline read this constant: serving refuses a
+``prediction_at`` closer than this to the journey date, and
+the dataset gate refuses rows whose ``observation_date`` is.
+
+A caller must not lower it to lift a fixture's row count: one clear day is the finest
+resolution a date-only record can express."""
+
 
 def validate_train_number(value: object) -> str:
     """Validate and return a train number string (4–6 digits, zero-padded)."""
@@ -107,8 +121,8 @@ def validate_prediction_timing(
     Three separate failures are caught here:
 
     * a naive prediction timestamp, which cannot be compared to anything;
-    * a prediction timestamp at or after the journey date, where the outcome is
-      already settled and the question is no longer a forecast;
+    * a prediction timestamp closer than :data:`MIN_LEAD_DAYS` to the journey date,
+      where the outcome is already settled and the question is no longer a forecast;
     * evidence observed after the prediction timestamp, which would leak the
       future into an as-of estimate.
 
@@ -116,8 +130,8 @@ def validate_prediction_timing(
     status observation time, or ``None`` when the time is unknown.
     """
     ensure_aware(prediction_at, "prediction_at")
-    prediction_date = prediction_at.date()
-    if prediction_date >= journey_date:
+    lead_days = (journey_date - prediction_at.date()).days
+    if lead_days < MIN_LEAD_DAYS:
         raise TemporalIntegrityError(
             f"prediction_at={prediction_at.isoformat()} is on or after journey date "
             f"{journey_date.isoformat()}. The final-chart outcome is not a future "

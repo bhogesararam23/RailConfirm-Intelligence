@@ -30,6 +30,7 @@ from railconfirm.data.preprocessing import (
     strip_labels,
 )
 from railconfirm.data.validator import (
+    ROW_CONTRACT_VERSION,
     DatasetValidationReport,
     EligibilityThresholds,
     assess_dataset,
@@ -49,6 +50,7 @@ __all__ = [
     "MIN_HORIZONS",
     "ManifestError",
     "OriginWindow",
+    "ROW_CONTRACT_VERSION",
     "RollingOriginPlan",
     "SUPPORTED_SUFFIXES",
     "SplitResult",

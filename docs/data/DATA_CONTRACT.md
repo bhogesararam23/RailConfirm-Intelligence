@@ -109,7 +109,7 @@ Required columns:
 | `class_code`, `quota_code` | Non-empty; unknown codes are reported, not rejected (forward compatibility) |
 | `initial_status` | Raw source string; must map to a verified status category |
 | `final_chart_status` | Raw outcome label; must map to a verified category and must not be `CENSORED` |
-| `observation_date` | ISO `YYYY-MM-DD`, must not be later than `journey_date` |
+| `observation_date` | ISO `YYYY-MM-DD`, at least one clear day before `journey_date` (see "The eligible prediction horizon") |
 
 Optional columns, recognised when present and reported when absent because their absence limits what can be checked: `booking_group_id` (without it, group-level and dependence-aware evaluation is impossible), `passenger_record_id` (distinguishes passengers sharing a booking so their differing outcomes are not read as contradictions), `current_status` (the source's later look; it defines the as-of status, see below), `source_id`, `verification_method` (without it, label quality cannot be assessed), `censoring_reason`, `is_synthetic`.
 
@@ -129,9 +129,28 @@ served path's "latest observation at or before the prediction timestamp" and thi
 column's `current_status` are the same quantity in two carriers; if they ever disagree,
 the artifact is refused at load rather than reinterpreted (ADR-0013).
 
+### The eligible prediction horizon
+
+The row contract carries two calendar dates and no observation clock. A record observed
+*on* `journey_date` therefore cannot be ordered against the final chart, which is
+prepared on that date: the same pair of dates describes a look before the chart and a
+look after it. Such a row is refused as `observation_on_journey_date` rather than fitted,
+because serving already refuses the same situation — `validate_prediction_timing`
+rejects a `prediction_at` on or after the journey date.
+
+`railconfirm.domain.validation.MIN_LEAD_DAYS` (= `1`) is the single definition, and
+`railconfirm.data.validator` imports it, so the population a model is fitted on is the
+population the service answers. Lowering it is not a way to admit more rows: one clear
+day is the finest resolution a date-only record can express, and a horizon shorter than
+that needs timestamps in the source rather than a smaller constant (ADR-0026).
+
+`ROW_CONTRACT_VERSION` in `railconfirm.data.validator` names the rules a report was
+produced under (currently `1.1.0`, which added the one-day floor), so an older verdict is
+not read as a verdict on today's rules.
+
 ### Rejection reasons
 
-Every excluded row is counted under one of: `missing_required_columns`, `missing_required_value`, `invalid_train_number`, `unparseable_date`, `observation_after_journey`, `unknown_initial_status`, `unknown_final_status`, `censored_label`, `contradictory_labels`, `exact_duplicate_row`. Valid plus rejected always equals total.
+Every excluded row is counted under one of: `missing_required_columns`, `missing_required_value`, `invalid_train_number`, `unparseable_date`, `observation_after_journey`, `observation_on_journey_date`, `unknown_initial_status`, `unknown_final_status`, `censored_label`, `contradictory_labels`, `exact_duplicate_row`. Valid plus rejected always equals total.
 
 `contradictory_labels` means one reservation context carries more than one outcome label. Resolution needs source review, not a rule, so all such rows are excluded and the group count is reported.
 
@@ -167,6 +186,7 @@ Every dataset import should record:
 - source snapshot/download date;
 - import code revision;
 - schema version;
+- row-contract version the report was produced under (`ROW_CONTRACT_VERSION`);
 - validation report;
 - record counts and exclusion reasons;
 - licence/authority decision.

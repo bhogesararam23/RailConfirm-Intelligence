@@ -4,6 +4,7 @@ Fixtures are synthetic and constructed inline; they exercise the checks, not any
 claim about railway behaviour.
 """
 
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -13,10 +14,13 @@ from railconfirm.data.loader import load_dataset_file
 from railconfirm.data.validator import (
     MISSING_TOKENS,
     REQUIRED_COLUMNS,
+    ROW_CONTRACT_VERSION,
     EligibilityThresholds,
     assess_dataset,
     validate_dataset,
 )
+from railconfirm.domain.exceptions import TemporalIntegrityError
+from railconfirm.domain.validation import MIN_LEAD_DAYS, validate_prediction_timing
 
 BASE_ROWS = [
     {
@@ -221,10 +225,69 @@ def test_observation_after_journey_date_is_rejected():
     assert report.valid_rows == 1
 
 
-def test_observation_on_the_journey_date_is_allowed():
+def test_observation_on_the_journey_date_is_not_a_forecast_input():
+    """Neither after the journey date nor *on* it: a date-only row cannot be ordered
+    against the final chart, which is prepared that day (ADR-0026)."""
     rows = [dict(row) for row in BASE_ROWS]
     rows[0]["observation_date"] = "2026-10-01"
-    assert validate(rows).valid_rows == 2
+    report = validate(rows)
+    assert report.same_day_observation_rows == 1
+    assert report.rejection_reasons["observation_on_journey_date"] == 1
+    # It is not an ordering violation: the dates are in order, the gap is zero.
+    assert report.date_order_violations == 0
+    assert report.valid_rows == 1
+    assert report.valid_rows + report.rejected_rows == report.total_rows
+
+
+def test_one_clear_day_before_the_journey_is_accepted():
+    """The shortest horizon the contract admits still parses as a valid row."""
+    rows = [dict(row) for row in BASE_ROWS]
+    rows[0]["observation_date"] = "2026-09-30"
+    report = validate(rows)
+    assert report.rejected_rows == 0
+    assert report.same_day_observation_rows == 0
+    assert report.valid_rows == 2
+
+
+@pytest.mark.parametrize("lead_days", [0, 1, 2, 5])
+def test_the_gate_and_serving_refuse_the_same_horizon(lead_days):
+    """One constant decides both ends, expressed in the two carriers they use.
+
+    The gate sees a calendar ``observation_date``; serving sees a ``prediction_at``
+    timestamp. If they disagree, a model is fitted on a horizon the service will never
+    answer, or the service answers a horizon no fitting row could have described."""
+    journey = date(2026, 10, 10)
+    observation = date.fromordinal(journey.toordinal() - lead_days)
+    rows = [
+        {
+            **dict(BASE_ROWS[0]),
+            "journey_date": journey.isoformat(),
+            "observation_date": observation.isoformat(),
+        }
+    ]
+    accepted_by_gate = validate(rows).valid_rows == 1
+
+    # The same horizon at the finest instant a date can claim: the last minute of it.
+    prediction_at = datetime(
+        observation.year, observation.month, observation.day, 23, 59, tzinfo=UTC
+    )
+    try:
+        validate_prediction_timing(journey, prediction_at, [("p-1", None)])
+    except TemporalIntegrityError:
+        accepted_by_serving = False
+    else:
+        accepted_by_serving = True
+
+    assert accepted_by_gate == accepted_by_serving
+    assert accepted_by_gate is (lead_days >= MIN_LEAD_DAYS)
+
+
+def test_every_report_names_the_row_contract_it_applied():
+    """A verdict is only a verdict on the rules that produced it."""
+    report = validate(BASE_ROWS)
+    assert ROW_CONTRACT_VERSION == "1.1.0"
+    assert report.row_contract_version == ROW_CONTRACT_VERSION
+    assert report.to_dict()["row_contract_version"] == ROW_CONTRACT_VERSION
 
 
 def test_date_ranges_come_from_valid_rows_only():

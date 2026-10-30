@@ -403,9 +403,10 @@ input, `2` usage error. A run states its intake accounting rather than resting o
 silently:
 
 ```text
-Validation kept 23 of 32 rows (9 rejected: censored_label=1, contradictory_labels=2,
+Validation kept 23 of 33 rows (10 rejected: censored_label=1, contradictory_labels=2,
 exact_duplicate_row=1, invalid_train_number=1, missing_required_value=1,
-observation_after_journey=1, unknown_initial_status=1, unparseable_date=1).
+observation_after_journey=1, observation_on_journey_date=1, unknown_initial_status=1,
+unparseable_date=1).
 Eligibility thresholds were NOT met; fitted only because this is a labelled synthetic pipeline test.
 ```
 

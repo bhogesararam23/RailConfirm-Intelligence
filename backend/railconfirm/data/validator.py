@@ -26,11 +26,21 @@ from typing import Any
 import pandas as pd
 
 from railconfirm.domain.status import NormalizedStatus, parse_status
+from railconfirm.domain.validation import MIN_LEAD_DAYS
 
 # The implemented row contract. Each row is one passenger's reservation observed
 # as of `observation_date`, with the final-chart outcome recorded in
 # `final_chart_status`. Docs/data/DATA_CONTRACT.md describes the entity model this
 # flat interchange schema is derived from.
+ROW_CONTRACT_VERSION = "1.1.0"
+"""Version of the rules applied to each row.
+
+1.1.0 requires at least ``MIN_LEAD_DAYS`` (one) clear day between ``observation_date``
+and ``journey_date``. 1.0.0 accepted a same-day observation, which a date-only record
+cannot order against the final chart; those rows are now refused rather than fitted.
+Every report names the version it was produced under, so an older verdict is not read
+as a verdict on today's rules (ADR-0026)."""
+
 REQUIRED_COLUMNS: tuple[str, ...] = (
     "train_number",
     "journey_date",
@@ -132,6 +142,7 @@ class DatasetValidationReport:
     total_rows: int
     valid_rows: int
     rejected_rows: int
+    row_contract_version: str = ROW_CONTRACT_VERSION
     missing_columns: list[str] = field(default_factory=list)
     unexpected_columns: list[str] = field(default_factory=list)
     absent_optional_columns: list[str] = field(default_factory=list)
@@ -142,6 +153,7 @@ class DatasetValidationReport:
     contradictory_label_rows: int = 0
     censored_label_rows: int = 0
     date_order_violations: int = 0
+    same_day_observation_rows: int = 0
     unparseable_dates: int = 0
     invalid_train_numbers: int = 0
     initial_status_distribution: dict[str, int] = field(default_factory=dict)
@@ -197,6 +209,7 @@ class DatasetValidationReport:
             ),
             f"Censored label rows: {self.censored_label_rows}",
             f"Observation after journey date: {self.date_order_violations}",
+            f"Observed on the journey date: {self.same_day_observation_rows}",
             f"Unparseable dates: {self.unparseable_dates}",
             f"Distinct journey dates: {self.distinct_journey_dates}",
             f"Distinct labelled bookings: {self.distinct_labeled_bookings}",
@@ -448,6 +461,22 @@ def assess_dataset(
             )
             continue
 
+        # The two dates are calendar dates. A row observed on its own journey date
+        # cannot be ordered against the final chart, which is prepared that day, so it
+        # is not a forecast input and never becomes a training row (ADR-0026).
+        if (journey_date - observation_date).days < MIN_LEAD_DAYS:
+            report.same_day_observation_rows += 1
+            report.rejected_rows += 1
+            _record_rejection(
+                report,
+                "observation_on_journey_date",
+                row_index,
+                f"observed {observation_date.date()} on journey date "
+                f"{journey_date.date()}; a date-only record cannot show the look came "
+                f"before the final chart. At least {MIN_LEAD_DAYS} clear day is required.",
+            )
+            continue
+
         initial = parse_status(_clean(row["initial_status"]))
         final = parse_status(_clean(row["final_chart_status"]))
         report.initial_status_distribution[initial.normalized.value] = (
@@ -617,6 +646,12 @@ def _add_observations(df: pd.DataFrame, report: DatasetValidationReport) -> None
         report.warnings.append(
             f"{report.date_order_violations} rows observed after their journey date; "
             "such a label cannot be a forecast input."
+        )
+    if report.same_day_observation_rows:
+        report.warnings.append(
+            f"{report.same_day_observation_rows} rows were observed on their own journey "
+            "date and were excluded: without a timestamp the observation cannot be shown "
+            "to precede the final chart, which is the horizon this product predicts across."
         )
     if report.censored_label_rows:
         report.warnings.append(
