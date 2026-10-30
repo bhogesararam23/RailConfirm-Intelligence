@@ -458,6 +458,19 @@ class RowScores:
     group_members: dict[str, list[tuple[PassengerOutcome | None, str | None]]]
     rows_total: int
     abstained: int
+    target: str
+    """The event these rows were walked for.
+
+    Recorded because every ``ScoredRow`` carries the event figures computed against this
+    target. A caller that handed the rows to a card asking for another target would publish
+    one event's numbers under the other's name, which is the defect ADR-0035 and ADR-0036
+    each fixed one layer apart."""
+    calibrated: bool
+    """Whether a calibration layer was applied while these rows were walked.
+
+    ``score_partition`` publishes ``calibration_applied``; reading that flag from its own
+    argument while the numbers came from uncalibrated rows would label a card with a
+    correction it does not contain."""
 
 
 def score_rows(
@@ -569,7 +582,47 @@ def score_rows(
         group_members=group_members,
         rows_total=int(len(frame)),
         abstained=abstained,
+        target=target,
+        calibrated=calibration is not None,
     )
+
+
+def _require_rows_match(
+    scored: RowScores,
+    frame: pd.DataFrame,
+    *,
+    target: str,
+    calibration: CalibrationSpec | None,
+) -> None:
+    """Refuse a card whose labels the pre-scored rows were not produced under.
+
+    ``pre_scored`` exists so the comparison harness can pair rows and publish aggregates
+    from one walk. That shortcut is sound only while the walk and the card describe the
+    same partition, the same event and the same arithmetic, so each is compared rather
+    than assumed — the rule ADR-0021 applies to the two models it compares, applied to one
+    model's rows and the card they are printed on.
+    """
+    if scored.target != target:
+        raise DatasetValidationError(
+            f"The pre-scored rows were walked for target {scored.target!r} but this card "
+            f"asks for {target!r}: every per-row event figure was computed against the "
+            "other event, so the card would publish one event's numbers under the "
+            "other's name."
+        )
+    if scored.calibrated != (calibration is not None):
+        carried = "a calibration layer" if scored.calibrated else "no calibration layer"
+        declared = "calibrated" if calibration is not None else "uncalibrated"
+        raise DatasetValidationError(
+            f"The pre-scored rows carry {carried}, but this card is labelled {declared}: "
+            "`calibration_applied` would name a correction the scores never received."
+        )
+    if scored.rows_total != int(len(frame)):
+        raise DatasetValidationError(
+            f"The pre-scored rows were walked from a partition of {scored.rows_total} "
+            f"rows, but this frame holds {len(frame)}: the card would divide one "
+            "partition's scores by another's row count, and its coverage would describe "
+            "neither partition."
+        )
 
 
 def score_partition(
@@ -595,13 +648,17 @@ def score_partition(
     ``pre_scored`` takes rows a caller already walked. The comparison harness needs the
     per-row results to pair two models, and scoring the frame twice — once for the rows,
     once for the card — is how aggregates and paired counts drift apart while both look
-    right.
+    right. The rows are checked against this call rather than trusted: a card labelled
+    with a target, a calibration or a row count its numbers were not produced under is a
+    caption, not a score.
     """
     scored_rows = (
         pre_scored
         if pre_scored is not None
         else score_rows(frame, estimator, target=target, calibration=calibration)
     )
+    if pre_scored is not None:
+        _require_rows_match(pre_scored, frame, target=target, calibration=calibration)
     event_classes = TARGET_EVENTS[target]
     rows = scored_rows.rows
     abstained = scored_rows.abstained

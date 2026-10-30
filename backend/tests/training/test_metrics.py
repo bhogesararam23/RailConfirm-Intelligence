@@ -10,9 +10,11 @@ import math
 import pandas as pd
 import pytest
 
+from railconfirm.domain.exceptions import DatasetValidationError
 from railconfirm.domain.prediction import AbstentionReason, PredictionTarget
 from railconfirm.domain.status import MAPPING_VERSION
 from railconfirm.inference.baseline import FrequencyTableProvenance
+from railconfirm.inference.calibration import CALIBRATION_METHOD_PLATT, CalibrationSpec
 from railconfirm.training.metrics import (
     OUTCOME_CLASSES,
     TARGET_EVENTS,
@@ -23,6 +25,7 @@ from railconfirm.training.metrics import (
     _log_loss_one,
     build_estimator,
     score_partition,
+    score_rows,
 )
 
 COHORTS = {("SL", "GN", "WL"): {"CNF": 90, "RAC": 0, "WL": 10, "CANCELLED": 0, "OTHER": 0}}
@@ -533,3 +536,81 @@ def test_group_scoring_abstained_when_passenger_abstains():
     assert card.group.scored_groups == 0
     assert card.group.abstained_groups == 1
     assert card.group.brier_all_cnf is None
+
+
+# ── A card must describe the rows it was handed ────────────────────────────────
+# `pre_scored` lets the comparison harness pair rows and publish aggregates from one
+# walk. The card's labels — target, calibration, coverage denominator — then come from
+# its own arguments, so each is checked against the rows instead of assumed to match.
+
+
+def calibration_fixture() -> CalibrationSpec:
+    return CalibrationSpec(
+        method=CALIBRATION_METHOD_PLATT,
+        target=PredictionTarget.FINAL_CHART_CNF.value,
+        event_classes=("CNF",),
+        slope=1.0,
+        intercept=0.0,
+        fitted_partition="validation",
+        fitted_rows=50,
+    )
+
+
+def test_pre_scored_rows_from_another_target_are_refused():
+    """The event figures already computed belong to the target they were walked for."""
+    frame = rows([("GNWL/10", "CNF"), ("GNWL/20", "RAC"), ("GNWL/30", "WL")])
+    walked = score_rows(frame, estimator(), target=PredictionTarget.FINAL_CHART_CNF.value)
+    with pytest.raises(DatasetValidationError, match="walked for target"):
+        score_partition(
+            frame,
+            estimator(),
+            prevalence=PREVALENCE,
+            partition="test",
+            target=PredictionTarget.FINAL_CHART_CNF_OR_RAC.value,
+            pre_scored=walked,
+        )
+
+
+def test_pre_scored_rows_walked_without_a_correction_cannot_be_labelled_calibrated():
+    """`calibration_applied` has to describe the arithmetic, not the call."""
+    frame = rows([("GNWL/10", "CNF"), ("GNWL/20", "CNF"), ("GNWL/30", "WL")])
+    walked = score_rows(frame, estimator())
+    with pytest.raises(DatasetValidationError, match="labelled calibrated"):
+        score_partition(
+            frame,
+            estimator(),
+            prevalence=PREVALENCE,
+            partition="test",
+            calibration=calibration_fixture(),
+            pre_scored=walked,
+        )
+
+
+def test_pre_scored_rows_from_another_partition_are_refused():
+    """Coverage divides scored rows by this frame's count, so one frame must supply both."""
+    walked = score_rows(rows([("GNWL/10", "CNF")]), estimator())
+    larger = rows([("GNWL/10", "CNF"), ("GNWL/20", "WL"), ("GNWL/30", "CNF")])
+    with pytest.raises(DatasetValidationError, match="but this frame holds"):
+        score_partition(
+            larger, estimator(), prevalence=PREVALENCE, partition="test", pre_scored=walked
+        )
+
+
+def test_reusing_scored_rows_gives_the_card_the_single_walk_would_have():
+    """The guard must not change a matching pair: same rows, same card, byte for byte."""
+    frame = rows([("GNWL/10", "CNF"), ("GNWL/20", "RAC"), ("GNWL/30", "WL")])
+    spec = calibration_fixture()
+    walked = score_rows(frame, estimator(), calibration=spec)
+    reused = score_partition(
+        frame,
+        estimator(),
+        prevalence=PREVALENCE,
+        partition="test",
+        calibration=spec,
+        pre_scored=walked,
+    )
+    single_walk = score_partition(
+        frame, estimator(), prevalence=PREVALENCE, partition="test", calibration=spec
+    )
+    assert reused.to_dict() == single_walk.to_dict()
+    assert reused.calibration_applied is True

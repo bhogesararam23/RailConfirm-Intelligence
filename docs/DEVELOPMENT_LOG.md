@@ -2277,3 +2277,54 @@ must generate a new report rather than reinterpret an old one.
 are UI copy for a choice, not a claim about an answer, and they now sit beside the served
 definition rather than replacing it.
 
+## 2026-10-30 — A scorecard accepted rows it was not handed (ADR-0037)
+
+### Scope
+`backend/railconfirm/training/metrics.py` — `score_rows`, `RowScores` and `score_partition`.
+Found by following the one caller of `pre_scored` (`compare.run_model_comparison`) and asking
+what the card publishes that the rows do not carry: its target, its calibration flag and its
+coverage denominator all came from the call.
+
+### Changed
+- **`RowScores` records the walk.** Two required fields, `target` and `calibrated`, are set by
+`score_rows` — the only construction site — so a card can compare what it is about to claim
+with what the rows were produced under.
+- **`_require_rows_match` refuses three disagreements** before any metric is computed: a
+target mismatch (the event Brier would be one event's number under the other's name), a
+calibration mismatch (`calibration_applied: true` beside uncorrected scores), and a row-count
+mismatch (coverage dividing one partition's scores by another's total).
+- **A matching pair is asserted to be identical**, not merely accepted: the reused-rows card
+must equal the single-walk card key for key, so the shortcut cannot become a second
+implementation of the scorecard.
+
+### Found while writing the tests
+- `RowScores` had no idea what it was: it carried rows, groups and counts but not the target
+the per-row event figures were computed against, so the check could not exist even if a
+caller wanted it.
+- `calibration_applied` was `calibration is not None`, an argument, not a fact. The numbers
+and the label were both plausible on their own; only a comparison catches the pair being
+wrong. A no-op correction (slope 1, intercept 0) makes the two indistinguishable from the
+values alone, which is why the fact is recorded instead of inferred.
+- The row-count check is the cheapest of the three and catches the most ordinary mistake —
+passing the test frame's rows with the validation frame — where the scores are right and only
+the coverage is invented.
+
+### Checks run
+- `pytest tests/training/test_metrics.py` → **33 passed** (3.2 s), up from 29.
+- `pytest tests/training tests/api tests/domain tests/inference` → **778 passed** (158.0 s).
+- Full suite with coverage: **1092 passed** — see `PROJECT_STATUS.md` for the totals; every
+existing scorecard, comparison and calibration figure is unchanged.
+- `ruff check railconfirm/ tests/` clean; `mypy` clean, 44 source files; the hygiene script passed.
+- Frontend unchanged by this batch: 118 tests, type check, lint and production build were
+green at `9e49050`.
+
+### Unresolved
+- No report this project can currently produce changes: `compare` is the only caller and it
+passes a matching triple. The gap was an unenforced invariant on an exported function, not a
+wrong number already published.
+- `score_partition` still accepts a frame whose columns differ from the ones the rows were
+sliced from; the slices travel with the rows, so the card would describe the walk's segments
+while its frame is another's. That is the same class of mismatch one field further out, and
+it is not reachable without constructing `RowScores` by hand today.
+- Nothing in this batch is evidence about railway behaviour; all rows are synthetic fixtures.
+
