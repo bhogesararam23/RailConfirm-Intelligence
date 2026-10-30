@@ -14,11 +14,15 @@ import pytest
 from railconfirm.domain.exceptions import DatasetValidationError
 from railconfirm.inference.queue import QUEUE_ESTIMATOR_ID
 from railconfirm.training.compare import (
+    MIN_SIGN_TEST_DISCORDANT,
     MODEL_SELECTION_METHOD,
+    SIGN_TEST_ALPHA,
+    PairedCount,
     PartitionComparison,
     decide_verdict,
     pair_scores,
     run_model_comparison,
+    two_sided_sign_p_value,
 )
 from railconfirm.training.dataset import load_approved_dataset
 from railconfirm.training.fitter import fit_baseline
@@ -224,6 +228,84 @@ def test_a_candidate_is_recommended_only_when_it_wins_every_part_of_the_locked_c
     verdict = decide_verdict([locked])
     assert verdict.outcome == "candidate"
     assert any("locked" in reason.lower() for reason in verdict.reasons)
+
+
+@pytest.mark.parametrize(
+    "wins,losses,expected",
+    [
+        (9, 1, 0.021484375),
+        (6, 0, 0.03125),
+        (5, 0, 0.0625),
+        (6, 4, 0.75390625),
+        (0, 0, 1.0),
+    ],
+)
+def test_the_sign_test_is_the_exact_two_sided_binomial_probability(wins, losses, expected):
+    """Ties are excluded before the call; the probability is exact, not an approximation."""
+    assert two_sided_sign_p_value(wins, losses) == pytest.approx(expected, abs=1e-9)
+
+
+def paired_count(wins: int, losses: int, ties: int = 0) -> PairedCount:
+    return PairedCount(
+        rows_both_scored=wins + losses + ties,
+        candidate_wins=wins,
+        candidate_losses=losses,
+        ties=ties,
+        only_baseline_scored=0,
+        only_candidate_scored=0,
+        rows_total=wins + losses + ties,
+    )
+
+
+def test_the_paired_counts_publish_the_test_they_are_judged_by():
+    payload = paired_count(9, 1, 90).to_dict()
+    assert payload["sign_test_discordant"] == 10
+    assert payload["sign_test_p_value"] == pytest.approx(0.021484375, abs=1e-9)
+    assert payload["sign_test_significant"] is True
+    # Ties are not evidence either way, and they are not counted as discordant rows.
+    assert paired_count(9, 1, 1000).sign_test_discordant == 10
+
+
+def test_five_discordant_rows_cannot_reach_significance_however_one_sided():
+    """The smallest attainable two-sided p at n=5 is 0.0625, so the rule pre-declares six."""
+    assert MIN_SIGN_TEST_DISCORDANT == 6
+    assert paired_count(5, 0).sign_test_significant is False
+    assert two_sided_sign_p_value(5, 0) > SIGN_TEST_ALPHA
+
+
+def test_a_paired_advantage_within_chance_is_not_a_recommendation():
+    """Twelve wins against ten losses is a coin landing near half, not evidence."""
+    locked = comparison(
+        "test",
+        baseline_brier=0.480,
+        candidate_brier=0.470,
+        baseline_event=0.240,
+        candidate_event=0.230,
+        wins=12,
+        losses=10,
+    )
+    verdict = decide_verdict([locked])
+    assert verdict.outcome == "baseline"
+    reasons = " ".join(verdict.reasons).lower()
+    assert "sign test" in reasons or "significance" in reasons
+    assert "12 wins" in " ".join(verdict.reasons)
+    assert "10 losses" in " ".join(verdict.reasons)
+
+
+def test_six_paired_wins_with_no_losses_clears_the_pre_declared_level():
+    """The smallest one-sided run that can clear 0.05 two-sided: 2/2^6 = 0.03125."""
+    locked = comparison(
+        "test",
+        baseline_brier=0.480,
+        candidate_brier=0.470,
+        baseline_event=0.240,
+        candidate_event=0.230,
+        wins=6,
+        losses=0,
+    )
+    verdict = decide_verdict([locked])
+    assert verdict.outcome == "candidate"
+    assert any("significant" in reason.lower() for reason in verdict.reasons)
 
 
 def test_winning_the_event_but_losing_the_distribution_is_not_a_promotion():
@@ -552,7 +634,18 @@ def test_the_report_defines_every_comparative_number_it_publishes(tmp_path):
     for partition in payload["partitions"]:
         published |= set(partition["comparison"])
     assert published - definitions == set()
-    assert {"brier_delta", "event_brier_delta", "coverage_delta", "candidate_wins"} <= definitions
+    assert {
+        "brier_delta",
+        "event_brier_delta",
+        "coverage_delta",
+        "candidate_wins",
+        "sign_test_p_value",
+        "sign_test_significant",
+    } <= definitions
+    for partition in payload["partitions"]:
+        comparison = partition["comparison"]
+        assert comparison["sign_test_p_value"] is not None
+        assert comparison["sign_test_discordant"] <= comparison["rows_both_scored"]
 
 
 def test_the_report_states_what_the_comparison_cannot_see(tmp_path):
@@ -563,6 +656,8 @@ def test_the_report_states_what_the_comparison_cannot_see(tmp_path):
     assert "no calibration" in joined
     assert "one locked period" in joined
     assert "synthetic" in joined
+    assert "independent" in joined
+    assert "sign test" in joined
 
 
 def test_a_verdict_of_undetermined_is_not_written_up_as_a_pass(tmp_path):
@@ -618,6 +713,8 @@ def test_the_compare_command_runs_and_states_the_verdict(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "Verdict:" in out
     assert "=== Model comparison report ===" in out
+    assert "exact sign test" in out
+    assert "discordant rows" in out
     payload = (tmp_path / "compare.json").read_text(encoding="utf-8")
     assert MODEL_SELECTION_METHOD in payload
 

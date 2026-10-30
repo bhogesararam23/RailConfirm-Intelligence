@@ -483,11 +483,14 @@ Eligibility thresholds were NOT met; fitted only because this is a labelled synt
   fitted on **one split** — the run refuses different partitions, different targets, the same
   estimator on both sides, or two different prevalence baselines — and rows are paired by
   **partition position**, the key that still matches reservations up when the two models abstain
-  on different rows. The verdict reads the **locked period** and requires four things at once:
-  distribution Brier improved, event Brier improved, coverage not worse, and strictly more
-  paired wins than losses. Anything else prints `baseline` with each failing condition at its
-  own numbers; a locked period with no rows both models answered is `undetermined`, which is not
-  a pass. No flag lets a caller choose the deciding window.
+  on different rows. The verdict reads the **locked period** and requires five things at once:
+  distribution Brier improved, event Brier improved, coverage not worse, strictly more paired
+  wins than losses, and a **pre-declared exact two-sided sign test at 0.05 with at least six
+  discordant rows** (ADR-0039). The p-value, wins, losses, ties and discordant count are
+  printed, and the report states that the test is approximate for correlated booking rows.
+  Anything else prints `baseline` with each failing condition at its own numbers; a locked
+  period with no rows both models answered is `undetermined`, which is not a pass. No flag lets
+  a caller choose the deciding window.
 - Not implemented: a per-segment calibration correction, and any number computed from approved
   real data. The reports state both limits in their own words.
 

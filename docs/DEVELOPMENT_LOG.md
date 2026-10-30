@@ -2384,3 +2384,53 @@ and production build green at `9e49050`.
 reports say so.
 - No approved real dataset exists, so no report can claim railway accuracy.
 
+## 2026-10-31 — A paired win had no test against chance (ADR-0039)
+
+### Changed
+- **Significance is a condition for `candidate`.** The locked-period rule required strictly
+more paired wins than losses, so 12 wins and 10 losses over a 100-row period was a
+recommendation even though the exact two-sided probability of a split that lopsided is 0.83.
+An exact two-sided binomial sign test on discordant rows (ties excluded) at alpha 0.05 is now
+an additional condition. The level and the six-discordant-row floor are declared in the ADR
+before any real comparison has been run; changing either needs its own decision.
+- **The test does not replace the direction conditions.** A significant advantage with worse
+distribution Brier, worse event Brier or worse coverage remains `baseline`, and each failure
+prints the p-value, wins, losses, ties and discordant count. Six wins and no losses
+(p = 0.03125) can be a candidate; 12–10 (p = 0.83) cannot.
+- **The comparison publishes the test.** Every partition gains `sign_test_discordant`,
+`sign_test_p_value` and `sign_test_significant`, each defined in the report. The method line
+names the test, the terminal output prints it, and `COMPARISON_REPORT_SCHEMA_VERSION` rises to
+`1.1.0` because keys were added and no existing key changed meaning. The report states that
+passengers in one booking are dependent, so the p-value is approximate for correlated rows and
+is not a group-outcome test.
+
+### Found while writing the tests
+- The exact test needs a floor as well as a level: at five discordant rows the smallest
+attainable two-sided p is 0.0625, so a 5–0 split cannot clear 0.05 however lopsided it looks.
+The floor is stated in the failure reason rather than hidden in the p-value.
+- Ties carry no information and must be excluded before the denominator is formed. A run with
+nine wins, one loss and a thousand ties has the same evidence about the models as nine wins,
+one loss and no ties; counting ties as rows would drive every p-value toward 1.
+- The sign test's independence assumption is not true of booking rows. This does not make the
+test invalid for its purpose — it is the pre-declared rule and the outcome rows are the
+product's own quantity — but the limitation is now published rather than left to an expert
+reader.
+
+### Checks run
+- Live comparison on the labelled 240-row synthetic fixture: validation 34 wins / 26 losses,
+p = 0.366294; locked 29 wins / 31 losses, p = 0.897422; verdict `baseline`, with both failing
+direction conditions printed. This demonstrates the rule firing; it is not railway evidence.
+- `pytest tests/training/test_compare.py` → 50 passed.
+- `pytest tests/ -q --cov=railconfirm --cov-fail-under=90` → **1117 passed**, total coverage
+**96.50%** (4958 statements, 113 missed; 1328 branches, 105 partial).
+- `ruff check railconfirm/ tests/` clean. `mypy railconfirm` clean in 44 source files.
+- Frontend untouched; its last measured state was 118 tests, type check, lint and production
+build green at `9e49050`.
+
+### Unresolved
+- The independence approximation stands until a group-aware paired test is designed under its
+  own ADR; the report says so in every comparison.
+- The rule has never seen an approved dataset. The first real comparison will be the first
+  test of whether six discordant locked rows are practically available, not of whether the
+  level is correct.
+

@@ -12,13 +12,20 @@ Three things make the comparison mean something:
 * the paired counts only ever compare rows **both** models answered. A model that abstains
   more can score better on the rows it chose, and that is a coverage change, not accuracy;
 * the recommendation requires the candidate to win the distribution score, the target event
-  score, the paired row count and the coverage floor at the same time — on the locked
-  period, where a win cannot be arranged.
+  score, the paired row count, the coverage floor and a pre-declared exact sign test at the
+  same time — on the locked period, where a win cannot be arranged.
+
+The sign test is declared before any comparison is run: two-sided alpha 0.05 on the rows
+that changed hands, ties excluded, and at least six discordant rows because 2/2^6 = 0.03125
+is the smallest one-sided run that can clear it. A 12-to-10 row advantage is a coin landing
+near half, not evidence, and a promotion rule that reads it as one would be selecting on
+noise.
 """
 
 from __future__ import annotations
 
 import hashlib
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -40,7 +47,8 @@ from railconfirm.training.metrics import (
 )
 
 MODEL_SELECTION_METHOD = (
-    "same split, one prevalence baseline, paired per-row comparison judged on the locked period"
+    "same split, one prevalence baseline, paired per-row comparison judged on the locked "
+    "period with a pre-declared exact sign test at two-sided alpha 0.05"
 )
 """The method line a reader judges these numbers by.
 
@@ -48,6 +56,43 @@ MODEL_SELECTION_METHOD = (
 fitted models may replace the other, and only that."""
 
 LOCKED_PARTITION = "test"
+
+SIGN_TEST_ALPHA = 0.05
+"""Declared before any comparison was run, and not revisited after seeing a result.
+
+The repository holds no approved real dataset, so this level has never been chosen against
+real numbers. Changing it later changes the promotion rule and needs its own decision."""
+
+MIN_SIGN_TEST_DISCORDANT = 6
+"""The fewest rows that changed hands for the test to be able to reach alpha.
+
+Five discordant rows give a smallest attainable two-sided p of 2/2^5 = 0.0625, so a run
+below this floor cannot be significant however one-sided it looks."""
+
+
+def two_sided_sign_p_value(wins: int, losses: int) -> float:
+    """Exact two-sided binomial probability of a split at least this lopsided.
+
+    Under the null both models are equally likely to win a row that changed hands, so the
+    win count is Binomial(n, 1/2) with n = wins + losses; ties carry no information and must
+    already be excluded. The tail is computed in log space so a large held-back period does
+    not overflow the denominator.
+    """
+    n = wins + losses
+    if n == 0:
+        return 1.0
+    smaller = min(wins, losses)
+    log_half = math.log(0.5)
+    terms = [
+        math.lgamma(n + 1)
+        - math.lgamma(k + 1)
+        - math.lgamma(n - k + 1)
+        + n * log_half
+        for k in range(smaller + 1)
+    ]
+    peak = max(terms)
+    log_tail = peak + math.log(math.fsum(math.exp(term - peak) for term in terms))
+    return round(min(1.0, 2.0 * math.exp(log_tail)), 12)
 
 
 @dataclass(frozen=True)
@@ -76,6 +121,23 @@ class PairedCount:
             - self.only_candidate_scored
         )
 
+    @property
+    def sign_test_discordant(self) -> int:
+        """Rows that changed hands; the only rows the sign test reads."""
+        return self.candidate_wins + self.candidate_losses
+
+    @property
+    def sign_test_p_value(self) -> float:
+        return two_sided_sign_p_value(self.candidate_wins, self.candidate_losses)
+
+    @property
+    def sign_test_significant(self) -> bool:
+        """Whether the row advantage clears the level declared before the comparison."""
+        return (
+            self.sign_test_discordant >= MIN_SIGN_TEST_DISCORDANT
+            and self.sign_test_p_value < SIGN_TEST_ALPHA
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "rows_total": self.rows_total,
@@ -86,6 +148,9 @@ class PairedCount:
             "only_baseline_scored": self.only_baseline_scored,
             "only_candidate_scored": self.only_candidate_scored,
             "neither_scored": self.neither_scored,
+            "sign_test_discordant": self.sign_test_discordant,
+            "sign_test_p_value": self.sign_test_p_value,
+            "sign_test_significant": self.sign_test_significant,
         }
 
 
@@ -223,7 +288,7 @@ def _locked(partitions: Sequence[PartitionComparison]) -> PartitionComparison | 
 
 
 def _wins_everywhere(item: PartitionComparison) -> bool:
-    """All four conditions at once, or it is not a replacement."""
+    """Every condition at once, or it is not a replacement."""
     return (
         item.paired.comparable
         and item.brier_delta is not None
@@ -232,6 +297,7 @@ def _wins_everywhere(item: PartitionComparison) -> bool:
         and item.event_brier_delta < 0
         and item.candidate.coverage >= item.baseline.coverage
         and item.paired.candidate_wins > item.paired.candidate_losses
+        and item.paired.sign_test_significant
     )
 
 
@@ -243,7 +309,11 @@ def _describe(item: PartitionComparison) -> str:
         f"{item.event_brier_delta}), coverage {item.baseline.coverage:.1%} -> "
         f"{item.candidate.coverage:.1%}, paired "
         f"{item.paired.candidate_wins} wins / {item.paired.candidate_losses} losses / "
-        f"{item.paired.ties} ties over {item.paired.rows_both_scored} rows both answered"
+        f"{item.paired.ties} ties over {item.paired.rows_both_scored} rows both answered "
+        f"(exact sign test p = {item.paired.sign_test_p_value:.6f} over "
+        f"{item.paired.sign_test_discordant} discordant rows, "
+        f"{'significant' if item.paired.sign_test_significant else 'not significant'} at "
+        f"{SIGN_TEST_ALPHA:.2f})"
     )
 
 
@@ -289,9 +359,11 @@ def decide_verdict(partitions: Sequence[PartitionComparison]) -> Verdict:
     failures = _failures(locked)
     if not failures:
         reasons.append(
-            "The candidate improved both scores, held its coverage, and won more rows "
-            "than it lost on the locked period. Promotion remains a human act: this is "
-            "evidence about these rows, and nothing here has been read from real data."
+            "The candidate improved both scores, held its coverage, won more rows than it "
+            "lost, and that row advantage is significant at the pre-declared two-sided "
+            f"{SIGN_TEST_ALPHA:.2f} level on the locked period. Promotion remains a human "
+            "act: this is evidence about these rows, and nothing here has been read from "
+            "real data."
         )
         return Verdict(outcome="candidate", reasons=reasons)
     reasons.extend(failures)
@@ -332,6 +404,24 @@ def _failures(item: PartitionComparison) -> list[str]:
             f"Blocked on the locked period: the candidate did not win more rows than it "
             f"lost ({item.paired.candidate_wins} wins, {item.paired.candidate_losses} "
             f"losses, {item.paired.ties} ties)."
+        )
+    elif not item.paired.sign_test_significant:
+        if item.paired.sign_test_discordant < MIN_SIGN_TEST_DISCORDANT:
+            detail = (
+                f"only {item.paired.sign_test_discordant} rows changed hands, below the "
+                f"{MIN_SIGN_TEST_DISCORDANT} the exact test needs to reach "
+                f"{SIGN_TEST_ALPHA:.2f} even if every one favoured the candidate"
+            )
+        else:
+            detail = (
+                f"the exact sign test on {item.paired.sign_test_discordant} discordant rows gives "
+                f"p = {item.paired.sign_test_p_value:.6f}, above the pre-declared "
+                f"two-sided {SIGN_TEST_ALPHA:.2f} level"
+            )
+        failures.append(
+            f"Blocked on the locked period: the candidate's row advantage is not "
+            f"significant ({item.paired.candidate_wins} wins, "
+            f"{item.paired.candidate_losses} losses, {item.paired.ties} ties; {detail})."
         )
     return failures
 
@@ -676,6 +766,12 @@ def describe_result(result: ModelComparisonResult) -> str:
             f"{paired.only_baseline_scored} answered only by the baseline, "
             f"{paired.only_candidate_scored} only by the candidate, "
             f"{paired.neither_scored} by neither"
+        )
+        lines.append(
+            f"    sign test: exact two-sided p = {paired.sign_test_p_value:.6f} over "
+            f"{paired.sign_test_discordant} discordant rows, "
+            f"{'significant' if paired.sign_test_significant else 'not significant'} at "
+            f"{SIGN_TEST_ALPHA:.2f}"
         )
     lines.append(f"Verdict: {result.verdict.outcome}")
     lines.extend(f"  - {reason}" for reason in result.verdict.reasons)

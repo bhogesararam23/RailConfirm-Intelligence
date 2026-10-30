@@ -3,6 +3,8 @@
 - **Status:** Accepted
 - **Date:** 2026-10-24
 - **Decision owner:** Project maintainer
+- **Amended by:** ADR-0039 adds a pre-declared exact sign test to the locked-period
+  conditions; every other part of this decision stands.
 - **Related:** ADR-0011 (candidate-only artifacts, target-event scoring, promotion is human),
   ADR-0013 (one as-of rule across fit/score/serve), ADR-0017 (calibration is measured on the
   locked test; the same discipline applies to a model choice), ADR-0018 (decay over time),

@@ -1156,7 +1156,7 @@ def write_decay_report(report: FrozenDecayReport, path: Path) -> Path:
     return target
 
 
-COMPARISON_REPORT_SCHEMA_VERSION = "1.0.0"
+COMPARISON_REPORT_SCHEMA_VERSION = "1.1.0"
 """Its own shape again: this payload compares two models, which neither a single run nor a
 temporal walk of one model describes."""
 
@@ -1202,6 +1202,23 @@ COMPARISON_METRIC_DEFINITIONS: dict[str, str] = {
     ),
     "neither_scored": "Rows in the partition that both models refused.",
     "rows_total": "Rows in the partition, scored by either model or neither.",
+    "sign_test_discordant": (
+        "Rows that changed hands — a win plus a loss. Ties carry no information about which "
+        "model is better and are excluded before the test is computed."
+    ),
+    "sign_test_p_value": (
+        "Exact two-sided binomial probability, under the null that either model is equally "
+        "likely to win a discordant row, of a split at least as lopsided as the one observed. "
+        "Rounded to twelve decimal places; a value of 0 means below that precision. This is "
+        "not a normal approximation and it is not adjusted for multiple comparisons — there "
+        "is one locked-period comparison."
+    ),
+    "sign_test_significant": (
+        "Whether the row advantage clears the pre-declared two-sided level of 0.05 with at "
+        "least six discordant rows (2/2^6 = 0.03125 is the smallest one-sided run that can "
+        "clear it). A false value blocks a candidate verdict even when every other condition "
+        "holds."
+    ),
     "prevalence": (
         "The one reference distribution both models are scored against: the outcome shares of "
         "the shared training window. Reported because two models compared against different "
@@ -1277,7 +1294,10 @@ class ComparisonReport:
                 f"{compare['rows_both_scored']} rows both answered "
                 f"({compare['only_baseline_scored']} baseline-only, "
                 f"{compare['only_candidate_scored']} candidate-only, "
-                f"{compare['neither_scored']} by neither)"
+                f"{compare['neither_scored']} by neither); exact sign test "
+                f"p = {compare['sign_test_p_value']:.6f} over "
+                f"{compare['sign_test_discordant']} discordant rows, "
+                f"{'significant' if compare['sign_test_significant'] else 'not significant'}"
             )
         lines += ["", f"Verdict: {self.verdict['outcome']}", ""]
         lines += [f"  - {reason}" for reason in self.verdict["reasons"]]
@@ -1314,6 +1334,10 @@ def build_comparison_report(
         "Wins and ties are counted on the target event's squared error, because that is the "
         "number a passenger is handed; the distribution deltas are reported beside them and "
         "a candidate must improve both.",
+        "The sign test treats discordant rows as independent. Passengers in one booking are "
+        "not independent — their outcomes move together (ADR-0016) — so the test is "
+        "approximate for bookings whose rows are correlated, and it is not a substitute for "
+        "the group-outcome evaluation.",
         "RailConfirm is an independent research tool and not an official IRCTC service.",
     ]
     if is_synthetic:

@@ -162,11 +162,19 @@ Accept new features only when the preregistered evaluation shows incremental ben
 - If a candidate does not beat the baseline, report that result and revisit data or formulation.
 - Implemented (ADR-0021): `python -m railconfirm.training compare` is the acceptance rule above,
   executed rather than advised. It chooses no metric after seeing data — the deciding partition is
-  fixed to the locked period, the paired lens is the target event, and the four conditions
-  (distribution Brier, event Brier, coverage, paired wins over losses) must all hold there. A
+  fixed to the locked period, the paired lens is the target event, and the four direction
+  conditions (distribution Brier, event Brier, coverage, paired wins over losses) must all hold
+  there, together with the significance condition below. A
   candidate that fails is reported as `baseline` with each failing condition printed at its own
   numbers, and a locked period with no rows both models answered is `undetermined` rather than a
   tie. Neither model is promoted by the run.
+- Implemented (ADR-0039): the paired win count must also beat chance. An exact two-sided
+  binomial sign test on discordant rows (ties excluded) at a level of 0.05, declared before any
+  real comparison was run, is an additional condition for `candidate`; at least six discordant
+  rows are required because 2/2^6 = 0.03125 is the smallest one-sided run that can clear it.
+  The p-value and its counts are published with definitions. The test treats rows as
+  independent, so its p-value is approximate when a locked period contains correlated booking
+  rows; it is not a group-outcome test, and the group evaluation remains separate.
 - Implemented (ADR-0023): the comparison refuses before it scores when it would not be one.
   Both models must name the same `(dataset_id, sha256)` pair and that pair must be the file
   being scored; `status_mapping_version`, `cohort_semantics`, `outcome_classes` and
