@@ -7,7 +7,11 @@ from railconfirm.domain.prediction import (
     PassengerOutcome,
     make_abstention_outcome,
 )
-from railconfirm.inference.group import compute_group_outcomes
+from railconfirm.inference.group import (
+    compute_group_outcomes,
+    compute_poisson_binomial_pmf,
+    compute_queue_dependent_bounds,
+)
 
 
 def test_empty_passenger_outcomes():
@@ -84,8 +88,6 @@ def test_group_abstains_if_any_passenger_abstains():
 
 
 def test_poisson_binomial_pmf():
-    from railconfirm.inference.group import compute_poisson_binomial_pmf
-
     # Empty list
     assert compute_poisson_binomial_pmf([]) == [1.0]
 
@@ -137,8 +139,6 @@ def test_multi_passenger_at_least_k_cnf_independence():
 
 
 def test_queue_dependent_comonotonic_bounds():
-    from railconfirm.inference.group import compute_queue_dependent_bounds
-
     assert compute_queue_dependent_bounds([]) is None
 
     p1 = PassengerOutcome(
@@ -186,8 +186,6 @@ def test_queue_dependent_comonotonic_bounds():
 
 
 def test_queue_dependent_abstains_on_abstained_passenger():
-    from railconfirm.inference.group import compute_queue_dependent_bounds
-
     p1 = PassengerOutcome(
         passenger_id="p-1",
         p_cnf=0.8,

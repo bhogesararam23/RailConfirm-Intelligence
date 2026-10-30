@@ -43,6 +43,17 @@ class FrequencyTableValidationError(DatasetValidationError, ValueError):
     """
 
 
+class ProbabilityError(RailConfirmError, ValueError):
+    """Raised when a probability input cannot support the arithmetic asked of it.
+
+    A probability outside ``[0, 1]``, a NaN, or a set of joint figures that no
+    distribution could produce is a defect upstream, not a number to clamp. Silently
+    repairing it would publish a confident figure computed from input nobody
+    understood, so callers get an error they can trace instead. ``ValueError`` is
+    inherited so a boundary can treat it as bad input without importing the domain.
+    """
+
+
 class ModelArtifactError(RailConfirmError):
     """Raised when a model artifact is present but cannot be trusted.
 

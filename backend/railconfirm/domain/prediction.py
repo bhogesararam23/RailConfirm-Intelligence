@@ -17,12 +17,14 @@ Key design rules
 
 from __future__ import annotations
 
+import math
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
 
+from railconfirm.domain.exceptions import ProbabilityError
 from railconfirm.domain.validation import ensure_aware
 
 # ── Enumerations ───────────────────────────────────────────────────────────────
@@ -105,6 +107,14 @@ class AbstentionReason(str, Enum):
 
 # Tolerance for checking that probabilities sum to 1.
 PROBABILITY_SUM_TOLERANCE = 1e-6
+
+GROUP_DERIVED_TOLERANCE = 1e-5
+"""How far two separately rounded group tables may disagree.
+
+Each figure is published rounded to six decimals and the derived tables are built from
+those rounded values, so a difference of a few rounding steps is arithmetic, not an
+error. Anything larger means two different computations, which is what the check is
+for."""
 
 
 @dataclass(frozen=True)
@@ -237,6 +247,16 @@ class GroupOutcome:
     For the independence baseline: P(all CNF) = product of individual P(CNF).
     This is an approximation that must be explicitly labelled — passengers in
     one booking share context and their outcomes may be correlated.
+
+    What every constructed instance must satisfy, whichever method produced it:
+
+    * all three joint figures set, finite and inside ``[0, 1]``, or all three absent;
+    * ``P(all CNF) <= P(all CNF or RAC)``, because confirmed is a subset of
+      confirmed-or-RAC;
+    * ``P(all CNF or RAC) + P(at least one WL) <= 1``, because those two events cannot
+      both happen;
+    * when the count tables are published, ``P(K = k)`` sums to one and ``P(K >= k)``
+      is its tail — a table nobody can reconcile is not evidence about a group.
     """
 
     p_all_cnf: float | None
@@ -247,6 +267,118 @@ class GroupOutcome:
     abstention_reason: AbstentionReason | None
     p_at_least_k_cnf: dict[int, float] | None = None
     p_exactly_k_cnf: dict[int, float] | None = None
+
+    def __post_init__(self) -> None:
+        self._validate_joint_probabilities()
+        self._validate_count_tables()
+
+    def _validate_joint_probabilities(self) -> None:
+        figures = (self.p_all_cnf, self.p_all_cnf_or_rac, self.p_at_least_one_wl)
+        if self.abstention_reason is not None:
+            if any(value is not None for value in figures):
+                raise ProbabilityError(
+                    "An abstaining GroupOutcome must carry no joint probabilities: a "
+                    "figure printed beside an abstention is a number nobody computed."
+                )
+            if self.p_at_least_k_cnf is not None or self.p_exactly_k_cnf is not None:
+                raise ProbabilityError(
+                    "An abstaining GroupOutcome must carry no count distribution: there "
+                    "are no per-passenger estimates to convolve."
+                )
+            return
+        if any(value is None for value in figures):
+            raise ProbabilityError(
+                "A supported GroupOutcome must set all three joint probabilities; a "
+                "missing one would read as zero to every caller that multiplies it."
+            )
+        for name in ("p_all_cnf", "p_all_cnf_or_rac", "p_at_least_one_wl"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ProbabilityError(
+                    f"GroupOutcome {name} must be a number, got {value!r}."
+                )
+            if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+                raise ProbabilityError(
+                    f"GroupOutcome {name} must be a finite probability in [0, 1], got "
+                    f"{value!r}."
+                )
+        # The loop above already established that all three figures are numbers, but the
+        # attribute lookups re-widen the types, so narrow once here instead of ignoring.
+        all_cnf = self.p_all_cnf
+        all_cnf_or_rac = self.p_all_cnf_or_rac
+        at_least_one_wl = self.p_at_least_one_wl
+        assert all_cnf is not None and all_cnf_or_rac is not None
+        assert at_least_one_wl is not None
+        if all_cnf > all_cnf_or_rac:
+            raise ProbabilityError(
+                f"P(all CNF) = {all_cnf} exceeds P(all CNF or RAC) = {all_cnf_or_rac}: "
+                "confirmed is a subset of confirmed-or-RAC, so the first can never be "
+                "the larger."
+            )
+        combined = all_cnf_or_rac + at_least_one_wl
+        if combined > 1.0 + GROUP_DERIVED_TOLERANCE:
+            raise ProbabilityError(
+                f"P(all CNF or RAC) = {all_cnf_or_rac} plus P(at least one WL) = "
+                f"{at_least_one_wl} exceeds 1: one passenger cannot be both settled and "
+                "waitlisted, so those events must fit inside the whole."
+            )
+
+    def _validate_count_tables(self) -> None:
+        exactly = self.p_exactly_k_cnf
+        at_least = self.p_at_least_k_cnf
+        if exactly is None and at_least is None:
+            return
+        # No abstention check here: _validate_joint_probabilities already refuses a
+        # count distribution beside an abstention, so reaching this point means the
+        # group is supported.
+        if exactly is None or at_least is None:
+            raise ProbabilityError(
+                "P(K = k) and P(K >= k) must be published together: either alone cannot "
+                "be reconciled, and an exactly-k table on its own invites the "
+                "independence reading this module labels as an assumption."
+            )
+        highest = max(exactly)
+        if highest < 1 or sorted(exactly) != list(range(highest + 1)):
+            raise ProbabilityError(
+                f"P(K = k) must be keyed by every count from 0 to the group size, got "
+                f"{sorted(exactly)}."
+            )
+        if sorted(at_least) != list(range(1, highest + 1)):
+            raise ProbabilityError(
+                f"P(K >= k) must be keyed by every count from 1 to {highest}, got "
+                f"{sorted(at_least)}."
+            )
+        for table, name in ((exactly, "P(K = k)"), (at_least, "P(K >= k)")):
+            for key, value in table.items():
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    raise ProbabilityError(f"{name}[{key}] must be a number, got {value!r}.")
+                if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+                    raise ProbabilityError(
+                        f"{name}[{key}] must be a finite probability in [0, 1], got "
+                        f"{value!r}."
+                    )
+        total = sum(exactly.values())
+        if abs(total - 1.0) > GROUP_DERIVED_TOLERANCE:
+            raise ProbabilityError(
+                f"P(K = k) sums to {total}, not 1: the counts have no exact probability "
+                "space behind them."
+            )
+        for k in range(1, highest + 1):
+            tail = sum(exactly[j] for j in range(k, highest + 1))
+            if abs(at_least[k] - tail) > GROUP_DERIVED_TOLERANCE:
+                raise ProbabilityError(
+                    f"P(K >= {k}) = {at_least[k]} is not the tail of P(K = k) = {tail}: "
+                    "the two tables were derived from different arithmetic."
+                )
+        # Tails of a non-negative exactly-k table are non-increasing, so the check above
+        # already covers "P(K >= k) cannot grow with k" — a separate test would be dead.
+        all_cnf = self.p_all_cnf
+        assert all_cnf is not None  # guaranteed for a supported group
+        if abs(at_least[highest] - all_cnf) > GROUP_DERIVED_TOLERANCE:
+            raise ProbabilityError(
+                f"P(K >= {highest}) = {at_least[highest]} must equal P(all CNF) = "
+                f"{all_cnf}: they are the same event under another name."
+            )
 
 
 # ── Prediction record ──────────────────────────────────────────────────────────

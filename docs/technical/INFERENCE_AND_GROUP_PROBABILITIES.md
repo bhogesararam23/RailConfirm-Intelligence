@@ -55,6 +55,22 @@ The primary ideal is a calibrated joint distribution over passenger outcomes. As
 
 Under positive queue correlation, true joint confirmation lies between the independence lower bound $\prod p_i$ and the comonotonic upper bound $\min_i p_i$. Both methods enforce probability axioms ($\sum P(K=k) = 1.0$, $P(\text{all CNF}) = P(K=n) = P(K \ge n)$) and are evaluated in `score_partition()` against observed group outcomes.
 
+### What the group arithmetic refuses (ADR-0024)
+
+A bound and an independence approximation are different claims about the same booking. Since they arrive in the same response shape, the arithmetic fails loudly rather than publishing a figure that only looks like an estimate.
+
+- **An input that is not a probability is refused, not clamped.** A marginal of `1.5` used to become certainty and a `NaN` used to become certainty too, because the clamp ran before the value was checked. `compute_poisson_binomial_pmf` and both group methods now raise `ProbabilityError` naming the passenger index.
+- **An unknown method name is refused.** `method="queue_dependent"` (no suffix) previously fell through to the independence branch and returned a product of marginals under a name nobody implements. `GROUP_METHODS` is the closed list, and a name outside it raises.
+- **A missing marginal is refused, not read as zero.** A supported passenger always carries all five probabilities, but the group used to write `po.p_cnf or 0.0`, which turns absence into the least probable outcome.
+- **Every published `GroupOutcome` is checked by its own constructor**: all three joint figures or none; each finite and inside `[0, 1]`; $P(\text{all CNF}) \le P(\text{all CNF or RAC})$, because confirmed is a subset of confirmed-or-RAC; $P(\text{all CNF or RAC}) + P(\text{at least one WL}) \le 1$, because those events are disjoint; when the count tables are published, $P(K=k)$ sums to one, $P(K \ge k)$ is its tail, and $P(K \ge n) = P(\text{all CNF})$.
+- **A group that abstains carries no figure and no count table.** An abstention with a number beside it is a number nobody computed.
+
+None of this makes the arithmetic empirically validated. The constructor proves a table is internally consistent; only labelled real group outcomes can show that either bound describes a railway.
+
+### The published count tables
+
+The independence branch derives $P(K \ge k)$ by summing the rounded $P(K=k)$ values rather than convolving twice, so the two tables reconcile exactly instead of to within a rounding step. The comonotonic branch derives $P(K=k)$ from the differences of the sorted marginals, which are non-negative by construction and therefore need no clamp. The whole group is summarized at six decimals because downstream figures are multiplied, not printed.
+
 ## Why marginal probabilities are insufficient
 
 Knowing each passenger's chance of CNF does not uniquely determine the probability that everyone is CNF. Different dependence structures can have identical passenger marginal probabilities but different all-confirmed probabilities. If the model cannot estimate that dependence, it must say that the group estimate is unavailable or clearly mark an explicitly evaluated approximation.
