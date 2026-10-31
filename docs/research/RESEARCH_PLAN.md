@@ -46,6 +46,7 @@ These are hypotheses, not conclusions.
 - Group outcome definition and joint prediction approach.
 - Model card with supported categories and known limitations.
 - Reproducibility instructions for rerunning the evaluation.
+- External research deliverables tracked in `docs/research/EXTERNAL_RESEARCH_INDEX.md`: one evidence-backed document per workstream (`INDIAN_RAILWAYS_DOMAIN_AND_OPERATIONS.md` (A), `HISTORICAL_DATA_AND_DATA_ACQUISITION.md` (B), `RAILWAY_API_AND_PROVIDER_LANDSCAPE.md` (C), `ACADEMIC_LITERATURE_REVIEW.md` (D), `COMPETITOR_AND_MARKET_LANDSCAPE.md` (E), `CONTEXTUAL_FEATURE_CATALOGUE.md` (F), `PRIVACY_LEGAL_LICENSING_REGULATORY.md` (G), `OPEN_SOURCE_TECHNICAL_ECOSYSTEM.md` (H), `PARTNERSHIP_AND_DATA_ACQUISITION_STRATEGY.md`), plus the master source register `EXTERNAL_RESEARCH_INDEX.md`.
 
 ## Research integrity
 
