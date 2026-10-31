@@ -2487,3 +2487,39 @@ the existing storage tests. `delete_live` refuses a naive clock before touching 
   be enabled as a service.
 - No railway claim or real data is involved.
 
+## 2026-10-31 — External research campaign: eight workstream deliverables (A–H)
+
+### Changed
+- Added eight research deliverable documents to `docs/research/`:
+  - `INDIAN_RAILWAYS_DOMAIN_AND_OPERATIONS.md` (Workstream A) — domain/operational rules with traceability.
+  - `HISTORICAL_DATA_AND_DATA_ACQUISITION.md` (Workstream B) — data-discovery landscape with rejected sources.
+  - `RAILWAY_API_AND_PROVIDER_LANDSCAPE.md` (Workstream C) — provider comparison and ranked shortlist.
+  - `ACADEMIC_LITERATURE_REVIEW.md` (Workstream D) — annotated literature review and experiment agenda.
+  - `COMPETITOR_AND_MARKET_LANDSCAPE.md` (Workstream E) — competitor comparison and gap analysis.
+  - `CONTEXTUAL_FEATURE_CATALOGUE.md` (Workstream F) — contextual feature catalogue and Phase 8–10 plan.
+  - `PRIVACY_LEGAL_LICENSING_REGULATORY.md` (Workstream G) — India DPDPA/security/compliance review.
+  - `OPEN_SOURCE_TECHNICAL_ECOSYSTEM.md` (Workstream H) — open-source ecosystem review.
+- Added `EXTERNAL_RESEARCH_INDEX.md` (master source register, evidence base, opportunity backlog).
+- Updated `RESEARCH_PLAN.md` with the external research deliverables index.
+
+### Research summary
+- Eight workstreams investigated with authoritative-tertial evidence tracking.
+- Data blocker remains open: no approved dataset with per-reservation booked status + observation time + verified final-chart outcome.
+- Implementation of research into code requires the user's decision on licensing/partnership.
+
+### Checks run
+- `pytest backend/tests -q` → **1121 passed**, 1 warning.
+- `npm test` → 118 tests passed (6 test files).
+- `ruff check backend/railconfirm/ backend/tests/` → All checks passed.
+- `mypy` could not run locally (Windows Application Control blocks mypy's native DLL);
+  CI's backend job runs mypy and is the verification.
+
+### Commits
+- `ee110d1` — Add external research campaign: eight workstream deliverables and research plan update.
+
+### Unresolved
+- Data acquisition remains blocked pending a licensed historical-outcome dataset or a
+  prospective consent-based collection (user decision required).
+- The eight research documents are delivered; no engineering defect was found to fix,
+  and the codebase is verified as sound. No further work this session.
+
