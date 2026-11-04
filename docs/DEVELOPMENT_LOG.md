@@ -2601,21 +2601,23 @@ the existing storage tests. `delete_live` refuses a naive clock before touching 
 - `backend/railconfirm/data/longitudinal_validator.py`: Added `validate_longitudinal_dataset`, `LongitudinalAuditReport`, and `LongitudinalQualityMetrics`. Enforces chronological ordering, status syntax, timezone awareness, and flags transition anomalies (e.g., RAC -> WL regression, post-confirmation cancellation vs regression).
 - `backend/railconfirm/data/inspection.py`: Added `detect_schema` for auto-detecting longitudinal, row interchange, and prospective schemas. Added `quarantine_dataset` to isolate unparseable or rejected datasets with SHA-256 and `.quarantine.json` audit sidecars.
 - `backend/railconfirm/data/manifest.py`: Extended manifest generation and verification for longitudinal datasets.
-- `backend/railconfirm/data/prospective.py`: Added `ProspectiveSubmission`, `ProspectiveObservation`, `ProspectiveBatch`, `ConsentMetadata`, `ReviewStatus`. Implemented `scan_for_personal_data` (flagging 10-digit PNRs, emails, phones, Aadhaar numbers), `derive_pseudonym` (salted HMAC-SHA256), operator review transitions, and export to longitudinal format.
-- `backend/railconfirm/data/__main__.py`: Added CLI subcommands `detect`, `snapshot`, `quarantine`, and updated `validate` with longitudinal format flag.
+- `backend/railconfirm/data/prospective.py`: Added `ProspectiveSubmission`, `ProspectiveObservation`, `ProspectiveBatch`, `ConsentMetadata`, `ReviewStatus`. Implemented `scan_for_personal_data` (flagging 10-digit PNRs, emails, phones, Aadhaar numbers), `derive_pseudonym` (salted HMAC-SHA256), operator review transitions (`review_batch`), structured privacy audit report (`ProspectiveAuditReport`, `validate_prospective_batch`), and export to longitudinal format.
+- `backend/railconfirm/data/__main__.py`: Added CLI subcommands `detect`, `snapshot`, `quarantine`, prospective subcommands (`prospective scan`, `prospective review`, `prospective export`), and updated `validate` with longitudinal and prospective format auto-detection.
+- `backend/tests/support/datasets.py`: Added synthetic longitudinal dataset generator (`build_synthetic_longitudinal_dataset`, `write_synthetic_longitudinal_dataset`) and prospective batch generator (`build_synthetic_prospective_batch`, `write_synthetic_prospective_batch`) with explicit `is_synthetic=True` provenance tags.
 - `backend/railconfirm/domain/exceptions.py`: Declared `SecurityError` for PII and access violations.
 - `backend/tests/data/test_longitudinal.py`: Added 10 tests covering serialization, desynchronized clocks, and point-in-time snapshotting.
 - `backend/tests/data/test_longitudinal_validator.py`: Added 8 tests covering structural validation, chronology violations, and transition anomalies.
 - `backend/tests/data/test_inspection.py`: Added 6 tests for schema detection and cryptographic quarantine workflows.
-- `backend/tests/data/test_prospective.py`: Added 11 tests covering consent validation, PII scanning, salted pseudonym derivation, operator review lifecycle, and export.
-- `backend/tests/data/test_intake_cli.py`: Added 8 tests covering `detect`, `snapshot`, `quarantine`, and `validate` CLI commands.
+- `backend/tests/data/test_prospective.py`: Added 14 tests covering consent validation, PII scanning, salted pseudonym derivation, operator review lifecycle, audit reporting, and export.
+- `backend/tests/data/test_intake_cli.py`: Added 13 tests covering `detect`, `snapshot`, `quarantine`, `validate`, `prospective scan`, `prospective review`, and `prospective export` CLI commands.
 - `backend/tests/data/test_phase2_pipeline.py`: Added full end-to-end integration test verifying the complete data intake, inspection, snapshotting, manifest verification, and baseline modeling pipeline.
 - `docs/adr/ADR-0043-versioned-longitudinal-observation-contract-and-point-in-time-snapshot-conversion.md`: Architectural record for longitudinal schema v2.0.0 and snapshotting.
 - `docs/adr/ADR-0044-consent-aware-prospective-collection-and-operator-governance.md`: Architectural record for prospective collection and operator governance.
 - `docs/adr/README.md`, `docs/data/DATA_CONTRACT.md`, `docs/data/SOURCE_REGISTER.md`, `docs/PROJECT_STATUS.md`: Updated with Phase 2 status, schemas, and verification evidence.
 
 ### Checks run
-- `pytest backend/tests` -> 1,233 passed, 1 warning in 164s.
-- `npm test` in `frontend/` -> 129 passed in 5.96s.
+- `pytest backend/tests` -> 1,240 passed in 146s.
+- `npm test` in `frontend/` -> 129 passed in 9.38s.
+- `npx playwright test` in `frontend/` -> 6 passed in 35.1s.
 - `python scripts/check_repository_hygiene.py` -> Passed in 1.4s.
-- `ruff check --config backend/pyproject.toml backend/railconfirm/data backend/tests/data` -> All checks passed.
+- `ruff check --config backend/pyproject.toml backend/railconfirm/data backend/tests/data backend/tests/support` -> All checks passed.
