@@ -161,6 +161,59 @@ jobs:
           path: smoke-logs/
           if-no-files-found: ignore
 
+  browser-e2e:
+    name: Browser E2E — Playwright user journey and history verification
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: |
+          pip install uv
+          uv venv .venv
+          source .venv/bin/activate
+          uv pip install -e .
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright E2E tests
+        working-directory: frontend
+        run: |
+          source ../backend/.venv/bin/activate
+          npm run test:e2e
+        env:
+          RAILCONFIRM_HISTORY_ENABLED: "true"
+          RAILCONFIRM_PERSIST_PREDICTIONS: "true"
+          RAILCONFIRM_CORS_ALLOWED_ORIGINS: '["http://localhost:3000","http://127.0.0.1:3000","http://localhost:3010","http://127.0.0.1:3010"]'
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          if-no-files-found: ignore
+
   repository-hygiene:
     name: Documentation, privacy and link checks
     runs-on: ubuntu-latest

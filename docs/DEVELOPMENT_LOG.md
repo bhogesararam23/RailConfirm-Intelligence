@@ -2547,4 +2547,25 @@ the existing storage tests. `delete_live` refuses a naive clock before touching 
 - `npm run type-check && npm run lint` in `frontend/` → Passed.
 - `ruff check --config backend/pyproject.toml scripts/ backend/tests/inference/test_group_invariants.py backend/tests/inference/test_calibration.py` → Passed.
 
+## 2026-11-04 -- Playwright browser E2E verification and CORS DELETE fix
+
+### Scope
+- Introduced real browser end-to-end testing with Playwright to verify the actual user journey, multi-passenger workflow, preset scenarios, structured abstention rendering, and prediction history lifecycle.
+- Discovered and fixed a server CORS configuration defect in backend/railconfirm/api/app.py where DELETE was missing from allow_methods.
+
+### Changed
+- frontend/playwright.config.ts: Added Playwright configuration managing concurrent FastAPI and Next.js processes over loopback sockets with automatic Python binary resolution across Windows and POSIX virtualenvs.
+- frontend/e2e/journey.spec.ts: Added real browser E2E tests for home page rendering, client-side validation barriers, preset journey application, passenger duplication with status sequence incrementing, and live prediction execution with structured abstention output.
+- frontend/e2e/history.spec.ts: Added real browser E2E tests for opt-in report persistence, /history listing, real-time query and target filtering, stored report reopening, and permanent deletion.
+- backend/railconfirm/api/app.py: Added 'DELETE' to CORSMiddleware allow_methods, resolving preflight rejections for stored report removal.
+- .github/workflows/ci.yml: Added browser-e2e CI job running Chromium headless tests against live backend and frontend servers.
+- frontend/package.json: Added test:e2e and test:e2e:ui scripts and devDependencies.
+- .gitignore: Ignored test-results/ and playwright-report/.
+
+### Checks run
+- npx playwright test in frontend/ -> 6 passed in 15.1s.
+- npm test in frontend/ -> 129 passed in 5.96s.
+- npm run type-check && npm run lint in frontend/ -> Passed (0 errors, 0 warnings).
+- pytest backend/tests/ -v --tb=short -> 1,195 passed in 52.84s.
+- python scripts/check_repository_hygiene.py -> Passed in 1.4s.
 

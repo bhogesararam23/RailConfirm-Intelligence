@@ -25,6 +25,8 @@ out/
 coverage/
 .eslintcache
 *.tsbuildinfo
+test-results/
+playwright-report/
 
 # Editors and OS
 .DS_Store
