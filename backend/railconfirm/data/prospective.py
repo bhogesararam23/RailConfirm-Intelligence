@@ -308,6 +308,39 @@ def derive_pseudonym(raw_identifier: str, salt: str | None = None, prefix: str =
 
 
 @dataclass(frozen=True)
+class WithdrawalAuditRecord:
+    """Minimal, non-identifying audit record of a participant consent withdrawal.
+
+    Stores only structural and governance metadata (timestamps, submission ID,
+    salted pseudonym group ID, operator, and reason) without preserving any
+    sensitive personal data.
+    """
+
+    withdrawn_at: str
+    batch_id: str
+    submission_id: str
+    pseudonym_group_id: str
+    prior_review_status: str
+    operator: str
+    reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> WithdrawalAuditRecord:
+        return cls(
+            withdrawn_at=str(data["withdrawn_at"]),
+            batch_id=str(data["batch_id"]),
+            submission_id=str(data["submission_id"]),
+            pseudonym_group_id=str(data["pseudonym_group_id"]),
+            prior_review_status=str(data["prior_review_status"]),
+            operator=str(data["operator"]),
+            reason=str(data["reason"]),
+        )
+
+
+@dataclass(frozen=True)
 class ConsentMetadata:
     """Explicit consent and authority record for prospective data collection."""
 
@@ -581,17 +614,21 @@ class ProspectiveBatch:
     created_at: datetime
     submissions: list[ProspectiveSubmission] = field(default_factory=list)
     schema_version: str = PROSPECTIVE_COLLECTION_SCHEMA_VERSION
+    withdrawal_log: list[WithdrawalAuditRecord] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         ensure_aware(self.created_at, "created_at")
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "schema_version": self.schema_version,
             "batch_id": self.batch_id,
             "created_at": self.created_at.isoformat(),
             "submissions": [s.to_dict() for s in self.submissions],
         }
+        if self.withdrawal_log:
+            data["withdrawal_log"] = [w.to_dict() for w in self.withdrawal_log]
+        return data
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> ProspectiveBatch:
@@ -601,6 +638,9 @@ class ProspectiveBatch:
             created_at=datetime.fromisoformat(str(data["created_at"])),
             submissions=[
                 ProspectiveSubmission.from_dict(s) for s in data.get("submissions", [])
+            ],
+            withdrawal_log=[
+                WithdrawalAuditRecord.from_dict(w) for w in data.get("withdrawal_log", [])
             ],
         )
 
@@ -652,8 +692,10 @@ def withdraw_submission(
     In accordance with participant consent terms and privacy rights, when a participant
     requests withdrawal before formal publication:
     1. The submission's consent metadata is marked withdrawn=True with timestamp and reason.
-    2. The submission's review status transitions to WITHDRAWN.
-    3. The submission is permanently blocked from longitudinal dataset export.
+    2. If previously withdrawn, the original withdrawal timestamp is preserved (idempotent).
+    3. The submission's review status transitions to WITHDRAWN.
+    4. An append-only non-identifying audit record is appended to batch.withdrawal_log.
+    5. The submission is permanently blocked from longitudinal dataset export.
 
     Args:
         batch: The prospective batch containing the submission.
@@ -679,7 +721,12 @@ def withdraw_submission(
             f"Submission '{submission_id}' not found in prospective batch '{batch.batch_id}'."
         )
 
+    prior_status = sub.review_status.value
+    already_withdrawn = sub.consent.withdrawn or sub.review_status == ReviewStatus.WITHDRAWN
     now_iso = datetime.now(tz=UTC).isoformat()
+    original_withdrawn_at = sub.consent.withdrawn_at if already_withdrawn else None
+    effective_withdrawn_at = original_withdrawn_at or now_iso
+
     sub.consent = ConsentMetadata(
         consent_basis=sub.consent.consent_basis,
         notice_version=sub.consent.notice_version,
@@ -688,13 +735,24 @@ def withdraw_submission(
         collected_at=sub.consent.collected_at,
         data_subject_region=sub.consent.data_subject_region,
         withdrawn=True,
-        withdrawn_at=now_iso,
-        withdrawal_reason=reason,
+        withdrawn_at=effective_withdrawn_at,
+        withdrawal_reason=sub.consent.withdrawal_reason or reason,
     )
     sub.review_status = ReviewStatus.WITHDRAWN
     sub.reviewed_by = operator
     sub.review_notes = f"Consent withdrawn by participant: {reason}"
     sub.reviewed_at = now_iso
+
+    audit_entry = WithdrawalAuditRecord(
+        withdrawn_at=effective_withdrawn_at,
+        batch_id=batch.batch_id,
+        submission_id=sub.submission_id,
+        pseudonym_group_id=sub.pseudonym_group_id,
+        prior_review_status=prior_status,
+        operator=operator,
+        reason=reason,
+    )
+    batch.withdrawal_log.append(audit_entry)
     return sub
 
 

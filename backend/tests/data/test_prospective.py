@@ -21,6 +21,7 @@ from railconfirm.data.prospective import (
     ProspectivePassenger,
     ProspectiveSubmission,
     ReviewStatus,
+    WithdrawalAuditRecord,
     approve_batch_for_research,
     atomic_write_json,
     derive_pseudonym,
@@ -364,6 +365,73 @@ def test_participant_consent_withdrawal_lifecycle(sample_submission: Prospective
             source_id="test_source",
             require_all_approved=True,
         )
+
+    # Withdrawal log verification
+    assert len(batch.withdrawal_log) == 1
+    log1 = batch.withdrawal_log[0]
+    assert isinstance(log1, WithdrawalAuditRecord)
+    assert log1.submission_id == sample_submission.submission_id
+    assert log1.pseudonym_group_id == sample_submission.pseudonym_group_id
+    assert log1.prior_review_status == ReviewStatus.PENDING_REVIEW.value
+    assert log1.operator == "operator_lead"
+
+    # Idempotent second withdrawal preserves original timestamp
+    orig_withdrawn_at = updated_sub.consent.withdrawn_at
+    second_sub = withdraw_submission(
+        batch,
+        submission_id=sample_submission.submission_id,
+        reason="Repeated request by participant confirmation.",
+        operator="operator_deputy",
+    )
+    assert second_sub.consent.withdrawn_at == orig_withdrawn_at
+    assert len(batch.withdrawal_log) == 2
+    log2 = batch.withdrawal_log[1]
+    assert log2.prior_review_status == ReviewStatus.WITHDRAWN.value
+    assert log2.operator == "operator_deputy"
+
+    # Batch serialization roundtrips withdrawal_log
+    d = batch.to_dict()
+    assert "withdrawal_log" in d
+    assert len(d["withdrawal_log"]) == 2
+    loaded = ProspectiveBatch.from_dict(d)
+    assert len(loaded.withdrawal_log) == 2
+    assert loaded.withdrawal_log[0].submission_id == sample_submission.submission_id
+
+
+def test_withdraw_approved_submission(sample_submission: ProspectiveSubmission):
+    # Approve submission first
+    sample_submission.review_status = ReviewStatus.APPROVED
+    sample_submission.reviewed_by = "lead_evaluator"
+    sample_submission.review_notes = "Approved for research"
+    sample_submission.reviewed_at = datetime.now(tz=UTC).isoformat()
+
+    batch = ProspectiveBatch(
+        batch_id="BATCH_WITHDRAWAL_002",
+        created_at=datetime(2026, 11, 1, 12, 0, tzinfo=UTC),
+        submissions=[sample_submission],
+    )
+
+    # Participant withdraws consent after approval
+    withdrawn = withdraw_submission(
+        batch,
+        submission_id=sample_submission.submission_id,
+        reason="Revoking research permission after travel completed",
+        operator="privacy_officer",
+    )
+    assert withdrawn.review_status == ReviewStatus.WITHDRAWN
+    assert withdrawn.consent.withdrawn is True
+    assert len(batch.withdrawal_log) == 1
+    assert batch.withdrawal_log[0].prior_review_status == ReviewStatus.APPROVED.value
+    assert batch.withdrawal_log[0].operator == "privacy_officer"
+
+    # Export must now fail
+    with pytest.raises(DatasetValidationError, match="withdrawn participant consent"):
+        export_batch_to_longitudinal(
+            batch,
+            dataset_id="long_withdrawn_post_approval",
+            source_id="test_source",
+        )
+
 
 
 def test_passenger_and_journey_invariants(sample_submission: ProspectiveSubmission):
