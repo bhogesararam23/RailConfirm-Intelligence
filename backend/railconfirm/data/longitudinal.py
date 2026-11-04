@@ -26,6 +26,7 @@ from typing import Any
 
 import pandas as pd
 
+from railconfirm.data._io import atomic_write_text
 from railconfirm.domain.exceptions import DatasetValidationError, TemporalIntegrityError
 from railconfirm.domain.status import NormalizedStatus, parse_status
 from railconfirm.domain.validation import (
@@ -123,7 +124,7 @@ class StatusObservation:
         category = (
             NormalizedStatus(cat_raw)
             if cat_raw in NormalizedStatus._value2member_map_
-            else parsed.category
+            else parsed.normalized
         )
         return cls(
             observation_id=str(data["observation_id"]),
@@ -190,7 +191,7 @@ class FinalOutcome:
         category = (
             NormalizedStatus(cat_raw)
             if cat_raw in NormalizedStatus._value2member_map_
-            else parsed.category
+            else parsed.normalized
         )
         method_raw = str(data.get("verification_method", VerificationMethod.UNKNOWN.value))
         conf_raw = str(data.get("label_confidence", LabelConfidence.UNVERIFIED.value))
@@ -284,7 +285,7 @@ class PassengerReservation:
         category = (
             NormalizedStatus(cat_raw)
             if cat_raw in NormalizedStatus._value2member_map_
-            else parsed.category
+            else parsed.normalized
         )
         instance = cls(
             passenger_record_id=str(data["passenger_record_id"]),
@@ -577,7 +578,7 @@ def create_point_in_time_snapshot(
     cutoff_desc = (
         f"lead_days={as_of_lead_days}"
         if as_of_lead_days is not None
-        else f"datetime={as_of_datetime.isoformat()}"
+        else f"datetime={as_of_datetime.isoformat() if as_of_datetime is not None else 'unknown'}"
     )
 
     for bg in dataset.booking_groups:
@@ -664,12 +665,11 @@ def create_point_in_time_snapshot(
 
 
 def save_longitudinal_dataset(dataset: LongitudinalDataset, path: str | Path) -> None:
-    """Save a longitudinal dataset to disk as deterministic formatted JSON."""
+    """Save a longitudinal dataset to disk as deterministic formatted JSON (atomic)."""
     out_path = Path(path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
     payload = dataset.to_dict()
     text = json.dumps(payload, indent=2, sort_keys=True)
-    out_path.write_text(text, encoding="utf-8")
+    atomic_write_text(out_path, text)
 
 
 def load_longitudinal_dataset(path: str | Path) -> LongitudinalDataset:

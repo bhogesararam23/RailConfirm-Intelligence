@@ -23,6 +23,7 @@ from typing import Any
 
 import pandas as pd
 
+from railconfirm.data._io import atomic_write_json
 from railconfirm.data.longitudinal import LONGITUDINAL_SCHEMA_VERSION
 from railconfirm.data.validator import REQUIRED_COLUMNS, ROW_CONTRACT_VERSION
 
@@ -135,7 +136,7 @@ def detect_schema(path: Path | str) -> SchemaDetectionResult:
             # Check for prospective batch
             if "prospective_submissions" in data or "submissions" in data:
                 ver = str(data.get("schema_version", "1.0.0"))
-                subs = data.get("prospective_submissions", data.get("submissions", []))
+                subs = data.get("prospective_submissions", data.get("submissions", [])) or []
                 return SchemaDetectionResult(
                     file_path=str(file_path),
                     format_type=FormatType.PROSPECTIVE_BATCH,
@@ -307,7 +308,6 @@ def quarantine_dataset(
         ),
     }
 
-    with sidecar_path.open("w", encoding="utf-8") as f:
-        json.dump(report, f, indent=2)
+    atomic_write_json(sidecar_path, report, indent=2)
 
     return target_file

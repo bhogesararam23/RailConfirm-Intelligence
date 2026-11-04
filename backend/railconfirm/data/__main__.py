@@ -571,12 +571,12 @@ def _prospective(args: argparse.Namespace) -> int:
             print(f"Cannot read longitudinal dataset: {exc}", file=sys.stderr)
             return 1
 
-        report = verify_export_lineage(batch, long_ds)
+        lineage_report = verify_export_lineage(batch, long_ds)
         if args.json:
-            print(json.dumps(asdict(report), indent=2, sort_keys=True, default=str))
+            print(json.dumps(asdict(lineage_report), indent=2, sort_keys=True, default=str))
         else:
-            print(report.summary())
-        return 0 if report.is_synced else 1
+            print(lineage_report.summary())
+        return 0 if lineage_report.is_synced else 1
 
     if args.prospective_action == "reconcile":
         try:
@@ -616,7 +616,7 @@ def _prospective(args: argparse.Namespace) -> int:
             return 0
 
         try:
-            reconciled_ds, report = reconcile_and_regenerate_export(
+            reconciled_ds, lineage_report = reconcile_and_regenerate_export(
                 batch,
                 long_ds,
                 target_out,
@@ -628,9 +628,9 @@ def _prospective(args: argparse.Namespace) -> int:
 
         print(
             f"Successfully reconciled export: {len(reconciled_ds.booking_groups)} booking groups written to {target_out}. "
-            f"Lineage status: {report.status.value}."
+            f"Lineage status: {lineage_report.status.value}."
         )
-        return 0 if report.is_synced else 1
+        return 0 if lineage_report.is_synced else 1
 
     if args.prospective_action == "export":
         if args.output.is_file() and not args.overwrite and not args.dry_run:
