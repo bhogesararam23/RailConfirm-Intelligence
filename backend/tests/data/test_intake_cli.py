@@ -176,3 +176,145 @@ def test_verify_fails_after_the_dataset_changes(candidate_csv: Path, tmp_path: P
 def test_unknown_command_is_a_usage_error():
     with pytest.raises(SystemExit):
         main(["frobnicate"])
+
+
+def test_cli_detect_subcommand(candidate_csv: Path, capsys):
+    import json
+
+    assert main(["detect", str(candidate_csv)]) == 0
+    out = capsys.readouterr().out
+    assert "Format: row_interchange" in out
+    assert "Valid Structure: yes" in out
+
+    assert main(["detect", "--json", str(candidate_csv)]) == 0
+    d = json.loads(capsys.readouterr().out)
+    assert d["format_type"] == "row_interchange"
+    assert d["is_valid_structure"] is True
+
+
+def test_cli_validate_and_snapshot_longitudinal(tmp_path: Path, capsys):
+    import json
+    from datetime import UTC, date, datetime
+
+    import pandas as pd
+
+    from railconfirm.data.longitudinal import (
+        LONGITUDINAL_SCHEMA_VERSION,
+        BookingGroup,
+        FinalOutcome,
+        LabelConfidence,
+        LongitudinalDataset,
+        LongitudinalJourney,
+        PassengerReservation,
+        StatusObservation,
+        VerificationMethod,
+        save_longitudinal_dataset,
+    )
+    from railconfirm.domain.status import NormalizedStatus
+
+    journey = LongitudinalJourney(
+        journey_id="J1",
+        train_number="12301",
+        journey_date=date(2026, 12, 1),
+        boarding_station="NDLS",
+        destination_station="HWH",
+        class_code="3A",
+        quota_code="GN",
+    )
+    p = PassengerReservation(
+        passenger_record_id="P1",
+        booking_group_id="B1",
+        passenger_sequence=1,
+        original_status_raw="GNWL 20",
+        original_status_category=NormalizedStatus.WL,
+        original_observed_at=datetime(2026, 11, 1, 10, 0, tzinfo=UTC),
+        observations=[
+            StatusObservation(
+                observation_id="O1",
+                passenger_record_id="P1",
+                observed_at=datetime(2026, 11, 15, 10, 0, tzinfo=UTC),
+                status_raw="RAC 5",
+                status_category=NormalizedStatus.RAC,
+                status_position=5,
+            )
+        ],
+        outcome=FinalOutcome(
+            outcome_target="final_chart_cnf",
+            outcome_status_raw="CNF",
+            outcome_category=NormalizedStatus.CNF,
+            outcome_observed_at=datetime(2026, 12, 1, 12, 0, tzinfo=UTC),
+            verification_method=VerificationMethod.CHART_SNAPSHOT,
+            label_confidence=LabelConfidence.VERIFIED,
+        ),
+    )
+    group = BookingGroup(
+        booking_group_id="B1",
+        journey_id="J1",
+        passengers=[p],
+    )
+    ds = LongitudinalDataset(
+        schema_version=LONGITUDINAL_SCHEMA_VERSION,
+        dataset_id="cli_long_test",
+        source_id="test_source",
+        created_at=datetime(2026, 11, 1, 0, 0, tzinfo=UTC),
+        journeys={"J1": journey},
+        booking_groups=[group],
+    )
+    ds_path = tmp_path / "long.json"
+    save_longitudinal_dataset(ds, ds_path)
+
+    # 1. Validate
+    assert main(["validate", str(ds_path)]) == 0
+    assert "Valid: yes" in capsys.readouterr().out
+
+    assert main(["validate", "--json", str(ds_path)]) == 0
+    v_report = json.loads(capsys.readouterr().out)
+    assert v_report["is_valid"] is True
+    assert v_report["metrics"]["total_passengers"] == 1
+
+    # 2. Snapshot
+    out_csv = tmp_path / "snapshot.csv"
+    assert (
+        main(
+            [
+                "snapshot",
+                str(ds_path),
+                str(out_csv),
+                "--as-of-lead-days",
+                "10",
+            ]
+        )
+        == 0
+    )
+    assert "Generated snapshot CSV" in capsys.readouterr().out
+    assert out_csv.is_file()
+
+    df = pd.read_csv(out_csv)
+    assert len(df) == 1
+    assert df.iloc[0]["train_number"] == 12301
+    assert df.iloc[0]["final_chart_status"] == "CNF"
+
+
+def test_cli_quarantine_subcommand(candidate_csv: Path, tmp_path: Path, capsys):
+    q_dir = tmp_path / "quarantine_target"
+    assert (
+        main(
+            [
+                "quarantine",
+                str(candidate_csv),
+                "--reason",
+                "Potential unverified PII in review",
+                "--quarantine-dir",
+                str(q_dir),
+                "--operator",
+                "security_lead",
+            ]
+        )
+        == 0
+    )
+    out = capsys.readouterr().out
+    assert "Quarantined dataset:" in out
+    assert "Sidecar cryptographic report:" in out
+    assert q_dir.is_dir()
+    files = list(q_dir.glob("*.quarantine.json"))
+    assert len(files) == 1

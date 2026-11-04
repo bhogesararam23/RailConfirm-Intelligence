@@ -194,10 +194,13 @@ def detect_schema(path: Path | str) -> SchemaDetectionResult:
             row_count = len(df_sample)
         elif file_ext in ("csv", "tsv", "txt"):
             sep = "\t" if file_ext == "tsv" else ","
-            df_sample = pd.read_csv(file_path, sep=sep, nrows=100)
-            # Count total rows safely
+            df_sample = pd.read_csv(file_path, sep=sep, nrows=100, comment="#")
+            # Count total rows safely, skipping comments and blanks
             with file_path.open("r", encoding="utf-8", errors="replace") as f:
-                row_count = max(sum(1 for _ in f) - 1, 0)
+                non_comment_lines = [
+                    line for line in f if line.strip() and not line.strip().startswith("#")
+                ]
+                row_count = max(len(non_comment_lines) - 1, 0)
         else:
             return SchemaDetectionResult(
                 file_path=str(file_path),
