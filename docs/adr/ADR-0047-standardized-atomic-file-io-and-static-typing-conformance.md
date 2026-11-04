@@ -50,3 +50,4 @@ During a full repository conformance audit following the implementation of ADR-0
 
 - Tested with `pytest tests/data/test_io.py` including write failure and cleanup verification.
 - Validated via full regression suite: 1,259 backend tests, 129 frontend tests, and repository hygiene gates passing cleanly.
+
