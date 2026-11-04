@@ -261,14 +261,33 @@ To prevent severe class imbalance and cohort starvation, participant recruitment
        --overwrite
    ```
 
-7. **Derive Day-7 training snapshot**:
+7. **Verify export lineage and check for stale/withdrawn records**:
+   ```bash
+   python -m railconfirm.data prospective verify-export data/prospective/batch_001.json \
+       data/raw/longitudinal_pilot_v1.json
+   ```
+
+8. **Reconcile export if records were withdrawn post-export**:
+   ```bash
+   # Preview reconciliation via dry-run
+   python -m railconfirm.data prospective reconcile data/prospective/batch_001.json \
+       data/raw/longitudinal_pilot_v1.json \
+       --dry-run
+
+   # Apply reconciliation atomically
+   python -m railconfirm.data prospective reconcile data/prospective/batch_001.json \
+       data/raw/longitudinal_pilot_v1.json \
+       --overwrite
+   ```
+
+9. **Derive Day-7 training snapshot**:
    ```bash
    python -m railconfirm.data snapshot data/raw/longitudinal_pilot_v1.json \
        data/interchange/pilot_snapshot_d7.csv \
        --as-of-lead-days 7
    ```
 
-8. **Generate and sign dataset manifest**:
+10. **Generate and sign dataset manifest**:
    ```bash
    python -m railconfirm.data manifest data/interchange/pilot_snapshot_d7.csv \
        --dataset-id pilot_snapshot_d7 \

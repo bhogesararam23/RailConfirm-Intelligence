@@ -39,6 +39,9 @@ Use this checklist whenever an agent or maintainer proposes a data file for Rail
 
 - [ ] File checksum is generated.
 - [ ] Transformation scripts and schema versions are recorded.
+- [ ] Export lineage metadata is embedded and verified (`source_batch_id`, `source_batch_sha256`, `included_submissions`, `excluded_submissions`).
+- [ ] Export lineage verification passes (`python -m railconfirm.data prospective verify-export ...`).
+- [ ] Post-export withdrawal reconciliation has been executed if any consent withdrawals occurred (`prospective reconcile`).
 - [ ] Each dropped/excluded row has a reason category.
 - [ ] Raw and transformed data are distinguishable.
 - [ ] Synthetic fixtures have a persistent synthetic marker.
