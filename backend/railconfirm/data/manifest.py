@@ -26,6 +26,7 @@ from typing import Any
 import yaml
 
 from railconfirm.config import REPO_ROOT
+from railconfirm.data._io import atomic_write_text
 from railconfirm.data.inspection import FormatType, detect_schema
 from railconfirm.data.loader import load_dataset_file
 from railconfirm.data.longitudinal import (
@@ -660,6 +661,4 @@ def write_manifest(
                 f"{target} already holds a different manifest. Pass overwrite to "
                 "replace it, or write a new dataset_id."
             )
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(text, encoding="utf-8")
-    return target
+    return atomic_write_text(target, text)
