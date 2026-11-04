@@ -8,6 +8,12 @@ The format is inspired by Keep a Changelog; dates use ISO 8601.
 
 ### Added
 
+- **Atomic quarantine ingestion, snapshot persistence, and CI conformance reconciliation** (`backend/railconfirm/data/_io.py`, `backend/railconfirm/data/inspection.py`, `backend/railconfirm/data/__main__.py`, `backend/tests/data/test_io.py`, `backend/tests/data/test_intake_cli.py`, `docs/technical/TESTING_STRATEGY.md`, `README.md`, ADR-0048).
+  - Implemented `atomic_copy_file()` in `railconfirm.data._io` using same-filesystem temporary files, cross-platform `"r+b"` buffer syncing (`os.fsync`), and atomic replacement via `os.replace`.
+  - Added pair-atomicity to `quarantine_dataset()` in `inspection.py`, immediately unlinking the quarantined copy if cryptographic sidecar JSON generation fails.
+  - Implemented `atomic_write_csv()` in `railconfirm.data._io` and migrated `__main__.py::_snapshot` to use atomic snapshot CSV writes with exception handling, preventing truncated training snapshot files.
+  - Reconciled `docs/technical/TESTING_STRATEGY.md` and `README.md` to define all 5 GitHub Actions workflow jobs including `browser-e2e` Playwright user journeys, and updated test counts across documentation to 1,266 backend pytest tests (+7 tests).
+
 - **Standardized atomic file I/O, static typing conformance, and CI documentation reconciliation** (`backend/railconfirm/data/_io.py`, `backend/railconfirm/data/longitudinal.py`, `backend/railconfirm/data/manifest.py`, `backend/railconfirm/data/inspection.py`, `backend/railconfirm/data/prospective.py`, `backend/tests/data/test_io.py`, ADR-0047).
   - Centralized atomic file write operations in `railconfirm.data._io` (`atomic_write_text` and `atomic_write_json`) to eliminate partial or corrupted file writes across `save_longitudinal_dataset()`, `write_manifest()`, and `quarantine_dataset()` sidecars via same-filesystem temporary files and atomic `os.replace`.
   - Resolved all ten Mypy static typing contract violations across `longitudinal.py`, `inspection.py`, and `__main__.py`: aligned `ParsedStatus.normalized` usage, guarded nullable `as_of_datetime.isoformat()`, and disambiguated variable scopes in CLI commands so `mypy` is 100% clean across all 49 backend source files.

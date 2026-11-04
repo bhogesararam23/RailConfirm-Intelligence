@@ -153,7 +153,7 @@ At minimum, evaluation automation should assert:
 
 ## CI expectations
 
-`.github/workflows/ci.yml` runs four jobs, all without credentials or third-party network
+`.github/workflows/ci.yml` runs five jobs, all without credentials or third-party network
 access:
 
 1. **backend-checks** — Ruff (declared rule set), mypy (declared config), and pytest with
@@ -162,7 +162,8 @@ access:
 3. **full-stack-smoke** — installs the backend's runtime dependencies, builds the frontend
    against `http://127.0.0.1:8010`, and runs `scripts/smoke_full_stack.py`, uploading the
    server logs when it fails (ADR-0027).
-4. **repository-hygiene** — required documentation present, relative Markdown links resolve,
+4. **browser-e2e** — installs Playwright Chromium and executes real-browser end-to-end user journeys against live backend and frontend server processes, uploading reports on failure (ADR-0041).
+5. **repository-hygiene** — required documentation present, relative Markdown links resolve,
    no secret material, no PNR-shaped value outside synthetic-labelled files, `scripts/`
    linted under the same declared Ruff configuration, and the workflow YAML parses.
 

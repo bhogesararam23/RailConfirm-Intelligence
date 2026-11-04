@@ -2753,3 +2753,40 @@ the existing storage tests. `delete_live` refuses a naive clock before touching 
 - `npm --prefix frontend run type-check` -> Passed (0 errors).
 - `npm --prefix frontend run lint` -> Passed (0 errors, 0 warnings).
 - `npm --prefix frontend test` -> 129 passed across 6 test files.
+
+
+## 2026-11-05 -- Atomic Quarantine Ingestion, Snapshot Persistence, and CI Conformance Reconciliation
+
+### Scope
+- Completed full audit of all data package file-writing paths against ADR-0047 atomic integrity requirements.
+- Implemented `atomic_copy_file()` in `backend/railconfirm/data/_io.py` using same-filesystem temporary files and `os.replace`.
+- Fixed cross-platform Windows `fsync` file descriptor handling by opening temporary files with `"r+b"` for syncing.
+- Implemented transactional pair-atomicity in `quarantine_dataset()` (`inspection.py`): in case of sidecar report serialization failure, the quarantined target file is immediately unlinked.
+- Implemented `atomic_write_csv()` in `backend/railconfirm/data/_io.py` and routed CLI `snapshot` CSV persistence through it with structured error handling.
+- Reconciled `docs/technical/TESTING_STRATEGY.md` and `README.md` to define all 5 GitHub Actions workflow jobs including `browser-e2e` Playwright user journeys.
+- Reconciled review dates and test baselines across `docs/PROJECT_STATUS.md`, `docs/ROADMAP.md`, `docs/AGENT_HANDOFF.md`, and `README.md` to 1,266 backend pytest tests (+7 tests).
+- Authored ADR-0048 and updated the ADR index and changelog.
+
+### Changed
+- `backend/railconfirm/data/_io.py`: Added `atomic_write_csv()` and `atomic_copy_file()` with cross-platform `"r+b"` `fsync` support.
+- `backend/railconfirm/data/inspection.py`: Updated `quarantine_dataset()` to use `atomic_copy_file()` and added pair-atomicity cleanup on sidecar failure; cleaned unused import.
+- `backend/railconfirm/data/__main__.py`: Updated `_snapshot()` to use `atomic_write_csv()` with exception handling.
+- `backend/tests/data/test_io.py`: Added 6 unit tests covering CSV atomic writes, atomic copy, failure rollbacks, destination preservation, and quarantine pair-atomicity.
+- `backend/tests/data/test_intake_cli.py`: Added integration test for snapshot atomic write failure safety.
+- `docs/technical/TESTING_STRATEGY.md`: Updated CI expectations to describe all 5 workflow jobs including `browser-e2e`.
+- `README.md`: Reconciled test counts (1,266 backend, 129 frontend, 6 browser E2E) and CI description.
+- `docs/PROJECT_STATUS.md`: Reconciled review date to 2026-11-05, updated test counts to 1,266, and cited ADR-0048.
+- `docs/ROADMAP.md`: Reconciled Phase 2 review date, updated test counts to 1,266, and cited ADR-0048.
+- `docs/AGENT_HANDOFF.md`: Updated test counts to 1,266 and cited ADR-0048.
+- `docs/adr/ADR-0048-atomic-quarantine-snapshot-persistence-and-ci-conformance.md`: Authored architectural decision record.
+- `docs/adr/README.md`: Updated ADR index with ADR-0048.
+- `CHANGELOG.md`: Logged ADR-0048 milestone under `[Unreleased]`.
+
+### Checks run
+- `python scripts/check_repository_hygiene.py` -> Passed (22 required files, 285 tracked files scanned, 0 errors).
+- `ruff check backend/ scripts/` -> All checks passed (0 errors).
+- `mypy` in `backend/` -> Success: no issues found in 49 source files.
+- `pytest backend/tests/` -> 1,266 passed.
+- `npm --prefix frontend run type-check` -> Passed (0 errors).
+- `npm --prefix frontend run lint` -> Passed (0 errors, 0 warnings).
+- `npm --prefix frontend test` -> 129 passed across 6 test files.
