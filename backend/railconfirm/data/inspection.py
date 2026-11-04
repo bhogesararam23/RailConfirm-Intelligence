@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import shutil
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -23,7 +22,7 @@ from typing import Any
 
 import pandas as pd
 
-from railconfirm.data._io import atomic_write_json
+from railconfirm.data._io import atomic_copy_file, atomic_write_json
 from railconfirm.data.longitudinal import LONGITUDINAL_SCHEMA_VERSION
 from railconfirm.data.validator import REQUIRED_COLUMNS, ROW_CONTRACT_VERSION
 
@@ -288,8 +287,8 @@ def quarantine_dataset(
     target_filename = f"{timestamp_prefix}_{checksum[:12]}_{source_path.name}"
     target_file = target_dir / target_filename
 
-    # Copy source into quarantine (retaining original if needed by caller)
-    shutil.copy2(source_path, target_file)
+    # Copy source into quarantine using atomic copy
+    target_file = atomic_copy_file(source_path, target_file)
 
     # Generate cryptographic sidecar report
     sidecar_path = target_dir / f"{target_filename}.quarantine.json"
@@ -308,6 +307,14 @@ def quarantine_dataset(
         ),
     }
 
-    atomic_write_json(sidecar_path, report, indent=2)
+    try:
+        atomic_write_json(sidecar_path, report, indent=2)
+    except Exception:
+        if target_file.exists():
+            try:
+                target_file.unlink()
+            except OSError:
+                pass
+        raise
 
     return target_file

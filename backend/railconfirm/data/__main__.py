@@ -19,6 +19,7 @@ from datetime import datetime
 from pathlib import Path
 
 from railconfirm.config import REPO_ROOT
+from railconfirm.data._io import atomic_write_csv
 from railconfirm.data.inspection import (
     FormatType,
     detect_schema,
@@ -363,8 +364,11 @@ def _snapshot(args: argparse.Namespace) -> int:
         print(f"Snapshot conversion failed: {exc}", file=sys.stderr)
         return 1
 
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    snap_res.frame.to_csv(args.output, index=False)
+    try:
+        atomic_write_csv(args.output, snap_res.frame, index=False)
+    except Exception as exc:
+        print(f"Snapshot write failed: {exc}", file=sys.stderr)
+        return 1
     print(f"Generated snapshot CSV with {len(snap_res.frame)} rows at {args.output}")
     print(f"Included passengers: {snap_res.rows_emitted}/{snap_res.total_passengers_considered}")
     print(f"Excluded unobserved: {snap_res.rows_skipped_no_observation}, Excluded censored: {snap_res.rows_skipped_censored}")
