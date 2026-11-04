@@ -25,7 +25,7 @@ source .venv/bin/activate       # On Linux/macOS
 
 pip install -e ".[dev]"
 
-# Test suite (1043 tests, no live API dependencies) with coverage floor
+# Test suite (1195 tests, no live API dependencies) with coverage floor
 pytest tests/ --cov=railconfirm --cov-fail-under=90
 
 # Lint and type-check, both configured in pyproject.toml
@@ -47,7 +47,8 @@ cd frontend
 npm ci
 npm run type-check
 npm run lint
-npm test                        # 115 tests, no backend needed; the live cross-stack suite has its own command (section 4)
+npm test                        # 129 tests, no backend needed; the live cross-stack suite has its own command (section 4)
+npm run test:e2e                # 6 Playwright real-browser E2E user journey tests
 npm run dev
 ```
 
