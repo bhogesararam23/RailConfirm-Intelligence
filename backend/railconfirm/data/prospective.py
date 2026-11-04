@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import re
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
@@ -110,7 +111,48 @@ class ReviewStatus(str, Enum):
     WITHDRAWN = "withdrawn"
 
 
-def scan_for_personal_data(data: Any, path: str = "root") -> list[str]:
+def mask_sensitive_token(token: str) -> str:
+    """Safely mask a sensitive token for diagnostic display without leaking content."""
+    clean = token.strip()
+    if len(clean) <= 4:
+        return "****"
+    if "@" in clean:
+        parts = clean.split("@", 1)
+        user = parts[0]
+        domain = parts[1]
+        masked_user = user[:2] + "****" if len(user) > 2 else "****"
+        return f"{masked_user}@{domain}"
+    return clean[:2] + "****" + clean[-2:]
+
+
+def get_configured_pseudonym_salt(
+    env_var: str = "RAILCONFIRM_PSEUDONYM_SALT",
+    default: str | None = None,
+) -> str:
+    """Retrieve and validate the deployment secret pseudonymization salt from environment.
+
+    Raises:
+        SecurityError: If salt is missing, empty, or shorter than MIN_SALT_LENGTH (32 chars).
+    """
+    salt = os.environ.get(env_var, default or "").strip()
+    if not salt:
+        raise SecurityError(
+            f"No cryptographic salt configured in environment variable '{env_var}'. "
+            f"A secret salt of at least {MIN_SALT_LENGTH} characters is required."
+        )
+    if len(salt) < MIN_SALT_LENGTH:
+        raise SecurityError(
+            f"Configured salt in '{env_var}' is too weak ({len(salt)} chars). "
+            f"Must be at least {MIN_SALT_LENGTH} characters to resist dictionary inversion."
+        )
+    return salt
+
+
+def scan_for_personal_data(
+    data: Any,
+    path: str = "root",
+    seen: set[int] | None = None,
+) -> list[str]:
     """Recursively scan an object for raw PNRs, emails, phone numbers, and IDs.
 
     TECHNICAL SAFEGUARD NOTE:
@@ -122,39 +164,69 @@ def scan_for_personal_data(data: Any, path: str = "root") -> list[str]:
     qualitative human governance and review.
 
     Returns:
-        List of diagnostic violation messages. Empty if clean.
+        List of diagnostic violation messages with masked tokens. Empty if clean.
     """
     violations: list[str] = []
+    if seen is None:
+        seen = set()
+
+    obj_id = id(data)
+    if isinstance(data, (Mapping, list, tuple, set)):
+        if obj_id in seen:
+            return []
+        seen.add(obj_id)
 
     if isinstance(data, str):
-        if _PNR_PATTERN.search(data):
-            violations.append(f"Potential 10-digit Indian Railway PNR pattern at '{path}'")
-        if _EMAIL_PATTERN.search(data):
-            violations.append(f"Email address pattern detected at '{path}'")
-        if _PHONE_PATTERN.search(data):
-            violations.append(f"Indian mobile phone pattern detected at '{path}'")
-        if _AADHAAR_PATTERN.search(data):
-            violations.append(f"12-digit Aadhaar/national ID pattern detected at '{path}'")
-        if _PAN_PATTERN.search(data):
-            violations.append(f"Indian PAN tax ID pattern detected at '{path}'")
-        if _PASSPORT_PATTERN.search(data):
-            violations.append(f"Passport number pattern detected at '{path}'")
-        if _URL_TOKEN_PATTERN.search(data):
-            violations.append(f"Security token or query credential parameter detected at '{path}'")
+        m_pnr = _PNR_PATTERN.search(data)
+        if m_pnr:
+            violations.append(
+                f"Potential 10-digit Indian Railway PNR pattern at '{path}' (masked: '{mask_sensitive_token(m_pnr.group(0))}')"
+            )
+        m_email = _EMAIL_PATTERN.search(data)
+        if m_email:
+            violations.append(
+                f"Email address pattern detected at '{path}' (masked: '{mask_sensitive_token(m_email.group(0))}')"
+            )
+        m_phone = _PHONE_PATTERN.search(data)
+        if m_phone:
+            violations.append(
+                f"Indian mobile phone pattern detected at '{path}' (masked: '{mask_sensitive_token(m_phone.group(0))}')"
+            )
+        m_aadhaar = _AADHAAR_PATTERN.search(data)
+        if m_aadhaar:
+            violations.append(
+                f"12-digit Aadhaar/national ID pattern detected at '{path}' (masked: '{mask_sensitive_token(m_aadhaar.group(0))}')"
+            )
+        m_pan = _PAN_PATTERN.search(data)
+        if m_pan:
+            violations.append(
+                f"Indian PAN tax ID pattern detected at '{path}' (masked: '{mask_sensitive_token(m_pan.group(0))}')"
+            )
+        m_pass = _PASSPORT_PATTERN.search(data)
+        if m_pass:
+            violations.append(
+                f"Passport number pattern detected at '{path}' (masked: '{mask_sensitive_token(m_pass.group(0))}')"
+            )
+        m_token = _URL_TOKEN_PATTERN.search(data)
+        if m_token:
+            violations.append(
+                f"Security token or query credential parameter detected at '{path}' (masked: '{mask_sensitive_token(m_token.group(0))}')"
+            )
     elif isinstance(data, (int, float)) and not isinstance(data, bool):
         if 1_000_000_000 <= data <= 9_999_999_999:
-            violations.append(f"Potential numeric 10-digit PNR value at '{path}'")
+            masked_num = mask_sensitive_token(str(int(data)))
+            violations.append(f"Potential numeric 10-digit PNR value at '{path}' (masked: '{masked_num}')")
     elif isinstance(data, Mapping):
         for k, v in data.items():
-            violations.extend(scan_for_personal_data(v, f"{path}.{k}"))
+            violations.extend(scan_for_personal_data(v, f"{path}.{k}", seen=seen))
     elif isinstance(data, (list, tuple, set)):
         for idx, item in enumerate(data):
-            violations.extend(scan_for_personal_data(item, f"{path}[{idx}]"))
+            violations.extend(scan_for_personal_data(item, f"{path}[{idx}]", seen=seen))
 
     return violations
 
 
-def derive_pseudonym(raw_identifier: str, salt: str, prefix: str = "anon") -> str:
+def derive_pseudonym(raw_identifier: str, salt: str | None = None, prefix: str = "anon") -> str:
     """Generate a cryptographically salted pseudonymous identifier.
 
     LEGAL & CRYPTOGRAPHIC CONSTRAINTS:
@@ -177,6 +249,8 @@ def derive_pseudonym(raw_identifier: str, salt: str, prefix: str = "anon") -> st
     Returns:
         Safe non-reversible pseudonymous string (e.g. 'anon_a1b2c3d4e5f60718').
     """
+    if salt is None:
+        salt = get_configured_pseudonym_salt()
     if not salt.strip():
         raise SecurityError("A non-empty cryptographic salt is required to derive pseudonyms.")
     if len(salt) < MIN_SALT_LENGTH:

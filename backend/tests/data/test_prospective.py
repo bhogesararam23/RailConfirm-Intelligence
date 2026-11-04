@@ -1,6 +1,6 @@
 """Tests for prospective collection, privacy scanner, and operator governance."""
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
@@ -25,7 +25,9 @@ from railconfirm.data.prospective import (
     derive_pseudonym,
     export_batch_to_longitudinal,
     generate_prospective_template,
+    get_configured_pseudonym_salt,
     intake_prospective_submission,
+    mask_sensitive_token,
     review_batch,
     scan_for_personal_data,
     validate_prospective_batch,
@@ -475,3 +477,54 @@ def test_generate_prospective_template_roundtrip(tmp_path: Path):
     report = validate_prospective_batch(batch)
     assert report.is_valid is True
     assert len(report.pii_violations) == 0
+
+
+def test_pii_token_masking_and_circular_protection():
+    # Masking tests
+    assert mask_sensitive_token("12") == "****"
+    assert mask_sensitive_token("user@example.com") == "us****@example.com"
+    assert mask_sensitive_token("u@example.com") == "****@example.com"
+    assert mask_sensitive_token("9876543210") == "98****10"
+
+    # PII scanner reports masked tokens (matches both 10-digit PNR and Indian mobile)
+    pnr_violations = scan_for_personal_data({"ticket": "My ticket is 9876543210"})
+    assert len(pnr_violations) >= 1
+    assert all("98****10" in v for v in pnr_violations)
+    assert not any("9876543210" in v for v in pnr_violations)
+
+    email_violations = scan_for_personal_data({"contact": "alice@company.org"})
+    assert len(email_violations) == 1
+    assert "al****@company.org" in email_violations[0]
+    assert "alice@company.org" not in email_violations[0]
+
+    # Circular data structure protection (no infinite recursion or RecursionError)
+    circular_dict: dict = {"key": "safe_val"}
+    circular_dict["self"] = circular_dict
+    assert scan_for_personal_data(circular_dict) == []
+
+    circular_list: list = [1, 2]
+    circular_list.append(circular_list)
+    assert scan_for_personal_data(circular_list) == []
+
+
+def test_configured_pseudonym_salt(monkeypatch):
+    valid_salt = "super_secret_deployment_salt_0123456789"
+    monkeypatch.setenv("RAILCONFIRM_PSEUDONYM_SALT", valid_salt)
+
+    assert get_configured_pseudonym_salt() == valid_salt
+    derived = derive_pseudonym("PNR_12345")
+    assert derived.startswith("anon_")
+    assert derived == derive_pseudonym("PNR_12345", salt=valid_salt)
+
+    # Missing salt raises SecurityError
+    monkeypatch.delenv("RAILCONFIRM_PSEUDONYM_SALT", raising=False)
+    with pytest.raises(SecurityError, match="No cryptographic salt configured"):
+        get_configured_pseudonym_salt()
+    with pytest.raises(SecurityError, match="No cryptographic salt configured"):
+        derive_pseudonym("PNR_12345")
+
+    # Short salt raises SecurityError
+    monkeypatch.setenv("RAILCONFIRM_PSEUDONYM_SALT", "too_short_salt")
+    with pytest.raises(SecurityError, match="too weak"):
+        get_configured_pseudonym_salt()
+
