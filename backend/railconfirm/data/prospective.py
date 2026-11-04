@@ -372,22 +372,159 @@ def approve_batch_for_research(
 
     Enforces that reviewer and rationale are recorded durably.
     """
+    review_batch(batch, action=ReviewStatus.APPROVED, reviewer=reviewer, rationale=rationale)
+
+
+def review_batch(
+    batch: ProspectiveBatch,
+    *,
+    action: ReviewStatus,
+    reviewer: str,
+    rationale: str,
+) -> None:
+    """Apply an operator review decision across all submissions in a prospective batch.
+
+    Args:
+        batch: The prospective batch being reviewed.
+        action: The target ReviewStatus (APPROVED, REJECTED, QUARANTINED).
+        reviewer: Identifier of the human operator or authority.
+        rationale: Durable explanation for the review decision.
+    """
     if not reviewer.strip():
-        raise DatasetValidationError("Approval requires a named human reviewer.")
+        raise DatasetValidationError("Review action requires a named human reviewer.")
     if not rationale.strip():
-        raise DatasetValidationError("Approval requires a non-empty rationale.")
+        raise DatasetValidationError("Review action requires a non-empty rationale.")
+
+    if action == ReviewStatus.APPROVED:
+        violations = scan_for_personal_data(batch.to_dict())
+        if violations:
+            raise SecurityError(
+                f"Cannot approve prospective batch with unresolved personal data: {violations}"
+            )
 
     now_iso = datetime.now(tz=UTC).isoformat()
     for sub in batch.submissions:
-        # Cannot approve quarantined submissions with unresolved PII
-        if sub.review_status == ReviewStatus.QUARANTINED:
+        if action == ReviewStatus.APPROVED and sub.review_status == ReviewStatus.QUARANTINED:
             raise DatasetValidationError(
                 f"Cannot approve quarantined submission '{sub.submission_id}' without resolution."
             )
-        sub.review_status = ReviewStatus.APPROVED
+        sub.review_status = action
         sub.reviewed_by = reviewer
         sub.review_notes = rationale
         sub.reviewed_at = now_iso
+
+
+@dataclass(frozen=True)
+class ProspectiveAuditReport:
+    """Comprehensive validation and privacy audit report for prospective collection batches."""
+
+    batch_id: str
+    schema_version: str
+    total_submissions: int
+    total_passengers: int
+    total_observations: int
+    review_status_counts: dict[str, int]
+    pii_violations: list[str]
+    structural_errors: list[str]
+    is_valid: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "batch_id": self.batch_id,
+            "schema_version": self.schema_version,
+            "total_submissions": self.total_submissions,
+            "total_passengers": self.total_passengers,
+            "total_observations": self.total_observations,
+            "review_status_counts": self.review_status_counts,
+            "pii_violations": self.pii_violations,
+            "structural_errors": self.structural_errors,
+            "is_valid": self.is_valid,
+        }
+
+    def summary(self) -> str:
+        status_lines = ", ".join(
+            f"{k}: {v}" for k, v in sorted(self.review_status_counts.items())
+        )
+        lines = [
+            f"Prospective Batch: {self.batch_id} (schema v{self.schema_version})",
+            f"Valid: {'yes' if self.is_valid else 'no'}",
+            f"Submissions: {self.total_submissions}, Passengers: {self.total_passengers}, Observations: {self.total_observations}",
+            f"Review Status: [{status_lines}]",
+        ]
+        if self.pii_violations:
+            lines.append(f"PII Violations ({len(self.pii_violations)}):")
+            for viol in self.pii_violations[:10]:
+                lines.append(f"  - {viol}")
+            if len(self.pii_violations) > 10:
+                lines.append(f"  ... and {len(self.pii_violations) - 10} more")
+        if self.structural_errors:
+            lines.append(f"Structural Errors ({len(self.structural_errors)}):")
+            for err in self.structural_errors[:10]:
+                lines.append(f"  - {err}")
+            if len(self.structural_errors) > 10:
+                lines.append(f"  ... and {len(self.structural_errors) - 10} more")
+        return "\n".join(lines)
+
+
+def validate_prospective_batch(batch: ProspectiveBatch) -> ProspectiveAuditReport:
+    """Validate a prospective batch for structure, privacy/PII compliance, and data integrity."""
+    pii_violations = scan_for_personal_data(batch.to_dict())
+    errors: list[str] = []
+
+    total_submissions = len(batch.submissions)
+    total_passengers = 0
+    total_obs = 0
+    status_counts: dict[str, int] = {
+        ReviewStatus.PENDING_REVIEW.value: 0,
+        ReviewStatus.APPROVED.value: 0,
+        ReviewStatus.QUARANTINED.value: 0,
+        ReviewStatus.REJECTED.value: 0,
+    }
+
+    sub_ids: set[str] = set()
+    pseudo_ids: set[str] = set()
+
+    for idx, sub in enumerate(batch.submissions):
+        status_counts[sub.review_status.value] = (
+            status_counts.get(sub.review_status.value, 0) + 1
+        )
+
+        if sub.submission_id in sub_ids:
+            errors.append(f"Duplicate submission_id '{sub.submission_id}' at index {idx}.")
+        sub_ids.add(sub.submission_id)
+
+        if sub.pseudonym_group_id in pseudo_ids:
+            errors.append(
+                f"Duplicate pseudonym_group_id '{sub.pseudonym_group_id}' at index {idx}."
+            )
+        pseudo_ids.add(sub.pseudonym_group_id)
+
+        if not sub.passengers:
+            errors.append(f"Submission '{sub.submission_id}' has no passenger reservations.")
+
+        seen_sequences: set[int] = set()
+        for p in sub.passengers:
+            total_passengers += 1
+            if p.passenger_sequence in seen_sequences:
+                errors.append(
+                    f"Submission '{sub.submission_id}' has duplicate passenger_sequence {p.passenger_sequence}."
+                )
+            seen_sequences.add(p.passenger_sequence)
+            total_obs += len(p.observations)
+
+    is_valid = len(pii_violations) == 0 and len(errors) == 0
+
+    return ProspectiveAuditReport(
+        batch_id=batch.batch_id,
+        schema_version=batch.schema_version,
+        total_submissions=total_submissions,
+        total_passengers=total_passengers,
+        total_observations=total_obs,
+        review_status_counts=status_counts,
+        pii_violations=pii_violations,
+        structural_errors=errors,
+        is_valid=is_valid,
+    )
 
 
 def export_batch_to_longitudinal(

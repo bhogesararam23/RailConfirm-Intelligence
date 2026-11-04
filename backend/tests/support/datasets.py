@@ -8,8 +8,20 @@ evidence, and no test here asserts anything about railway behaviour.
 
 from __future__ import annotations
 
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
+from railconfirm.data.longitudinal import (
+    LONGITUDINAL_SCHEMA_VERSION,
+    BookingGroup,
+    FinalOutcome,
+    LabelConfidence,
+    LongitudinalDataset,
+    LongitudinalJourney,
+    PassengerReservation,
+    StatusObservation,
+    VerificationMethod,
+)
 from railconfirm.data.manifest import (
     AllowedUses,
     DecisionRecord,
@@ -17,9 +29,19 @@ from railconfirm.data.manifest import (
     generate_manifest,
     write_manifest,
 )
+from railconfirm.data.prospective import (
+    DEFAULT_NOTICE_VERSION,
+    DEFAULT_RETENTION_POLICY,
+    PROSPECTIVE_COLLECTION_SCHEMA_VERSION,
+    ConsentMetadata,
+    ProspectiveBatch,
+    ProspectivePassenger,
+    ProspectiveSubmission,
+    ReviewStatus,
+)
 from railconfirm.data.validator import REQUIRED_COLUMNS
 from railconfirm.domain.prediction import FEATURE_SCHEMA_VERSION, PredictionTarget
-from railconfirm.domain.status import MAPPING_VERSION
+from railconfirm.domain.status import MAPPING_VERSION, NormalizedStatus
 from railconfirm.inference.artifacts import (
     ESTIMATOR_HISTORICAL_FREQUENCY,
     PROMOTION_APPROVED,
@@ -301,3 +323,215 @@ def write_serving_artifact(
         artifact_metadata(**meta_overrides),
         cohorts or FITTABLE_COHORTS,
     )
+
+
+def build_synthetic_longitudinal_dataset(
+    *,
+    dataset_id: str = "synthetic-longitudinal-fixture",
+    journey_count: int = 4,
+    groups_per_journey: int = 3,
+    passengers_per_group: int = 2,
+    is_synthetic: bool = True,
+) -> LongitudinalDataset:
+    """Build a deterministic synthetic longitudinal dataset for pipeline testing."""
+    journeys: dict[str, LongitudinalJourney] = {}
+    booking_groups: list[BookingGroup] = []
+
+    for j_idx in range(journey_count):
+        j_date = date(2026, 6, 1) + timedelta(days=j_idx * 3)
+        dep_dt = datetime(2026, 6, 1, 16, 0, tzinfo=UTC) + timedelta(days=j_idx * 3)
+        chart_dt = dep_dt - timedelta(hours=4)
+        j_id = f"J{j_idx:03d}_12301"
+
+        journeys[j_id] = LongitudinalJourney(
+            journey_id=j_id,
+            train_number="12301",
+            journey_date=j_date,
+            boarding_station="NDLS",
+            destination_station="HWH",
+            class_code="SL" if j_idx % 2 == 0 else "3A",
+            quota_code="GN",
+            scheduled_departure_at=dep_dt,
+        )
+
+        for g_idx in range(groups_per_journey):
+            bg_id = f"SYN_J{j_idx:02d}_G{g_idx:02d}"
+            booking_time = dep_dt - timedelta(days=25)
+
+            passengers: list[PassengerReservation] = []
+            for p_idx in range(passengers_per_group):
+                pid = f"{bg_id}_P{p_idx + 1}"
+                init_pos = 20 + p_idx * 5 + g_idx * 2
+
+                # Observations chronologically advancing
+                obs1_time = booking_time + timedelta(days=5)
+                obs1 = StatusObservation(
+                    observation_id=f"{pid}_OBS1",
+                    passenger_record_id=pid,
+                    observed_at=obs1_time,
+                    status_raw=f"WL/{init_pos - 3}",
+                    status_category=NormalizedStatus.WL,
+                    status_position=init_pos - 3,
+                )
+
+                obs2_time = dep_dt - timedelta(days=3)
+                obs2 = StatusObservation(
+                    observation_id=f"{pid}_OBS2",
+                    passenger_record_id=pid,
+                    observed_at=obs2_time,
+                    status_raw=f"RAC/{p_idx + 1}",
+                    status_category=NormalizedStatus.RAC,
+                    status_position=p_idx + 1,
+                )
+
+                # Final outcome
+                is_confirmed = (j_idx + g_idx + p_idx) % 2 == 0
+                outcome = FinalOutcome(
+                    outcome_target="final_chart_cnf",
+                    outcome_status_raw="CNF" if is_confirmed else f"RAC/{p_idx + 1}",
+                    outcome_category=(
+                        NormalizedStatus.CNF if is_confirmed else NormalizedStatus.RAC
+                    ),
+                    outcome_observed_at=chart_dt,
+                    verification_method=VerificationMethod.CHART_SNAPSHOT,
+                    label_confidence=LabelConfidence.VERIFIED,
+                )
+
+                passengers.append(
+                    PassengerReservation(
+                        passenger_record_id=pid,
+                        booking_group_id=bg_id,
+                        passenger_sequence=p_idx + 1,
+                        original_status_raw=f"GNWL/{init_pos}",
+                        original_status_category=NormalizedStatus.WL,
+                        original_status_position=init_pos,
+                        original_observed_at=booking_time,
+                        observations=[obs1, obs2],
+                        outcome=outcome,
+                    )
+                )
+
+            booking_groups.append(
+                BookingGroup(
+                    booking_group_id=bg_id,
+                    journey_id=j_id,
+                    passengers=passengers,
+                )
+            )
+
+    return LongitudinalDataset(
+        schema_version=LONGITUDINAL_SCHEMA_VERSION,
+        dataset_id=dataset_id,
+        source_id="synthetic_generator",
+        created_at=datetime(2026, 4, 1, 10, 0, tzinfo=UTC),
+        journeys=journeys,
+        booking_groups=booking_groups,
+        metadata={"is_synthetic": is_synthetic, "generator": "backend/tests/support/datasets.py"},
+    )
+
+
+def write_synthetic_longitudinal_dataset(
+    directory: Path,
+    *,
+    dataset_id: str = "synthetic-longitudinal-fixture",
+    **build_kwargs,
+) -> Path:
+    """Build and write a synthetic longitudinal JSON dataset file."""
+    dataset = build_synthetic_longitudinal_dataset(dataset_id=dataset_id, **build_kwargs)
+    path = Path(directory) / f"{dataset_id}.json"
+    dataset.save(path)
+    return path
+
+
+def build_synthetic_prospective_batch(
+    *,
+    batch_id: str = "synthetic-prospective-batch",
+    submission_count: int = 4,
+    passengers_per_submission: int = 2,
+    review_status: ReviewStatus = ReviewStatus.PENDING_REVIEW,
+) -> ProspectiveBatch:
+    """Build a deterministic synthetic prospective batch for pipeline testing."""
+    consent = ConsentMetadata(
+        consent_basis="explicit_opt_in",
+        notice_version=DEFAULT_NOTICE_VERSION,
+        purpose_records=[
+            "confirmation_probability_research",
+            "model_calibration",
+        ],
+        retention_policy=DEFAULT_RETENTION_POLICY,
+        collected_at="2026-05-01T10:00:00Z",
+    )
+
+    submissions: list[ProspectiveSubmission] = []
+    for s_idx in range(submission_count):
+        sub_id = f"SUB_{s_idx:04d}"
+        pseudo_id = f"anon_synth_{s_idx:04d}"
+        j_date = date(2026, 7, 1) + timedelta(days=s_idx * 2)
+        dep_dt = datetime(2026, 7, 1, 18, 30, tzinfo=UTC) + timedelta(days=s_idx * 2)
+
+        passengers: list[ProspectivePassenger] = []
+        for p_idx in range(passengers_per_submission):
+            pid = f"{pseudo_id}_P{p_idx + 1}"
+            obs = StatusObservation(
+                observation_id=f"OBS_{s_idx}_{p_idx}",
+                passenger_record_id=pid,
+                observed_at=dep_dt - timedelta(days=5),
+                status_raw="WL/8",
+                status_category=NormalizedStatus.WL,
+                status_position=8,
+            )
+            outcome = FinalOutcome(
+                outcome_target="final_chart_cnf",
+                outcome_status_raw="CNF",
+                outcome_category=NormalizedStatus.CNF,
+                outcome_observed_at=dep_dt - timedelta(hours=4),
+                verification_method=VerificationMethod.CHART_SNAPSHOT,
+                label_confidence=LabelConfidence.VERIFIED,
+            )
+            passengers.append(
+                ProspectivePassenger(
+                    passenger_sequence=p_idx + 1,
+                    original_status_raw="GNWL/12",
+                    original_status_category=NormalizedStatus.WL,
+                    original_status_position=12,
+                    observations=[obs],
+                    outcome=outcome,
+                )
+            )
+
+        submissions.append(
+            ProspectiveSubmission(
+                submission_id=sub_id,
+                pseudonym_group_id=pseudo_id,
+                train_number="12951",
+                journey_date=j_date,
+                boarding_station="MMCT",
+                destination_station="NDLS",
+                class_code="3A",
+                quota_code="GN",
+                scheduled_departure_at=dep_dt,
+                consent=consent,
+                passengers=passengers,
+                review_status=review_status,
+            )
+        )
+
+    return ProspectiveBatch(
+        batch_id=batch_id,
+        created_at=datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
+        submissions=submissions,
+        schema_version=PROSPECTIVE_COLLECTION_SCHEMA_VERSION,
+    )
+
+
+def write_synthetic_prospective_batch(
+    directory: Path,
+    *,
+    batch_id: str = "synthetic-prospective-batch",
+    **build_kwargs,
+) -> Path:
+    """Build and write a synthetic prospective JSON batch file."""
+    batch = build_synthetic_prospective_batch(batch_id=batch_id, **build_kwargs)
+    path = Path(directory) / f"{batch_id}.json"
+    batch.save(path)
+    return path

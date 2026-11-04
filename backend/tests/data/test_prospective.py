@@ -24,7 +24,9 @@ from railconfirm.data.prospective import (
     derive_pseudonym,
     export_batch_to_longitudinal,
     intake_prospective_submission,
+    review_batch,
     scan_for_personal_data,
+    validate_prospective_batch,
 )
 from railconfirm.domain.exceptions import DatasetValidationError, SecurityError
 from railconfirm.domain.status import NormalizedStatus
@@ -208,3 +210,86 @@ def test_approve_and_export_batch(sample_submission: ProspectiveSubmission):
     assert p.original_status_raw == "GNWL 15"
     assert len(p.observations) == 1
     assert p.observations[0].passenger_record_id == "anon_group_88a91c_P1"
+
+
+def test_validate_prospective_batch_clean_and_diagnostics(
+    sample_submission: ProspectiveSubmission,
+):
+    batch = ProspectiveBatch(
+        batch_id="BATCH_VALID_001",
+        created_at=datetime(2026, 11, 1, 12, 0, tzinfo=UTC),
+        submissions=[sample_submission],
+    )
+    report = validate_prospective_batch(batch)
+    assert report.is_valid is True
+    assert report.total_submissions == 1
+    assert report.total_passengers == 1
+    assert report.total_observations == 1
+    assert report.review_status_counts[ReviewStatus.PENDING_REVIEW.value] == 1
+    assert len(report.pii_violations) == 0
+    assert "Valid: yes" in report.summary()
+
+
+def test_validate_prospective_batch_detects_pii_and_structural_errors(
+    sample_submission: ProspectiveSubmission,
+):
+    # Contaminate with PNR leak and duplicate submission ID
+    sub_pii = ProspectiveSubmission.from_dict(sample_submission.to_dict())
+    sub_pii.review_notes = "Ticket PNR is 1234567890"
+
+    batch = ProspectiveBatch(
+        batch_id="BATCH_INVALID_002",
+        created_at=datetime(2026, 11, 1, 12, 0, tzinfo=UTC),
+        submissions=[sample_submission, sub_pii],
+    )
+    report = validate_prospective_batch(batch)
+    assert report.is_valid is False
+    assert len(report.pii_violations) > 0
+    assert any("PNR" in v for v in report.pii_violations)
+    assert any("Duplicate submission_id" in err for err in report.structural_errors)
+    assert "Valid: no" in report.summary()
+
+
+def test_review_batch_actions_and_pii_safeguard(
+    sample_submission: ProspectiveSubmission,
+):
+    batch = ProspectiveBatch(
+        batch_id="BATCH_REVIEW_003",
+        created_at=datetime(2026, 11, 1, 12, 0, tzinfo=UTC),
+        submissions=[sample_submission],
+    )
+
+    # 1. Review with rejection
+    review_batch(
+        batch,
+        action=ReviewStatus.REJECTED,
+        reviewer="auditor_1",
+        rationale="Missing outcome evidence.",
+    )
+    assert batch.submissions[0].review_status == ReviewStatus.REJECTED
+    assert batch.submissions[0].reviewed_by == "auditor_1"
+
+    # 2. Review with quarantine
+    review_batch(
+        batch,
+        action=ReviewStatus.QUARANTINED,
+        reviewer="auditor_2",
+        rationale="Needs verification.",
+    )
+    assert batch.submissions[0].review_status == ReviewStatus.QUARANTINED
+
+    # 3. Validation on required reviewer/rationale
+    with pytest.raises(DatasetValidationError, match="named human reviewer"):
+        review_batch(batch, action=ReviewStatus.APPROVED, reviewer="", rationale="Ok")
+    with pytest.raises(DatasetValidationError, match="non-empty rationale"):
+        review_batch(batch, action=ReviewStatus.APPROVED, reviewer="auditor", rationale="")
+
+    # 4. Refuse approval when contaminated with PII
+    batch.submissions[0].review_notes = "Passenger phone: 9876543210"
+    with pytest.raises(SecurityError, match="unresolved personal data"):
+        review_batch(
+            batch,
+            action=ReviewStatus.APPROVED,
+            reviewer="auditor_3",
+            rationale="Trying to approve with phone",
+        )

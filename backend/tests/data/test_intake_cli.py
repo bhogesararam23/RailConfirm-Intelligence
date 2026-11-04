@@ -3,9 +3,16 @@
 from pathlib import Path
 
 import pytest
-
 from railconfirm.data.__main__ import main
 from railconfirm.data.manifest import parse_manifest
+from railconfirm.data.prospective import ProspectiveBatch, ReviewStatus
+
+from tests.support.datasets import (
+    build_synthetic_longitudinal_dataset,
+    build_synthetic_prospective_batch,
+    write_synthetic_longitudinal_dataset,
+    write_synthetic_prospective_batch,
+)
 
 
 @pytest.fixture
@@ -197,7 +204,6 @@ def test_cli_validate_and_snapshot_longitudinal(tmp_path: Path, capsys):
     from datetime import UTC, date, datetime
 
     import pandas as pd
-
     from railconfirm.data.longitudinal import (
         LONGITUDINAL_SCHEMA_VERSION,
         BookingGroup,
@@ -318,3 +324,159 @@ def test_cli_quarantine_subcommand(candidate_csv: Path, tmp_path: Path, capsys):
     assert q_dir.is_dir()
     files = list(q_dir.glob("*.quarantine.json"))
     assert len(files) == 1
+
+
+def test_cli_validate_prospective_batch(tmp_path: Path, capsys):
+    batch_file = write_synthetic_prospective_batch(
+        tmp_path,
+        batch_id="cli_prospective_valid",
+        submission_count=3,
+        passengers_per_submission=2,
+    )
+
+    # 1. Plain text summary output
+    assert main(["validate", str(batch_file)]) == 0
+    out = capsys.readouterr().out
+    assert "Prospective Batch: cli_prospective_valid" in out
+    assert "Valid: yes" in out
+    assert "Submissions: 3, Passengers: 6" in out
+
+    # 2. JSON structured output
+    import json
+
+    assert main(["validate", "--json", str(batch_file)]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["batch_id"] == "cli_prospective_valid"
+    assert data["is_valid"] is True
+    assert data["total_submissions"] == 3
+    assert data["total_passengers"] == 6
+
+
+def test_cli_prospective_scan_subcommand(tmp_path: Path, capsys):
+    batch = build_synthetic_prospective_batch(
+        batch_id="cli_scan_test",
+        submission_count=2,
+    )
+    clean_path = tmp_path / "clean_batch.json"
+    batch.save(clean_path)
+
+    # Clean scan returns 0
+    assert main(["prospective", "scan", str(clean_path)]) == 0
+    out = capsys.readouterr().out
+    assert "PII Scan PASSED" in out
+
+    # JSON output
+    import json
+
+    assert main(["prospective", "scan", "--json", str(clean_path)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["clean"] is True
+    assert len(payload["violations"]) == 0
+
+    # Contaminated scan returns 1
+    batch.submissions[0].review_notes = "Passenger email is user@irctc.co.in"
+    dirty_path = tmp_path / "dirty_batch.json"
+    batch.save(dirty_path)
+
+    assert main(["prospective", "scan", str(dirty_path)]) == 1
+    err_out = capsys.readouterr().out
+    assert "PII Scan FAILED" in err_out
+    assert "Email address pattern detected" in err_out
+
+
+def test_cli_prospective_review_and_export_lifecycle(tmp_path: Path, capsys):
+    batch_file = write_synthetic_prospective_batch(
+        tmp_path,
+        batch_id="cli_lifecycle_batch",
+        submission_count=2,
+        passengers_per_submission=2,
+        review_status=ReviewStatus.PENDING_REVIEW,
+    )
+
+    # Export while pending fails unless partial is permitted
+    long_out = tmp_path / "long_export.json"
+    assert (
+        main(
+            [
+                "prospective",
+                "export",
+                str(batch_file),
+                str(long_out),
+                "--dataset-id",
+                "ds_cli_export",
+                "--source-id",
+                "pilot_cli_source",
+            ]
+        )
+        == 1
+    )
+    assert "Export failed" in capsys.readouterr().err
+
+    # Apply operator approval
+    assert (
+        main(
+            [
+                "prospective",
+                "review",
+                str(batch_file),
+                "--action",
+                "approve",
+                "--reviewer",
+                "chief_operator",
+                "--rationale",
+                "Consent notices signed and PII clean.",
+            ]
+        )
+        == 0
+    )
+    assert "Applied review status 'approved'" in capsys.readouterr().out
+
+    # Now export succeeds
+    assert (
+        main(
+            [
+                "prospective",
+                "export",
+                str(batch_file),
+                str(long_out),
+                "--dataset-id",
+                "ds_cli_export",
+                "--source-id",
+                "pilot_cli_source",
+            ]
+        )
+        == 0
+    )
+    assert "Exported 2 booking groups" in capsys.readouterr().out
+    assert long_out.is_file()
+
+    # Validate exported longitudinal dataset
+    assert main(["validate", str(long_out)]) == 0
+    assert "Valid: yes" in capsys.readouterr().out
+
+
+def test_synthetic_support_dataset_generators(tmp_path: Path):
+    long_path = write_synthetic_longitudinal_dataset(
+        tmp_path,
+        dataset_id="support_long_test",
+        journey_count=2,
+        groups_per_journey=2,
+        passengers_per_group=2,
+    )
+    assert long_path.is_file()
+    long_ds = build_synthetic_longitudinal_dataset(
+        dataset_id="direct_long_test",
+        journey_count=3,
+    )
+    assert len(long_ds.journeys) == 3
+    assert long_ds.metadata["is_synthetic"] is True
+
+    batch_path = write_synthetic_prospective_batch(
+        tmp_path,
+        batch_id="support_prospective_test",
+        submission_count=3,
+    )
+    assert batch_path.is_file()
+    batch = ProspectiveBatch.load(batch_path)
+    assert len(batch.submissions) == 3
+

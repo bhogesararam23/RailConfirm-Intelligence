@@ -38,6 +38,14 @@ from railconfirm.data.manifest import (
     verify_manifest,
     write_manifest,
 )
+from railconfirm.data.prospective import (
+    ProspectiveBatch,
+    ReviewStatus,
+    export_batch_to_longitudinal,
+    review_batch,
+    scan_for_personal_data,
+    validate_prospective_batch,
+)
 from railconfirm.data.validator import validate_dataset
 
 DEFAULT_QUARANTINE_DIR = REPO_ROOT / "data" / "quarantine"
@@ -112,6 +120,44 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("manifest", type=Path)
     verify.add_argument("dataset", type=Path, nargs="?")
 
+    prospective = subparsers.add_parser(
+        "prospective", help="local-first prospective collection tools: scan, review, export"
+    )
+    p_subs = prospective.add_subparsers(dest="prospective_action", required=True)
+
+    p_scan = p_subs.add_parser(
+        "scan", help="scan prospective batch for personal data or raw PNRs"
+    )
+    p_scan.add_argument("batch", type=Path, help="path to prospective batch JSON")
+    p_scan.add_argument("--json", action="store_true", help="emit scan diagnostics as JSON")
+
+    p_review = p_subs.add_parser("review", help="record human operator review decision")
+    p_review.add_argument("batch", type=Path, help="path to prospective batch JSON")
+    p_review.add_argument(
+        "--action", choices=["approve", "reject", "quarantine"], required=True
+    )
+    p_review.add_argument("--reviewer", required=True, help="name or ID of human reviewer")
+    p_review.add_argument("--rationale", required=True, help="explanation for review decision")
+    p_review.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="destination JSON path (default: update in place)",
+    )
+
+    p_export = p_subs.add_parser(
+        "export", help="export approved prospective batch to longitudinal dataset"
+    )
+    p_export.add_argument("batch", type=Path, help="path to prospective batch JSON")
+    p_export.add_argument("output", type=Path, help="path to write longitudinal dataset JSON")
+    p_export.add_argument("--dataset-id", required=True, help="dataset ID for exported dataset")
+    p_export.add_argument("--source-id", required=True, help="source identifier")
+    p_export.add_argument(
+        "--allow-partial",
+        action="store_true",
+        help="export approved submissions even if batch contains unapproved submissions",
+    )
+
     return parser
 
 
@@ -135,7 +181,10 @@ def _validate(args: argparse.Namespace) -> int:
             print(f"Valid: {'yes' if report.is_valid else 'no'}")
             if report.metrics:
                 m = report.metrics
-                print(f"Journeys: {m.total_journeys}, Groups: {m.total_booking_groups}, Passengers: {m.total_passengers}, Observations: {m.total_observations}")
+                print(
+                    f"Journeys: {m.total_journeys}, Groups: {m.total_booking_groups}, "
+                    f"Passengers: {m.total_passengers}, Observations: {m.total_observations}"
+                )
                 print(f"Censored: {m.censored_count} ({m.censored_percentage}%)")
             if report.errors:
                 print("Errors:")
@@ -146,6 +195,19 @@ def _validate(args: argparse.Namespace) -> int:
                 for w in report.warnings:
                     print(f"  - {w}")
         return 0 if report.is_valid else 1
+
+    if detection.format_type == FormatType.PROSPECTIVE_BATCH:
+        try:
+            batch = ProspectiveBatch.load(args.dataset)
+        except Exception as exc:
+            print(f"Cannot read prospective batch: {exc}", file=sys.stderr)
+            return 1
+        p_report = validate_prospective_batch(batch)
+        if args.json:
+            print(json.dumps(p_report.to_dict(), indent=2, sort_keys=True, default=str))
+        else:
+            print(p_report.summary())
+        return 0 if p_report.is_valid else 1
 
     kwargs = {} if args.max_bytes is None else {"max_bytes": args.max_bytes}
     try:
@@ -270,6 +332,98 @@ def _verify(args: argparse.Namespace) -> int:
     return 0 if result.ok else 1
 
 
+def _prospective(args: argparse.Namespace) -> int:
+    if args.prospective_action == "scan":
+        try:
+            batch = ProspectiveBatch.load(args.batch)
+        except Exception as exc:
+            print(f"Cannot read prospective batch: {exc}", file=sys.stderr)
+            return 1
+        violations = scan_for_personal_data(batch.to_dict())
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "batch_id": batch.batch_id,
+                        "clean": len(violations) == 0,
+                        "violations": violations,
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            if violations:
+                print(
+                    f"PII Scan FAILED: {len(violations)} personal data pattern(s) detected:"
+                )
+                for v in violations:
+                    print(f"  - {v}")
+            else:
+                print(
+                    f"PII Scan PASSED: prospective batch '{batch.batch_id}' contains no personal data patterns."
+                )
+        return 0 if not violations else 1
+
+    if args.prospective_action == "review":
+        try:
+            batch = ProspectiveBatch.load(args.batch)
+        except Exception as exc:
+            print(f"Cannot read prospective batch: {exc}", file=sys.stderr)
+            return 1
+
+        action_map = {
+            "approve": ReviewStatus.APPROVED,
+            "reject": ReviewStatus.REJECTED,
+            "quarantine": ReviewStatus.QUARANTINED,
+        }
+        target_action = action_map[args.action]
+
+        try:
+            review_batch(
+                batch,
+                action=target_action,
+                reviewer=args.reviewer,
+                rationale=args.rationale,
+            )
+        except Exception as exc:
+            print(f"Review action failed: {exc}", file=sys.stderr)
+            return 1
+
+        out_path = args.output if args.output else args.batch
+        batch.save(out_path)
+        print(
+            f"Applied review status '{target_action.value}' to batch '{batch.batch_id}'. Saved to {out_path}"
+        )
+        return 0
+
+    if args.prospective_action == "export":
+        try:
+            batch = ProspectiveBatch.load(args.batch)
+        except Exception as exc:
+            print(f"Cannot read prospective batch: {exc}", file=sys.stderr)
+            return 1
+
+        try:
+            long_ds = export_batch_to_longitudinal(
+                batch,
+                dataset_id=args.dataset_id,
+                source_id=args.source_id,
+                require_all_approved=not args.allow_partial,
+            )
+        except Exception as exc:
+            print(f"Export failed: {exc}", file=sys.stderr)
+            return 1
+
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        long_ds.save(args.output)
+        print(
+            f"Exported {len(long_ds.booking_groups)} booking groups to longitudinal dataset at {args.output}"
+        )
+        return 0
+
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     handlers = {
@@ -279,6 +433,7 @@ def main(argv: list[str] | None = None) -> int:
         "detect": _detect,
         "snapshot": _snapshot,
         "quarantine": _quarantine,
+        "prospective": _prospective,
     }
     return handlers[args.command](args)
 

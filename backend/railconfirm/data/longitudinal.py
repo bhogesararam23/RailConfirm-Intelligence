@@ -504,6 +504,9 @@ class LongitudinalDataset:
             dataset.add_booking_group(BookingGroup.from_dict(bg_data))
         return dataset
 
+    def save(self, path: str | Path) -> None:
+        save_longitudinal_dataset(self, path)
+
 
 @dataclass(frozen=True)
 class SnapshotResult:
