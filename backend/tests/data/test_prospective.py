@@ -22,6 +22,7 @@ from railconfirm.data.prospective import (
     ProspectiveSubmission,
     ReviewStatus,
     approve_batch_for_research,
+    atomic_write_json,
     derive_pseudonym,
     export_batch_to_longitudinal,
     generate_prospective_template,
@@ -527,4 +528,32 @@ def test_configured_pseudonym_salt(monkeypatch):
     monkeypatch.setenv("RAILCONFIRM_PSEUDONYM_SALT", "too_short_salt")
     with pytest.raises(SecurityError, match="too weak"):
         get_configured_pseudonym_salt()
+
+
+def test_atomic_write_json_roundtrip_and_safety(tmp_path: Path):
+    target = tmp_path / "subdir" / "record.json"
+    data = {"batch_id": "BATCH_001", "records": [1, 2, 3]}
+
+    # Successful atomic write creates directory and writes file
+    written = atomic_write_json(target, data, indent=2)
+    assert written == target
+    assert target.is_file()
+
+    import json
+    loaded = json.loads(target.read_text(encoding="utf-8"))
+    assert loaded == data
+
+    # Failure during serialization does not corrupt existing file
+    bad_data = {"batch_id": "BATCH_002", "unserializable": object()}
+    with pytest.raises(TypeError):
+        atomic_write_json(target, bad_data)
+
+    # File should remain uncorrupted with original content
+    intact = json.loads(target.read_text(encoding="utf-8"))
+    assert intact == data
+
+    # No leftover temporary files
+    temp_files = list(target.parent.glob(".tmp_*"))
+    assert len(temp_files) == 0
+
 

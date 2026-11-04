@@ -25,6 +25,7 @@ import hmac
 import json
 import os
 import re
+import tempfile
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime, timedelta
@@ -146,6 +147,46 @@ def get_configured_pseudonym_salt(
             f"Must be at least {MIN_SALT_LENGTH} characters to resist dictionary inversion."
         )
     return salt
+
+
+def atomic_write_json(
+    path: Path | str,
+    data: Any,
+    *,
+    indent: int = 2,
+    sort_keys: bool = False,
+) -> Path:
+    """Atomically write JSON data to a destination path using a temporary file.
+
+    Guarantees that interruptions or write errors will never truncate or corrupt
+    an existing file. Writes to a temporary file in the same directory (to ensure
+    same-filesystem atomic rename) and replaces the destination via os.replace.
+    """
+    target = Path(path).resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp_file = tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        dir=target.parent,
+        delete=False,
+        prefix=f".tmp_{target.name}_",
+    )
+    temp_path = Path(temp_file.name)
+    try:
+        json.dump(data, temp_file, indent=indent, sort_keys=sort_keys)
+        temp_file.flush()
+        os.fsync(temp_file.fileno())
+        temp_file.close()
+        os.replace(temp_path, target)
+        return target
+    except Exception:
+        temp_file.close()
+        if temp_path.exists():
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
+        raise
 
 
 def scan_for_personal_data(
@@ -564,10 +605,7 @@ class ProspectiveBatch:
         )
 
     def save(self, path: Path | str) -> None:
-        target = Path(path).resolve()
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with target.open("w", encoding="utf-8") as f:
-            json.dump(self.to_dict(), f, indent=2)
+        atomic_write_json(path, self.to_dict(), indent=2)
 
     @classmethod
     def load(cls, path: Path | str) -> ProspectiveBatch:
