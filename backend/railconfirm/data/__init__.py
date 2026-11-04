@@ -1,5 +1,12 @@
 """Data loading, validation, manifest handling, and preprocessing for RailConfirm Intelligence."""
 
+from railconfirm.data.inspection import (
+    FormatType,
+    SchemaDetectionResult,
+    audit_quarantine_directory,
+    detect_schema,
+    quarantine_dataset,
+)
 from railconfirm.data.loader import DEFAULT_MAX_BYTES, SUPPORTED_SUFFIXES, load_dataset_file
 from railconfirm.data.manifest import (
     DatasetManifest,
@@ -45,6 +52,7 @@ __all__ = [
     "DatasetManifest",
     "DatasetValidationReport",
     "EligibilityThresholds",
+    "FormatType",
     "FrozenHorizonPlan",
     "HorizonWindow",
     "MIN_HORIZONS",
@@ -53,17 +61,21 @@ __all__ = [
     "ROW_CONTRACT_VERSION",
     "RollingOriginPlan",
     "SUPPORTED_SUFFIXES",
+    "SchemaDetectionResult",
     "SplitResult",
     "asof_statuses",
     "assert_no_label_columns",
     "assess_dataset",
+    "audit_quarantine_directory",
     "chronological_split",
+    "detect_schema",
     "extract_features",
     "feature_frame",
     "frozen_horizon_windows",
     "generate_manifest",
     "load_dataset_file",
     "parse_manifest",
+    "quarantine_dataset",
     "require_status_columns",
     "rolling_origin_windows",
     "strip_labels",

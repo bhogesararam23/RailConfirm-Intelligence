@@ -912,4 +912,39 @@ def test_prospective_cli_verify_export_and_reconcile(tmp_path: Path, capsys):
     assert "Lineage Status: verified_in_sync" in capsys.readouterr().out
 
 
+def test_cli_audit_quarantine_clean_and_orphans(tmp_path: Path, capsys):
+    import json
+
+    q_dir = tmp_path / "quarantine"
+    q_dir.mkdir(parents=True)
+
+    # 1. Clean run on empty dir
+    code = main(["audit-quarantine", "--quarantine-dir", str(q_dir), "--json"])
+    assert code == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["total_data_files"] == 0
+    assert data["valid_pairs"] == []
+
+    # 2. Add an orphaned data file and an orphaned sidecar
+    orphan_file = q_dir / "untracked.csv"
+    orphan_file.write_text("col\n1", encoding="utf-8")
+    orphan_sidecar = q_dir / "missing.csv.quarantine.json"
+    orphan_sidecar.write_text(json.dumps({"sha256": "123"}), encoding="utf-8")
+
+    code = main(["audit-quarantine", "--quarantine-dir", str(q_dir)])
+    assert code == 1
+    out = capsys.readouterr().out
+    assert "Orphaned data files:  1" in out
+    assert "Orphaned sidecars:    1" in out
+
+    # 3. Purge orphans via CLI
+    code = main(["audit-quarantine", "--quarantine-dir", str(q_dir), "--purge-orphans"])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "Purged files:         2" in out
+    assert not orphan_file.exists()
+    assert not orphan_sidecar.exists()
+
+
+
 

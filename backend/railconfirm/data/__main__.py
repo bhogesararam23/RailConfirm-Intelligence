@@ -22,6 +22,7 @@ from railconfirm.config import REPO_ROOT
 from railconfirm.data._io import atomic_write_csv
 from railconfirm.data.inspection import (
     FormatType,
+    audit_quarantine_directory,
     detect_schema,
     quarantine_dataset,
 )
@@ -103,6 +104,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--quarantine-dir", type=Path, default=DEFAULT_QUARANTINE_DIR, help="target directory"
     )
     quarantine.add_argument("--operator", default="cli_operator", help="operator name")
+
+    audit_quarantine = subparsers.add_parser(
+        "audit-quarantine",
+        help="audit quarantine directory for pair consistency, orphaned files, and checksum integrity",
+    )
+    audit_quarantine.add_argument(
+        "--quarantine-dir", type=Path, default=DEFAULT_QUARANTINE_DIR, help="target directory"
+    )
+    audit_quarantine.add_argument(
+        "--purge-orphans", action="store_true", help="remove orphaned data files and sidecars"
+    )
+    audit_quarantine.add_argument("--json", action="store_true", help="emit result as JSON")
 
     manifest = subparsers.add_parser("manifest", help="generate a provenance manifest")
     manifest.add_argument("dataset", type=Path)
@@ -391,6 +404,31 @@ def _quarantine(args: argparse.Namespace) -> int:
     print(f"Quarantined dataset: {q_path}")
     print(f"Sidecar cryptographic report: {sidecar}")
     return 0
+
+
+def _audit_quarantine(args: argparse.Namespace) -> int:
+    report = audit_quarantine_directory(
+        args.quarantine_dir,
+        purge_orphans=args.purge_orphans,
+    )
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        print(f"Quarantine directory: {args.quarantine_dir}")
+        print(f"Total data files:     {report['total_data_files']}")
+        print(f"Total sidecars:       {report['total_sidecars']}")
+        print(f"Valid pairs:          {len(report['valid_pairs'])}")
+        print(f"Orphaned data files:  {len(report['orphaned_data_files'])}")
+        print(f"Orphaned sidecars:    {len(report['orphaned_sidecars'])}")
+        print(f"Checksum mismatches:  {len(report['checksum_mismatches'])}")
+        if args.purge_orphans:
+            print(f"Purged files:         {len(report['purged_files'])}")
+    has_issues = (
+        len(report["orphaned_data_files"]) > 0
+        or len(report["orphaned_sidecars"]) > 0
+        or len(report["checksum_mismatches"]) > 0
+    )
+    return 1 if (has_issues and not args.purge_orphans) else 0
 
 
 def _manifest(args: argparse.Namespace) -> int:
@@ -688,6 +726,7 @@ def main(argv: list[str] | None = None) -> int:
         "detect": _detect,
         "snapshot": _snapshot,
         "quarantine": _quarantine,
+        "audit-quarantine": _audit_quarantine,
         "prospective": _prospective,
     }
     return handlers[args.command](args)

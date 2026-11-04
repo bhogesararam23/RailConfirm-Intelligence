@@ -8,6 +8,7 @@ import pytest
 
 from railconfirm.data.inspection import (
     FormatType,
+    audit_quarantine_directory,
     compute_sha256,
     detect_schema,
     quarantine_dataset,
@@ -198,3 +199,103 @@ def test_quarantine_non_existent_file_raises(tmp_path: Path):
     quarantine_dir = tmp_path / "quarantine"
     with pytest.raises(FileNotFoundError, match="Cannot quarantine non-existent file"):
         quarantine_dataset(missing_file, quarantine_dir, reason="test")
+
+
+def test_quarantine_checksum_computed_on_quarantined_file(tmp_path: Path):
+    source_file = tmp_path / "original.csv"
+    source_file.write_text("v1_content", encoding="utf-8")
+    quarantine_dir = tmp_path / "quarantine"
+
+    quarantined = quarantine_dataset(
+        source_file,
+        quarantine_dir,
+        reason="Test quarantine hash verification",
+    )
+    sidecar_path = quarantine_dir / f"{quarantined.name}.quarantine.json"
+    sidecar_data = json.loads(sidecar_path.read_text(encoding="utf-8"))
+
+    # The sidecar sha256 must match the quarantined file's actual hash
+    assert sidecar_data["sha256"] == compute_sha256(quarantined)
+
+
+def test_audit_quarantine_directory_valid_and_missing(tmp_path: Path):
+    # Test on non-existent directory returns zero report safely
+    missing_dir = tmp_path / "does_not_exist"
+    report = audit_quarantine_directory(missing_dir)
+    assert report["total_data_files"] == 0
+    assert report["valid_pairs"] == []
+
+    # Create a valid quarantined file + sidecar
+    source_file = tmp_path / "sample.csv"
+    source_file.write_text("sample_row_1\n", encoding="utf-8")
+    quarantine_dir = tmp_path / "quarantine"
+
+    quarantined = quarantine_dataset(
+        source_file,
+        quarantine_dir,
+        reason="Privacy audit failure",
+    )
+
+    audit = audit_quarantine_directory(quarantine_dir)
+    assert audit["total_data_files"] == 1
+    assert audit["total_sidecars"] == 1
+    assert str(quarantined) in audit["valid_pairs"]
+    assert len(audit["orphaned_data_files"]) == 0
+    assert len(audit["orphaned_sidecars"]) == 0
+    assert len(audit["checksum_mismatches"]) == 0
+
+
+def test_audit_quarantine_directory_orphans_and_purge(tmp_path: Path):
+    quarantine_dir = tmp_path / "quarantine"
+    quarantine_dir.mkdir(parents=True)
+
+    # 1. Create a valid pair
+    valid_file = quarantine_dir / "valid_data.csv"
+    valid_file.write_text("content", encoding="utf-8")
+    valid_sidecar = quarantine_dir / "valid_data.csv.quarantine.json"
+    valid_sidecar.write_text(json.dumps({"sha256": compute_sha256(valid_file)}), encoding="utf-8")
+
+    # 2. Create an orphaned data file (missing sidecar)
+    orphan_data = quarantine_dir / "orphan_data.csv"
+    orphan_data.write_text("orphan content", encoding="utf-8")
+
+    # 3. Create an orphaned sidecar (missing data file)
+    orphan_sidecar = quarantine_dir / "orphan_alone.csv.quarantine.json"
+    orphan_sidecar.write_text(json.dumps({"sha256": "abcdef"}), encoding="utf-8")
+
+    # Audit without purge
+    audit = audit_quarantine_directory(quarantine_dir, purge_orphans=False)
+    assert audit["total_data_files"] == 2
+    assert audit["total_sidecars"] == 2
+    assert str(valid_file) in audit["valid_pairs"]
+    assert str(orphan_data) in audit["orphaned_data_files"]
+    assert str(orphan_sidecar) in audit["orphaned_sidecars"]
+    assert len(audit["purged_files"]) == 0
+    assert orphan_data.exists()
+    assert orphan_sidecar.exists()
+
+    # Audit with purge
+    purge_audit = audit_quarantine_directory(quarantine_dir, purge_orphans=True)
+    assert len(purge_audit["purged_files"]) == 2
+    assert not orphan_data.exists()
+    assert not orphan_sidecar.exists()
+    assert valid_file.exists()
+    assert valid_sidecar.exists()
+
+
+def test_audit_quarantine_directory_detects_checksum_mismatch(tmp_path: Path):
+    quarantine_dir = tmp_path / "quarantine"
+    quarantine_dir.mkdir(parents=True)
+
+    data_file = quarantine_dir / "tampered.csv"
+    data_file.write_text("tampered_content", encoding="utf-8")
+    sidecar = quarantine_dir / "tampered.csv.quarantine.json"
+    sidecar.write_text(json.dumps({"sha256": "recorded_wrong_hash_123"}), encoding="utf-8")
+
+    audit = audit_quarantine_directory(quarantine_dir)
+    assert len(audit["checksum_mismatches"]) == 1
+    mismatch = audit["checksum_mismatches"][0]
+    assert mismatch["data_file"] == str(data_file)
+    assert mismatch["expected_sha256"] == "recorded_wrong_hash_123"
+    assert mismatch["actual_sha256"] == compute_sha256(data_file)
+

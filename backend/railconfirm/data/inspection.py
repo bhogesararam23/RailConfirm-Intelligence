@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -264,6 +265,11 @@ def quarantine_dataset(
 ) -> Path:
     """Safely isolate a candidate dataset into the quarantine area with cryptographic report.
 
+    Stages the copy directly into the quarantine directory, computes checksum and
+    size directly on the quarantined copy, commits the file, and produces a
+    corresponding `.quarantine.json` sidecar. In-process failures rollback the
+    committed file.
+
     Args:
         file_path: Path to the rejected file.
         quarantine_dir: Directory where quarantined files are stored.
@@ -281,14 +287,23 @@ def quarantine_dataset(
     target_dir = Path(quarantine_dir).resolve()
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    checksum = compute_sha256(source_path)
-    file_size = source_path.stat().st_size
     timestamp_prefix = datetime.now(tz=UTC).strftime("%Y%m%d_%H%M%S")
-    target_filename = f"{timestamp_prefix}_{checksum[:12]}_{source_path.name}"
-    target_file = target_dir / target_filename
+    staged_file = target_dir / f".staged_{timestamp_prefix}_{source_path.name}"
+    atomic_copy_file(source_path, staged_file)
 
-    # Copy source into quarantine using atomic copy
-    target_file = atomic_copy_file(source_path, target_file)
+    try:
+        checksum = compute_sha256(staged_file)
+        file_size = staged_file.stat().st_size
+        target_filename = f"{timestamp_prefix}_{checksum[:12]}_{source_path.name}"
+        target_file = target_dir / target_filename
+        os.replace(staged_file, target_file)
+    except Exception:
+        if staged_file.exists():
+            try:
+                staged_file.unlink()
+            except OSError:
+                pass
+        raise
 
     # Generate cryptographic sidecar report
     sidecar_path = target_dir / f"{target_filename}.quarantine.json"
@@ -318,3 +333,115 @@ def quarantine_dataset(
         raise
 
     return target_file
+
+
+def audit_quarantine_directory(
+    quarantine_dir: Path | str,
+    *,
+    purge_orphans: bool = False,
+) -> dict[str, Any]:
+    """Audit the quarantine directory for pair consistency, orphaned files, and checksum integrity.
+
+    Verifies that every quarantined data file has a corresponding `.quarantine.json`
+    sidecar report, every sidecar has a corresponding data file, and all data
+    files match their recorded SHA-256 hashes.
+
+    Args:
+        quarantine_dir: Directory containing quarantined datasets and sidecars.
+        purge_orphans: If True, unlinks orphaned data files and orphaned sidecars.
+
+    Returns:
+        Dictionary with audit summary and findings:
+        - ``total_data_files``: Count of data files found.
+        - ``total_sidecars``: Count of sidecar files found.
+        - ``valid_pairs``: List of string paths for valid (file, sidecar) pairs.
+        - ``orphaned_data_files``: List of string paths for data files missing sidecars.
+        - ``orphaned_sidecars``: List of string paths for sidecars missing data files.
+        - ``checksum_mismatches``: List of dicts describing integrity discrepancies.
+        - ``purged_files``: List of string paths unlinked during purge (if enabled).
+    """
+    qdir = Path(quarantine_dir).resolve()
+    if not qdir.is_dir():
+        return {
+            "total_data_files": 0,
+            "total_sidecars": 0,
+            "valid_pairs": [],
+            "orphaned_data_files": [],
+            "orphaned_sidecars": [],
+            "checksum_mismatches": [],
+            "purged_files": [],
+        }
+
+    # Sidecars end in .quarantine.json; temporary/staged files start with .
+    all_files = [f for f in qdir.iterdir() if f.is_file() and not f.name.startswith(".")]
+    sidecars = {f.name: f for f in all_files if f.name.endswith(".quarantine.json")}
+    data_files = {f.name: f for f in all_files if not f.name.endswith(".quarantine.json")}
+
+    valid_pairs: list[str] = []
+    orphaned_data_files: list[str] = []
+    orphaned_sidecars: list[str] = []
+    checksum_mismatches: list[dict[str, Any]] = []
+    purged_files: list[str] = []
+
+    # Check data files
+    for name, path in data_files.items():
+        expected_sidecar_name = f"{name}.quarantine.json"
+        if expected_sidecar_name in sidecars:
+            sidecar_path = sidecars[expected_sidecar_name]
+            try:
+                sidecar_data = json.loads(sidecar_path.read_text(encoding="utf-8"))
+                recorded_hash = sidecar_data.get("sha256")
+                actual_hash = compute_sha256(path)
+                if recorded_hash and actual_hash != recorded_hash:
+                    checksum_mismatches.append(
+                        {
+                            "data_file": str(path),
+                            "sidecar": str(sidecar_path),
+                            "expected_sha256": recorded_hash,
+                            "actual_sha256": actual_hash,
+                        }
+                    )
+                else:
+                    valid_pairs.append(str(path))
+            except Exception as exc:
+                checksum_mismatches.append(
+                    {
+                        "data_file": str(path),
+                        "sidecar": str(sidecar_path),
+                        "error": f"Failed to parse sidecar: {exc}",
+                    }
+                )
+        else:
+            orphaned_data_files.append(str(path))
+
+    # Check sidecars
+    for sc_name, sc_path in sidecars.items():
+        expected_data_name = sc_name[: -len(".quarantine.json")]
+        if expected_data_name not in data_files:
+            orphaned_sidecars.append(str(sc_path))
+
+    if purge_orphans:
+        for path_str in orphaned_data_files:
+            p = Path(path_str)
+            try:
+                p.unlink()
+                purged_files.append(path_str)
+            except OSError:
+                pass
+        for sc_str in orphaned_sidecars:
+            p = Path(sc_str)
+            try:
+                p.unlink()
+                purged_files.append(sc_str)
+            except OSError:
+                pass
+
+    return {
+        "total_data_files": len(data_files),
+        "total_sidecars": len(sidecars),
+        "valid_pairs": valid_pairs,
+        "orphaned_data_files": orphaned_data_files,
+        "orphaned_sidecars": orphaned_sidecars,
+        "checksum_mismatches": checksum_mismatches,
+        "purged_files": purged_files,
+    }

@@ -17,16 +17,37 @@ if TYPE_CHECKING:
     import pandas as pd
 
 
+def _sync_dir(dir_path: Path) -> None:
+    """Best-effort directory fsync on POSIX platforms to ensure directory entry persistence."""
+    if hasattr(os, "O_DIRECTORY"):
+        try:
+            fd = os.open(str(dir_path), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        except OSError:
+            pass
+
+
 def atomic_write_text(path: Path | str, text: str, *, encoding: str = "utf-8") -> Path:
     """Atomically write text to *path* using a temp file + os.replace.
 
     If the write or fsync fails the original file at *path* (if any) is not
-    modified. The temp file is cleaned up on failure.
+    modified. The temp file is cleaned up on failure. Preserves existing file
+    permissions if *path* exists.
 
     Returns the resolved destination path.
     """
     target = Path(path).resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
+    existing_mode = None
+    if target.exists():
+        try:
+            existing_mode = target.stat().st_mode
+        except OSError:
+            pass
+
     temp_file = tempfile.NamedTemporaryFile(
         mode="w",
         encoding=encoding,
@@ -40,7 +61,13 @@ def atomic_write_text(path: Path | str, text: str, *, encoding: str = "utf-8") -
         temp_file.flush()
         os.fsync(temp_file.fileno())
         temp_file.close()
+        if existing_mode is not None:
+            try:
+                os.chmod(temp_path, existing_mode)
+            except OSError:
+                pass
         os.replace(temp_path, target)
+        _sync_dir(target.parent)
         return target
     except Exception:
         temp_file.close()
@@ -80,11 +107,50 @@ def atomic_write_csv(
     """Atomically write a pandas DataFrame to CSV at *path* using a temporary file.
 
     Guarantees that write failures or interruptions never leave a partial or
-    truncated CSV file. Uses ``df.to_csv(index=index, ...)`` to format the CSV
-    string and writes atomically via ``atomic_write_text``.
+    truncated CSV file. Streams the DataFrame directly to the temporary file
+    without buffering the entire serialized CSV in memory, flushes, fsyncs,
+    preserves existing file permissions if present, and commits atomically via
+    ``os.replace``.
     """
-    csv_text = df.to_csv(index=index, **kwargs)
-    return atomic_write_text(path, str(csv_text), encoding=encoding)
+    target = Path(path).resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    existing_mode = None
+    if target.exists():
+        try:
+            existing_mode = target.stat().st_mode
+        except OSError:
+            pass
+
+    temp_file = tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding=encoding,
+        newline="",
+        dir=target.parent,
+        delete=False,
+        prefix=f".tmp_{target.name}_",
+    )
+    temp_path = Path(temp_file.name)
+    try:
+        df.to_csv(temp_file, index=index, **kwargs)
+        temp_file.flush()
+        os.fsync(temp_file.fileno())
+        temp_file.close()
+        if existing_mode is not None:
+            try:
+                os.chmod(temp_path, existing_mode)
+            except OSError:
+                pass
+        os.replace(temp_path, target)
+        _sync_dir(target.parent)
+        return target
+    except Exception:
+        temp_file.close()
+        if temp_path.exists():
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
+        raise
 
 
 def atomic_copy_file(source: Path | str, destination: Path | str) -> Path:
@@ -119,6 +185,7 @@ def atomic_copy_file(source: Path | str, destination: Path | str) -> Path:
         with open(temp_path, "r+b") as f:
             os.fsync(f.fileno())
         os.replace(temp_path, dst)
+        _sync_dir(dst.parent)
         return dst
     except Exception:
         if temp_path.exists():

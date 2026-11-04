@@ -165,3 +165,30 @@ def test_quarantine_pair_atomicity_on_sidecar_failure(tmp_path: Path, monkeypatc
     # No orphaned quarantined file or temporary file should linger
     files_in_quarantine = list(quarantine_dir.iterdir())
     assert len(files_in_quarantine) == 0
+
+
+def test_atomic_write_text_preserves_permissions(tmp_path: Path):
+    target = tmp_path / "permissions_test.txt"
+    target.write_text("initial", encoding="utf-8")
+    initial_mode = target.stat().st_mode
+
+    # Perform atomic update
+    atomic_write_text(target, "updated content")
+    assert target.read_text(encoding="utf-8") == "updated content"
+    assert target.stat().st_mode == initial_mode
+
+
+def test_atomic_write_csv_streaming_and_newlines(tmp_path: Path):
+    target = tmp_path / "streamed.csv"
+    df = pd.DataFrame({"col_a": [10, 20], "col_b": ["x", "y"]})
+
+    atomic_write_csv(target, df, index=False)
+    assert target.is_file()
+
+    # Verify no double carriage returns (\r\r\n) exist in binary representation
+    raw_bytes = target.read_bytes()
+    assert b"\r\r\n" not in raw_bytes
+    loaded = pd.read_csv(target)
+    assert len(loaded) == 2
+    assert list(loaded["col_a"]) == [10, 20]
+
