@@ -486,6 +486,7 @@ def build_synthetic_prospective_batch(
                 outcome_category=NormalizedStatus.CNF,
                 outcome_observed_at=dep_dt - timedelta(hours=4),
                 verification_method=VerificationMethod.CHART_SNAPSHOT,
+                verification_source="irctc_online_charts_synthetic",
                 label_confidence=LabelConfidence.VERIFIED,
             )
             passengers.append(

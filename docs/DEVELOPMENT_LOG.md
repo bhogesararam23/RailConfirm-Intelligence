@@ -2645,3 +2645,39 @@ the existing storage tests. `delete_live` refuses a naive clock before touching 
 ### Checks run
 - `python scripts/check_repository_hygiene.py` -> Passed (0 errors on 22 required files and 279 tracked files).
 
+
+
+## 2026-11-04 -- Prospective Pilot Operational Hardening, Scientific Coverage, and Participant Withdrawal Lifecycle
+
+### Scope
+- Conducted a critical privacy, governance, and operational audit of the prospective collection framework (ADR-0044).
+- Corrected unsupported legal and privacy claims, replacing "anonymized" with "pseudonymized" and distinguishing the five decoupled governance layers (technical safeguards, participant consent, legal review, operator research approval, commercial permission).
+- Hardened cryptographic pseudonymization with enforced minimum 32-character salt length (`MIN_SALT_LENGTH = 32`) in `derive_pseudonym` to protect the finite 10-digit PNR space (10^10) against dictionary attacks.
+- Enhanced personal data scanner to detect numeric integer PNRs, Indian PAN tax IDs, passport numbers, and URL credential query tokens, with explicit caveats on heuristic limits.
+- Formalized participant consent withdrawal lifecycle in `ConsentMetadata` (`withdrawn`, `withdrawn_at`, `withdrawal_reason`), `ReviewStatus.WITHDRAWN`, `withdraw_submission()`, and CLI `prospective withdraw`.
+- Enforced strict passenger and journey invariants: station disparity (`boarding_station != destination_station`), passenger count bounds (1 to 6 standard; 1 to 4 Tatkal), contiguous sequence numbering (1 to n), observation chronology, outcome verification documentation, and intra-batch duplicate journey detection.
+- Defined and automated four quantitative scientific pilot thresholds in `ProspectiveAuditReport`: Operational Feasibility Pilot, Technical Intake Eligibility, Temporal Baseline Experiment, and Subgroup Evaluation.
+- Operationalized local CLI tooling in `backend/railconfirm/data/__main__.py`: `prospective template`, `prospective audit`, `prospective withdraw`, dry-run mode (`--dry-run`), and overwrite guards (`--overwrite`).
+- Authored ADR-0045, updated the prospective collection operating protocol, decision brief, source register, intake checklist, roadmap, project status, agent handoff, and changelog.
+
+### Changed
+- `backend/railconfirm/data/prospective.py`: Enforced 32-character minimum salt length; enhanced PII regex and numeric scanner; added withdrawal metadata to `ConsentMetadata`; added `ReviewStatus.WITHDRAWN`; implemented `withdraw_submission()`; enforced passenger sequence (1..6), contiguous sequences, station disparity, observation chronology, and outcome verification checks; added `generate_prospective_template()`; and extended `ProspectiveAuditReport` with scientific threshold evaluators.
+- `backend/railconfirm/data/__main__.py`: Added `prospective template`, `prospective audit`, and `prospective withdraw` CLI subcommands; supported optional `--submission-id` in `prospective review`; added `--overwrite` and `--dry-run` to `prospective export`.
+- `backend/tests/data/test_prospective.py`: Added 12 comprehensive unit and security tests covering salt length enforcement, enhanced PII scanning, consent withdrawal lifecycle, passenger/journey invariants, and template generation.
+- `backend/tests/data/test_intake_cli.py`: Added integration tests covering `prospective template`, `audit`, `withdraw`, `--dry-run`, and overwrite protection.
+- `backend/tests/support/datasets.py`: Updated synthetic prospective batch builder with documented verification source.
+- `docs/adr/ADR-0045-prospective-pilot-operational-hardening-and-participant-lifecycle.md`: Architectural record formalizing salt entropy, withdrawal lifecycle, and scientific pilot thresholds.
+- `docs/adr/README.md`: Updated ADR index with ADR-0045.
+- `docs/data/PROSPECTIVE_COLLECTION_PROTOCOL.md`: Updated with five decoupled governance layers, salt entropy rationale, withdrawal and erasure procedure, four scientific pilot thresholds, coverage matrix, and updated draft participant consent notice v2026.1.
+- `docs/data/DATA_ACQUISITION_DECISION_BRIEF.md`: Reconciled legal claims and pathway rankings.
+- `docs/data/SOURCE_REGISTER.md`: Refreshed prospective collection registration with ADR-0045 and withdrawal lifecycle.
+- `docs/data/DATASET_INTAKE_CHECKLIST.md`: Added checklist items for salt entropy, withdrawal procedures, and pseudonymization limits.
+- `docs/PROJECT_STATUS.md`: Updated test counts to 1,244 backend tests and added ADR-0045.
+- `docs/ROADMAP.md`: Reconciled review date and Phase 2 status with ADR-0045.
+- `docs/AGENT_HANDOFF.md`: Updated test counts and ADR index.
+- `CHANGELOG.md`: Logged operational hardening, withdrawal lifecycle, and scientific threshold auditing.
+
+### Checks run
+- `pytest backend/tests` -> 1,244 passed in 93.14s.
+- `ruff check --config backend/pyproject.toml backend/railconfirm/data backend/tests/data backend/tests/support` -> Passed (0 errors).
+- `python scripts/check_repository_hygiene.py` -> Passed (0 errors on 23 required files and 280 tracked files).

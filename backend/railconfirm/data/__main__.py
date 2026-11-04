@@ -42,9 +42,11 @@ from railconfirm.data.prospective import (
     ProspectiveBatch,
     ReviewStatus,
     export_batch_to_longitudinal,
+    generate_prospective_template,
     review_batch,
     scan_for_personal_data,
     validate_prospective_batch,
+    withdraw_submission,
 )
 from railconfirm.data.validator import validate_dataset
 
@@ -121,9 +123,21 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("dataset", type=Path, nargs="?")
 
     prospective = subparsers.add_parser(
-        "prospective", help="local-first prospective collection tools: scan, review, export"
+        "prospective", help="local-first prospective collection tools: template, scan, audit, review, withdraw, export"
     )
     p_subs = prospective.add_subparsers(dest="prospective_action", required=True)
+
+    p_template = p_subs.add_parser(
+        "template", help="generate a safe blank prospective collection batch template"
+    )
+    p_template.add_argument("output", type=Path, help="path to write template JSON")
+    p_template.add_argument(
+        "--submissions", type=int, default=2, help="number of template submissions (1 or 2)"
+    )
+    p_template.add_argument(
+        "--multi-passenger", action="store_true", default=True, help="include a multi-passenger booking example"
+    )
+    p_template.add_argument("--overwrite", action="store_true", help="overwrite existing file")
 
     p_scan = p_subs.add_parser(
         "scan", help="scan prospective batch for personal data or raw PNRs"
@@ -131,13 +145,39 @@ def build_parser() -> argparse.ArgumentParser:
     p_scan.add_argument("batch", type=Path, help="path to prospective batch JSON")
     p_scan.add_argument("--json", action="store_true", help="emit scan diagnostics as JSON")
 
+    p_audit = p_subs.add_parser(
+        "audit", help="run comprehensive audit and scientific threshold evaluation on prospective batch"
+    )
+    p_audit.add_argument("batch", type=Path, help="path to prospective batch JSON")
+    p_audit.add_argument("--json", action="store_true", help="emit audit report as JSON")
+
+    p_withdraw = p_subs.add_parser(
+        "withdraw", help="record participant consent withdrawal and exclude submission from research"
+    )
+    p_withdraw.add_argument("batch", type=Path, help="path to prospective batch JSON")
+    p_withdraw.add_argument("--submission-id", required=True, help="submission ID to withdraw")
+    p_withdraw.add_argument("--reason", required=True, help="justification for withdrawal")
+    p_withdraw.add_argument("--operator", required=True, help="operator recording the withdrawal")
+    p_withdraw.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="destination JSON path (default: update in place)",
+    )
+
     p_review = p_subs.add_parser("review", help="record human operator review decision")
     p_review.add_argument("batch", type=Path, help="path to prospective batch JSON")
     p_review.add_argument(
-        "--action", choices=["approve", "reject", "quarantine"], required=True
+        "--action", choices=["approve", "reject", "quarantine", "withdraw"], required=True
     )
     p_review.add_argument("--reviewer", required=True, help="name or ID of human reviewer")
     p_review.add_argument("--rationale", required=True, help="explanation for review decision")
+    p_review.add_argument(
+        "--submission-id",
+        type=str,
+        default=None,
+        help="optional submission ID to review an individual submission",
+    )
     p_review.add_argument(
         "--output",
         type=Path,
@@ -156,6 +196,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--allow-partial",
         action="store_true",
         help="export approved submissions even if batch contains unapproved submissions",
+    )
+    p_export.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="allow overwriting target longitudinal dataset if it already exists",
+    )
+    p_export.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="validate and simulate export without writing output dataset to disk",
     )
 
     return parser
@@ -333,6 +383,58 @@ def _verify(args: argparse.Namespace) -> int:
 
 
 def _prospective(args: argparse.Namespace) -> int:
+    if args.prospective_action == "template":
+        try:
+            generated = generate_prospective_template(
+                args.output,
+                submission_count=args.submissions,
+                multi_passenger=args.multi_passenger,
+                overwrite=args.overwrite,
+            )
+        except Exception as exc:
+            print(f"Cannot generate template: {exc}", file=sys.stderr)
+            return 1
+        print(f"Generated clean prospective batch template at {generated}")
+        return 0
+
+    if args.prospective_action == "audit":
+        try:
+            batch = ProspectiveBatch.load(args.batch)
+        except Exception as exc:
+            print(f"Cannot read prospective batch: {exc}", file=sys.stderr)
+            return 1
+        report = validate_prospective_batch(batch)
+        if args.json:
+            print(json.dumps(report.to_dict(), indent=2, sort_keys=True, default=str))
+        else:
+            print(report.summary())
+        return 0 if report.is_valid else 1
+
+    if args.prospective_action == "withdraw":
+        try:
+            batch = ProspectiveBatch.load(args.batch)
+        except Exception as exc:
+            print(f"Cannot read prospective batch: {exc}", file=sys.stderr)
+            return 1
+        try:
+            updated_sub = withdraw_submission(
+                batch,
+                submission_id=args.submission_id,
+                reason=args.reason,
+                operator=args.operator,
+            )
+        except Exception as exc:
+            print(f"Withdrawal action failed: {exc}", file=sys.stderr)
+            return 1
+
+        out_path = args.output if args.output else args.batch
+        batch.save(out_path)
+        print(
+            f"Successfully recorded consent withdrawal for submission '{updated_sub.submission_id}'. "
+            f"Review status: WITHDRAWN. Saved to {out_path}"
+        )
+        return 0
+
     if args.prospective_action == "scan":
         try:
             batch = ProspectiveBatch.load(args.batch)
@@ -375,6 +477,7 @@ def _prospective(args: argparse.Namespace) -> int:
             "approve": ReviewStatus.APPROVED,
             "reject": ReviewStatus.REJECTED,
             "quarantine": ReviewStatus.QUARANTINED,
+            "withdraw": ReviewStatus.WITHDRAWN,
         }
         target_action = action_map[args.action]
 
@@ -384,6 +487,7 @@ def _prospective(args: argparse.Namespace) -> int:
                 action=target_action,
                 reviewer=args.reviewer,
                 rationale=args.rationale,
+                submission_id=args.submission_id,
             )
         except Exception as exc:
             print(f"Review action failed: {exc}", file=sys.stderr)
@@ -391,12 +495,21 @@ def _prospective(args: argparse.Namespace) -> int:
 
         out_path = args.output if args.output else args.batch
         batch.save(out_path)
+        target_desc = f"submission '{args.submission_id}'" if args.submission_id else f"batch '{batch.batch_id}'"
         print(
-            f"Applied review status '{target_action.value}' to batch '{batch.batch_id}'. Saved to {out_path}"
+            f"Applied review status '{target_action.value}' to {target_desc}. Saved to {out_path}"
         )
         return 0
 
     if args.prospective_action == "export":
+        if args.output.is_file() and not args.overwrite and not args.dry_run:
+            print(
+                f"Export failed: target file already exists at {args.output}. "
+                "Pass --overwrite to allow replacing it.",
+                file=sys.stderr,
+            )
+            return 1
+
         try:
             batch = ProspectiveBatch.load(args.batch)
         except Exception as exc:
@@ -413,6 +526,13 @@ def _prospective(args: argparse.Namespace) -> int:
         except Exception as exc:
             print(f"Export failed: {exc}", file=sys.stderr)
             return 1
+
+        if args.dry_run:
+            print(
+                f"[DRY-RUN] Export simulated successfully: {len(long_ds.booking_groups)} booking groups, "
+                f"{len(long_ds.journeys)} journeys would be written to {args.output}."
+            )
+            return 0
 
         args.output.parent.mkdir(parents=True, exist_ok=True)
         long_ds.save(args.output)

@@ -50,22 +50,22 @@ Every candidate dataset or pathway is evaluated against the mandatory intake sta
 | **Kaggle Aaryan Anil Ticket Dataset** | Synthetic | Synthetic | Synthetic | Synthetic | No | ~900 KB | MIT | Yes | Yes | Synthetic | **Rejected**: Author explicitly documents dataset is synthetically generated. Adds zero empirical railway evidence. |
 | **GitHub `ShubhangG/Train-Ticket-prediction`** | Raw WL | No | Binary | Train, Class | No | Small CSV | **No license** (All rights reserved) | None granted | No | Unknown | **Rejected**: Unlicensed, undocumented scraping origin, binary target only. |
 | **Academic Repositories (Zenodo, Dataverse, IEEE DataPort)** | None | None | None | None | None | 0 matches | N/A | N/A | N/A | N/A | **Evaluated — 0 matches**: No Indian Railways reservation outcome datasets exist on these repositories. |
-| **Local Prospective Pilot Collection (ADR-0044)** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | Controlled pilot | **Explicit participant research consent** | **Full explicit rights** | Research governed | **Complete (PII scanner + Salted HMAC)** | **Qualified Path for Phase 2 Exit**: Fully implemented, validated, and operator-governed. |
+| **Local Prospective Pilot Collection (ADR-0044, ADR-0045)** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | Controlled pilot | **Explicit participant research consent (v2026.1)** | **Consent-delimited research rights** | Research governed (no commercial use) | **Technical safeguards (PII scanner + Salted HMAC)** | **Qualified Path for Phase 2 Exit**: Fully implemented, validated, and operator-governed. Requires maintainer legal sign-off and cohort activation. |
 
 ---
 
 ## Ranked strategic pathways to Phase 2 exit
 
-### Rank 1: Local-first consent-governed prospective collection pilot (ADR-0044) — *The recommended actionable path*
+### Rank 1: Local-first consent-governed prospective collection pilot (ADR-0044, ADR-0045) — *The recommended actionable path*
 - **Description**: Collect longitudinal reservation updates directly from consented rail passengers (maintainers, research contributors, institutional partners) using the local prospective ingestion pipeline.
 - **Why it ranks first**:
-  1. **100% legally and ethically compliant**: Operates on explicit participant consent under transparent research purposes.
-  2. **Zero external runtime dependencies (ADR-0007)**: Operates entirely local-first without commercial API subscriptions or scraping.
+  1. **Legally and ethically grounded design**: Operates on explicit participant research consent (v2026.1) with defined research purposes and an explicit participant withdrawal lifecycle (ADR-0045). Requires qualified legal review prior to recruiting human participants.
+  2. **Zero external runtime dependencies (ADR-0007)**: Operates entirely local-first without commercial API subscriptions or runtime scraping.
   3. **Zero scraping / zero TOS violations**: Eliminates all anti-scraping, CAPTCHA, or provider agreement risks.
-  4. **Strict privacy by design**: Automated PII scanning detects and rejects raw PNRs, emails, phones, and Aadhaar numbers before storage; booking identifiers are pseudonymized via salted HMAC-SHA256.
-  5. **Independent outcome verification**: Final chart outcomes can be verified directly through IRCTC's public chart visualization portal (`irctc.co.in/online-charts`), which publishes coach-wise passenger charting allocations 4 hours before departure without requiring PNR lookups.
-  6. **Pipeline ready**: Contract v2.0.0, CLI commands (`prospective scan`, `prospective review`, `prospective export`), and point-in-time snapshotting are already fully implemented and tested.
-- **What it requires**: Maintainer activation of a prospective collection group and distribution of the draft consent notice.
+  4. **Strict privacy by design**: Automated PII scanning detects and rejects raw PNRs, emails, phones, Aadhaar numbers, PAN tax IDs, and passport numbers before storage; booking identifiers are pseudonymized via salted HMAC-SHA256 with an enforced minimum 32-character salt length.
+  5. **Independent outcome verification**: Final chart outcomes can be verified directly through IRCTC's public chart visualization portal (`irctc.co.in/online-charts`), which publishes coach-wise passenger charting allocations 4 hours before departure without requiring PNR lookups. (Note: chart viewing verifies status but does not authorize bulk chart harvesting or commercial training).
+  6. **Pipeline and operator tooling ready**: Contract v2.0.0, CLI commands (`prospective template`, `prospective scan`, `prospective audit`, `prospective review`, `prospective withdraw`, `prospective export` with `--dry-run`), and point-in-time snapshotting are fully implemented and verified with 1,244 backend unit tests.
+- **What it requires**: Maintainer legal review and authorization, followed by activation of a volunteer prospective collection group and distribution of the consent notice.
 
 ### Rank 2: Academic institutional research partnership with CRIS / Indian Railways
 - **Description**: Partner with an accredited Indian academic institution (e.g., IIT Delhi, IIT Bombay, IIIT) to submit a formal research proposal to the Centre for Railway Information Systems (CRIS) or Ministry of Railways for historical anonymized reservation outcome logs.

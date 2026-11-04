@@ -1,6 +1,6 @@
 # Roadmap
 
-Last reviewed: 2026-11-04 (after Phase 2 longitudinal contract v2.0.0, prospective collection framework v1.0.0, intake CLI subcommands, exhaustive dataset acquisition research campaign, and prospective pilot protocol — ADR-0043, ADR-0044)
+Last reviewed: 2026-11-04 (after Phase 2 longitudinal contract v2.0.0, prospective pilot operational hardening, consent withdrawal lifecycle, scientific pilot thresholds, and template/audit CLI tooling — ADR-0043, ADR-0044, ADR-0045)
 
 This roadmap defines the order of work for RailConfirm Intelligence. It is intentionally phase-based rather than calendar-based: data availability and verified outcomes determine when research phases can exit.
 
@@ -107,7 +107,7 @@ Phases can overlap only when their dependencies are satisfied. Do not advance to
 - No leakage, privacy or licence blocker remains for the proposed experiment.
 
 ### Current Phase 2 status (2026-11-04)
-- **Technical tooling: Complete and verified.** Longitudinal observation contract (v2.0.0, ADR-0043), transition anomaly auditing, point-in-time snapshotting (v1.1.0), schema auto-detection, cryptographic quarantine, consent-aware prospective intake framework (v1.0.0, ADR-0044) with automated PII/PNR scanning, salted HMAC-SHA256 pseudonym derivation, and complete CLI tools (`validate`, `detect`, `snapshot`, `quarantine`, `manifest`, `verify`, `prospective scan`, `prospective review`, `prospective export`). Verified across 1,240 backend pytest tests, 129 frontend Vitest tests, and 6 Playwright browser E2E tests.
+- **Technical tooling: Complete and verified.** Longitudinal observation contract (v2.0.0, ADR-0043), transition anomaly auditing, point-in-time snapshotting (v1.1.0), schema auto-detection, cryptographic quarantine, consent-aware prospective pilot framework (v1.0.0, ADR-0044, ADR-0045) with minimum 32-character salt enforcement, participant withdrawal lifecycle, four scientific pilot thresholds, and complete CLI subcommands (alidate, detect, snapshot, quarantine, manifest, erify, prospective template, prospective scan, prospective audit, prospective review, prospective withdraw, prospective export with dry-run and overwrite guards). Verified across 1,244 backend pytest tests, 129 frontend Vitest tests, and 6 Playwright browser E2E tests.
 - **Acquisition research: Concluded.** An exhaustive 2026-11-04 investigation across five institutional tracks confirmed that no legitimate public bulk dataset of real reservation outcomes exists on the open web. Open government portals (`data.gov.in`) publish macroscopic indicators only; CRIS enterprise gateways (`Pravah`) and IRCTC B2C PSP agreements operate live ticketing and strictly prohibit secondary data warehousing; and published academic papers rely on synthetic data or unverified consumer scraping without releasing underlying datasets.
 - **Strategic acquisition brief & operational protocol: Established.** Documented in `docs/data/DATA_ACQUISITION_DECISION_BRIEF.md` and `docs/data/PROSPECTIVE_COLLECTION_PROTOCOL.md`.
 - **Exit gate condition**: Phase 2 remains open until the physical collection and human approval of the initial prospective pilot cohort under the protocol. Real-data validation gates for Phases 3, 4, and 6 remain firmly in place, and prediction endpoints preserve structured abstention.

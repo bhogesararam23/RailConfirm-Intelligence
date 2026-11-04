@@ -1,6 +1,6 @@
 """Tests for prospective collection, privacy scanner, and operator governance."""
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -14,6 +14,7 @@ from railconfirm.data.longitudinal import (
 )
 from railconfirm.data.prospective import (
     DEFAULT_NOTICE_VERSION,
+    MIN_SALT_LENGTH,
     PROSPECTIVE_COLLECTION_SCHEMA_VERSION,
     ConsentMetadata,
     ProspectiveBatch,
@@ -23,33 +24,40 @@ from railconfirm.data.prospective import (
     approve_batch_for_research,
     derive_pseudonym,
     export_batch_to_longitudinal,
+    generate_prospective_template,
     intake_prospective_submission,
     review_batch,
     scan_for_personal_data,
     validate_prospective_batch,
+    withdraw_submission,
 )
 from railconfirm.domain.exceptions import DatasetValidationError, SecurityError
 from railconfirm.domain.status import NormalizedStatus
 
 
 def test_derive_pseudonym_deterministic_and_salted():
-    salt = "secret_deployment_salt_123"
+    salt = "secret_deployment_salt_123456789012"
     p1 = derive_pseudonym("PNR_4567890123", salt)
     p2 = derive_pseudonym("PNR_4567890123", salt)
     assert p1 == p2
     assert p1.startswith("anon_")
 
-    different_salt = derive_pseudonym("PNR_4567890123", "different_salt_456")
+    different_salt = derive_pseudonym("PNR_4567890123", "different_salt_456789012345678901")
     assert p1 != different_salt
 
     with pytest.raises(SecurityError, match="cryptographic salt is required"):
         derive_pseudonym("PNR_4567890123", "")
 
+    # Short salt must be refused to resist brute force over finite PNR space
+    with pytest.raises(SecurityError, match=f"must be at least {MIN_SALT_LENGTH} characters"):
+        derive_pseudonym("PNR_4567890123", "short_salt_under_32_chars")
+
 
 def test_privacy_scanner_detects_personal_data_patterns():
-    # 1. 10-digit Indian Railway PNR
+    # 1. 10-digit Indian Railway PNR (string and numeric)
     assert scan_for_personal_data({"ref": "My ticket is 2345678901"}) != []
     assert scan_for_personal_data({"ref": "PNR: 234-5678901"}) != []
+    assert scan_for_personal_data({"pnr_num": 2345678901}) != []
 
     # 2. Email address
     assert scan_for_personal_data({"contact": "passenger@example.com"}) != []
@@ -61,7 +69,16 @@ def test_privacy_scanner_detects_personal_data_patterns():
     # 4. Aadhaar number
     assert scan_for_personal_data({"id": "1234 5678 9012"}) != []
 
-    # 5. Clean pseudonymous data
+    # 5. PAN card tax ID
+    assert scan_for_personal_data({"pan": "ABCDE1234F"}) != []
+
+    # 6. Passport number
+    assert scan_for_personal_data({"passport": "A1234567"}) != []
+
+    # 7. URL query token / credentials
+    assert scan_for_personal_data({"url": "https://api.example.com?pnr=2345678901&auth=xyz"}) != []
+
+    # 8. Clean pseudonymous data
     clean = {
         "submission_id": "sub_001",
         "pseudonym_group_id": "anon_a1b2c3d4e5f60718",
@@ -79,6 +96,7 @@ def test_consent_metadata_validation():
         purpose_records=["confirmation_probability_research"],
     )
     assert valid.consent_basis == "explicit_opt_in"
+    assert valid.withdrawn is False
 
     with pytest.raises(DatasetValidationError, match="Invalid consent_basis"):
         ConsentMetadata(
@@ -92,6 +110,15 @@ def test_consent_metadata_validation():
             consent_basis="explicit_opt_in",
             notice_version="1.0",
             purpose_records=["commercial_ad_targeting"],
+        )
+
+    with pytest.raises(DatasetValidationError, match="Withdrawn consent must specify withdrawn_at"):
+        ConsentMetadata(
+            consent_basis="explicit_opt_in",
+            notice_version=DEFAULT_NOTICE_VERSION,
+            purpose_records=["confirmation_probability_research"],
+            withdrawn=True,
+            withdrawn_at=None,
         )
 
 
@@ -124,6 +151,7 @@ def sample_submission() -> ProspectiveSubmission:
             outcome_category=NormalizedStatus.CNF,
             outcome_observed_at=datetime(2026, 12, 1, 12, 0, tzinfo=UTC),
             verification_method=VerificationMethod.CHART_SNAPSHOT,
+            verification_source="irctc_online_charts:verified",
             label_confidence=LabelConfidence.VERIFIED,
         ),
     )
@@ -137,6 +165,7 @@ def sample_submission() -> ProspectiveSubmission:
         destination_station="HWH",
         class_code="3A",
         quota_code="GN",
+        scheduled_departure_at=datetime(2026, 12, 1, 16, 55, tzinfo=UTC),
         consent=consent,
         passengers=[passenger],
     )
@@ -228,6 +257,7 @@ def test_validate_prospective_batch_clean_and_diagnostics(
     assert report.review_status_counts[ReviewStatus.PENDING_REVIEW.value] == 1
     assert len(report.pii_violations) == 0
     assert "Valid: yes" in report.summary()
+    assert report.threshold_feasibility_pilot is False  # 1 passenger < 30
 
 
 def test_validate_prospective_batch_detects_pii_and_structural_errors(
@@ -293,3 +323,155 @@ def test_review_batch_actions_and_pii_safeguard(
             reviewer="auditor_3",
             rationale="Trying to approve with phone",
         )
+
+
+def test_participant_consent_withdrawal_lifecycle(sample_submission: ProspectiveSubmission):
+    batch = ProspectiveBatch(
+        batch_id="BATCH_WITHDRAWAL_001",
+        created_at=datetime(2026, 11, 1, 12, 0, tzinfo=UTC),
+        submissions=[sample_submission],
+    )
+
+    # Withdraw participant consent
+    updated_sub = withdraw_submission(
+        batch,
+        submission_id=sample_submission.submission_id,
+        reason="Participant requested erasure prior to dataset release.",
+        operator="operator_lead",
+    )
+    assert updated_sub.review_status == ReviewStatus.WITHDRAWN
+    assert updated_sub.consent.withdrawn is True
+    assert updated_sub.consent.withdrawn_at is not None
+    assert "erasure" in updated_sub.consent.withdrawal_reason
+
+    # Reviewing with approval must be refused
+    with pytest.raises(SecurityError, match="participant consent was withdrawn"):
+        review_batch(
+            batch,
+            action=ReviewStatus.APPROVED,
+            reviewer="lead",
+            rationale="Trying to override withdrawal",
+        )
+
+    # Exporting must be refused
+    with pytest.raises(DatasetValidationError, match="withdrawn participant consent"):
+        export_batch_to_longitudinal(
+            batch,
+            dataset_id="long_withdrawn",
+            source_id="test_source",
+            require_all_approved=True,
+        )
+
+
+def test_passenger_and_journey_invariants(sample_submission: ProspectiveSubmission):
+    # 1. Same boarding and destination station
+    with pytest.raises(DatasetValidationError, match="must be different"):
+        ProspectiveSubmission(
+            submission_id="SUB_SAME_STN",
+            pseudonym_group_id="anon_g1",
+            train_number="12301",
+            journey_date=date(2026, 12, 1),
+            boarding_station="NDLS",
+            destination_station="NDLS",
+            class_code="3A",
+            quota_code="GN",
+            consent=sample_submission.consent,
+            passengers=sample_submission.passengers,
+        )
+
+    # 2. Passenger sequence bounds (>6 rejected)
+    with pytest.raises(DatasetValidationError, match="passenger_sequence must be between 1 and 6"):
+        ProspectivePassenger(
+            passenger_sequence=7,
+            original_status_raw="GNWL 10",
+            original_status_category=NormalizedStatus.WL,
+        )
+
+    # 3. Non-contiguous passenger sequences
+    pax_non_contig = [
+        ProspectivePassenger(
+            passenger_sequence=1,
+            original_status_raw="GNWL 10",
+            original_status_category=NormalizedStatus.WL,
+        ),
+        ProspectivePassenger(
+            passenger_sequence=3,
+            original_status_raw="GNWL 11",
+            original_status_category=NormalizedStatus.WL,
+        ),
+    ]
+    with pytest.raises(DatasetValidationError, match="contiguous sequences starting at 1"):
+        ProspectiveSubmission(
+            submission_id="SUB_NON_CONTIG",
+            pseudonym_group_id="anon_g3",
+            train_number="12301",
+            journey_date=date(2026, 12, 1),
+            boarding_station="NDLS",
+            destination_station="HWH",
+            class_code="3A",
+            quota_code="GN",
+            consent=sample_submission.consent,
+            passengers=pax_non_contig,
+        )
+
+    # 4. Out-of-order observations
+    with pytest.raises(DatasetValidationError, match="strictly chronologically ordered"):
+        ProspectivePassenger(
+            passenger_sequence=1,
+            original_status_raw="GNWL 10",
+            original_status_category=NormalizedStatus.WL,
+            observations=[
+                StatusObservation(
+                    observation_id="OBS_1",
+                    passenger_record_id="p1",
+                    observed_at=datetime(2026, 11, 25, 10, 0, tzinfo=UTC),
+                    status_raw="RAC 10",
+                    status_category=NormalizedStatus.RAC,
+                ),
+                StatusObservation(
+                    observation_id="OBS_2",
+                    passenger_record_id="p1",
+                    observed_at=datetime(2026, 11, 20, 10, 0, tzinfo=UTC),  # earlier than OBS_1
+                    status_raw="RAC 5",
+                    status_category=NormalizedStatus.RAC,
+                ),
+            ],
+        )
+
+    # 5. Verified outcome without verification source
+    with pytest.raises(DatasetValidationError, match="verified outcome must document verification_source"):
+        ProspectivePassenger(
+            passenger_sequence=1,
+            original_status_raw="GNWL 10",
+            original_status_category=NormalizedStatus.WL,
+            outcome=FinalOutcome(
+                outcome_target="final_chart_cnf",
+                outcome_status_raw="CNF",
+                outcome_category=NormalizedStatus.CNF,
+                verification_method=VerificationMethod.CHART_SNAPSHOT,
+                verification_source="",  # empty source
+                label_confidence=LabelConfidence.VERIFIED,
+            ),
+        )
+
+
+def test_generate_prospective_template_roundtrip(tmp_path: Path):
+    template_path = tmp_path / "pilot_template.json"
+    written = generate_prospective_template(template_path, submission_count=2, multi_passenger=True)
+    assert written == template_path
+    assert template_path.is_file()
+
+    # Re-generating without overwrite must raise FileExistsError
+    with pytest.raises(FileExistsError, match="already exists"):
+        generate_prospective_template(template_path, overwrite=False)
+
+    # Load and validate
+    batch = ProspectiveBatch.load(template_path)
+    assert batch.schema_version == PROSPECTIVE_COLLECTION_SCHEMA_VERSION
+    assert len(batch.submissions) == 2
+    assert len(batch.submissions[1].passengers) == 2
+
+    # Validation must pass cleanly with 0 PII violations
+    report = validate_prospective_batch(batch)
+    assert report.is_valid is True
+    assert len(report.pii_violations) == 0

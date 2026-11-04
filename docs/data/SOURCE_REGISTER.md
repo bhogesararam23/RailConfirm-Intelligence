@@ -118,7 +118,7 @@ Copy this block for each source.
 - **Decision:** **Restricted — Commercial ticketing only.**
 - **Decision owner and rationale:** Autonomous research audit 2026-11-04. Prohibitive financial barriers, strict non-redistribution clauses, and operational focus make this inappropriate for an open-source local-first baseline.
 
-### 4. Local Prospective Pilot Collection Protocol (ADR-0044)
+### 4. Local Prospective Pilot Collection Protocol (ADR-0044, ADR-0045)
 - **Name:** RailConfirm Local-First Prospective Pilot Collection
 - **Publisher / owner:** RailConfirm Intelligence / Project Maintainer
 - **Canonical URL / contract reference:** `backend/railconfirm/data/prospective.py`, `docs/data/PROSPECTIVE_COLLECTION_PROTOCOL.md`
@@ -127,18 +127,18 @@ Copy this block for each source.
 - **Geographic and temporal coverage:** Prospective train journeys contributed by consented participants.
 - **Schema documentation:** Prospective Collection Schema v1.0.0 (`backend/railconfirm/data/prospective.py`) and Longitudinal Contract v2.0.0 (`backend/railconfirm/data/longitudinal.py`).
 - **Refresh interval and timestamp semantics:** Timezone-aware ISO-8601 timestamps ($t_{booking} \le t_1 < t_2 < \dots < t_n \le t_{departure}$).
-- **Licence / terms URL:** Explicit participant research consent under Apache-2.0 repository governance.
+- **Licence / terms URL:** Explicit participant research consent (Notice v2026.1). Repository Apache-2.0 applies to software code, not to contributed participant data.
 - **Permitted storage:** Local SQLite / JSON storage under operator control.
 - **Permitted derived features / model training:** Explicitly permitted by participant consent record (`confirmation_probability_research`, `model_calibration`).
-- **Permitted redistribution / publication:** Aggregated research models and anonymized benchmark scores permitted. Raw submissions remain local.
-- **Commercial use:** Research use approved; commercial use depends on future organizational governance.
+- **Permitted redistribution / publication:** Aggregated research models and aggregate benchmark metrics permitted. Raw submissions remain local.
+- **Commercial use:** Research use approved under consent terms; commercial use strictly excluded unless authorized under separate terms.
 - **Attribution requirements:** Documented in research reports and dataset manifests.
 - **Rate limits and cost:** Zero API fees; zero third-party licensing costs; operates locally.
-- **Personal or sensitive data involved:** **Zero personal data in storage.** Automated PII/PNR scanner blocks raw 10-digit PNRs, emails, phone numbers, and Aadhaar numbers. Identifiers are salted HMAC-SHA256 pseudonyms.
-- **Security and retention controls:** Mandatory human operator review (`review_batch`), quarantine isolation for anomalies, explicit retention policies (`pseudonymous_research_only`).
+- **Personal or sensitive data involved:** **Technical minimization via regex scanner and salted HMAC-SHA256 pseudonymization (subject to salt confidentiality and auxiliary linkage risks).** Automated PII/PNR scanner blocks raw 10-digit PNRs, emails, phone numbers, Aadhaar numbers, PAN tax IDs, and passport numbers. Identifiers are salted HMAC-SHA256 pseudonyms with minimum 32-character salt length.
+- **Security and retention controls:** Mandatory human operator review (`review_batch`), participant consent withdrawal lifecycle (`withdraw_submission`), quarantine isolation for anomalies, explicit retention policies (`pseudonymous_research_only`).
 - **Known biases and limitations:** Volunteer / self-selected participant cohort bias; route coverage grows incrementally with participation.
 - **Decision:** **Qualified Path for Phase 2 Exit.**
-- **Decision owner and rationale:** Lead software engineer & project governance, 2026-11-04. Fully implemented, technically validated, privacy-preserving, legally defensible, and zero-cost local architecture adhering strictly to ADR-0007 and ADR-0044.
+- **Decision owner and rationale:** Lead software engineer & project governance, 2026-11-04. Fully implemented, technically validated, privacy-preserving, legally grounded, and zero-cost local architecture adhering strictly to ADR-0007, ADR-0044, and ADR-0045. Requires maintainer legal sign-off and cohort activation.
 
 ## Current scope and target-product note
 
@@ -149,10 +149,15 @@ The current build has no third-party runtime API or provider integration (ADR-00
 A source cannot enter model training until its data rights, label meaning, quality, provenance and publication constraints are clear. If a contract allows live display but does not allow historical storage or model training, treat those as distinct permissions.
 
 
-## Prospective pilot collection protocol (ADR-0044)
+## Prospective pilot collection protocol (ADR-0044, ADR-0045)
 
 Prospective data collection is governed by `backend/railconfirm/data/prospective.py`:
 - Mode: local-first, disabled by default.
+- PII scanner: blocks raw 10-digit PNRs, emails, phone numbers, Aadhaar, PAN tax IDs, passport numbers, and credential tokens before storage.
+- Pseudonymization: salted HMAC-SHA256 with minimum 32-character salt length.
+- Withdrawal lifecycle: participant consent withdrawal excludes records from research export.
+- Operator tooling: `template`, `scan`, `audit`, `review`, `withdraw`, and `export` (`--dry-run`).
+- Scientific thresholds: evaluated via `prospective audit` against operational feasibility, technical intake, temporal baseline, and subgroup analysis requirements.
 - PII/PNR scanner automatically enforces data minimization before storage.
 - Storage requires explicit consent metadata, notice version, and permitted research purposes.
 - Human operator review and sign-off are required prior to export into longitudinal research datasets.

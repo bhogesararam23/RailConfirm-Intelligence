@@ -15,7 +15,10 @@ Use this checklist whenever an agent or maintainer proposes a data file for Rail
 ## 2. Check privacy and sensitivity
 
 - [ ] File is checked for raw PNRs, passenger names, contact details and other identifiers.
+- [ ] Cryptographic salt has sufficient entropy (minimum 32 characters, ADR-0045) and is kept strictly in local environment variables.
+- [ ] Pseudonymization is not conflated with irreversible anonymization; finite PNR entropy (~33 bits) and auxiliary linkage risks are acknowledged.
 - [ ] Any personal or linkable data has a valid use basis and documented purpose before processing.
+- [ ] Participant consent withdrawal and data subject erasure procedures are operational.
 - [ ] Unnecessary fields are removed or separated before use.
 - [ ] Raw sensitive files are not copied into Git, issues, logs or public agent context.
 - [ ] Retention and deletion requirements are documented.

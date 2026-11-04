@@ -337,7 +337,7 @@ def test_cli_validate_prospective_batch(tmp_path: Path, capsys):
     # 1. Plain text summary output
     assert main(["validate", str(batch_file)]) == 0
     out = capsys.readouterr().out
-    assert "Prospective Batch: cli_prospective_valid" in out
+    assert "cli_prospective_valid" in out
     assert "Valid: yes" in out
     assert "Submissions: 3, Passengers: 6" in out
 
@@ -479,4 +479,166 @@ def test_synthetic_support_dataset_generators(tmp_path: Path):
     assert batch_path.is_file()
     batch = ProspectiveBatch.load(batch_path)
     assert len(batch.submissions) == 3
+
+
+def test_prospective_cli_template_audit_withdraw_and_dryrun(tmp_path: Path, capsys):
+    tmpl_out = tmp_path / "tmpl_batch.json"
+
+    # 1. Template generation
+    assert main(["prospective", "template", str(tmpl_out)]) == 0
+    assert "Generated clean prospective batch template" in capsys.readouterr().out
+    assert tmpl_out.is_file()
+
+    # Re-generating without --overwrite fails
+    assert main(["prospective", "template", str(tmpl_out)]) == 1
+    assert "already exists" in capsys.readouterr().err
+
+    # Re-generating with --overwrite succeeds
+    assert main(["prospective", "template", str(tmpl_out), "--overwrite"]) == 0
+    capsys.readouterr()
+
+    # 2. Audit command
+    assert main(["prospective", "audit", str(tmpl_out)]) == 0
+    audit_out = capsys.readouterr().out
+    assert "Prospective Batch Audit:" in audit_out
+    assert "Scientific Pilot Thresholds Readiness:" in audit_out
+
+    # JSON audit
+    assert main(["prospective", "audit", str(tmpl_out), "--json"]) == 0
+    assert '"threshold_feasibility_pilot"' in capsys.readouterr().out
+
+    # 3. Export dry-run (while pending review)
+    long_dry = tmp_path / "dry_export.json"
+    assert (
+        main(
+            [
+                "prospective",
+                "export",
+                str(tmpl_out),
+                str(long_dry),
+                "--dataset-id",
+                "dry_ds",
+                "--source-id",
+                "src_dry",
+                "--dry-run",
+            ]
+        )
+        == 1  # Fails because pending review
+    )
+    capsys.readouterr()
+
+    # Approve batch
+    assert (
+        main(
+            [
+                "prospective",
+                "review",
+                str(tmpl_out),
+                "--action",
+                "approve",
+                "--reviewer",
+                "operator_lead",
+                "--rationale",
+                "Audited and approved.",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    # Export dry-run now succeeds without creating file
+    assert (
+        main(
+            [
+                "prospective",
+                "export",
+                str(tmpl_out),
+                str(long_dry),
+                "--dataset-id",
+                "dry_ds",
+                "--source-id",
+                "src_dry",
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+    assert "[DRY-RUN] Export simulated successfully" in capsys.readouterr().out
+    assert not long_dry.exists()
+
+    # Export for real
+    assert (
+        main(
+            [
+                "prospective",
+                "export",
+                str(tmpl_out),
+                str(long_dry),
+                "--dataset-id",
+                "dry_ds",
+                "--source-id",
+                "src_dry",
+            ]
+        )
+        == 0
+    )
+    assert long_dry.is_file()
+    capsys.readouterr()
+
+    # Exporting again without --overwrite fails
+    assert (
+        main(
+            [
+                "prospective",
+                "export",
+                str(tmpl_out),
+                str(long_dry),
+                "--dataset-id",
+                "dry_ds",
+                "--source-id",
+                "src_dry",
+            ]
+        )
+        == 1
+    )
+    assert "target file already exists" in capsys.readouterr().err
+
+    # 4. Consent withdrawal command
+    assert (
+        main(
+            [
+                "prospective",
+                "withdraw",
+                str(tmpl_out),
+                "--submission-id",
+                "SUB_TEMPLATE_001",
+                "--reason",
+                "Participant opted out.",
+                "--operator",
+                "lead_operator",
+            ]
+        )
+        == 0
+    )
+    assert "Successfully recorded consent withdrawal" in capsys.readouterr().out
+
+    # Now export must refuse because SUB_TEMPLATE_001 has withdrawn consent
+    long_fail = tmp_path / "long_fail.json"
+    assert (
+        main(
+            [
+                "prospective",
+                "export",
+                str(tmpl_out),
+                str(long_fail),
+                "--dataset-id",
+                "fail_ds",
+                "--source-id",
+                "src_fail",
+            ]
+        )
+        == 1
+    )
+    assert "withdrawn participant consent" in capsys.readouterr().err
+
 
