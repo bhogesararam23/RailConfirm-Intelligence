@@ -30,11 +30,23 @@ function newRow(): PassengerRowState {
   };
 }
 
+/** Increment trailing number in status if present (e.g. GNWL 45 -> GNWL 46, RAC 10 -> RAC 11). */
+export function incrementStatusString(status: string): string {
+  const trimmed = status.trim();
+  const match = trimmed.match(/^(.*?)(\d+)$/);
+  if (!match) return status;
+  const prefix = match[1];
+  const num = parseInt(match[2], 10);
+  return `${prefix}${num + 1}`;
+}
+
 export interface UsePassengerListReturn {
   rows: PassengerRowState[];
   addRow: () => void;
+  duplicateRow: (rowId: string) => void;
   removeRow: (rowId: string) => void;
   updateRow: (rowId: string, updates: Partial<PassengerRowState>) => void;
+  setAllRows: (newRows: PassengerInput[]) => void;
   resetRows: () => void;
   canAddMore: boolean;
   limitReached: boolean;
@@ -46,6 +58,26 @@ export function usePassengerList(): UsePassengerListReturn {
 
   const addRow = useCallback(() => {
     setRows((prev) => (prev.length >= MAX_PASSENGERS ? prev : [...prev, newRow()]));
+  }, []);
+
+  const duplicateRow = useCallback((rowId: string) => {
+    setRows((prev) => {
+      if (prev.length >= MAX_PASSENGERS) return prev;
+      const targetIndex = prev.findIndex((r) => r.rowId === rowId);
+      if (targetIndex === -1) return prev;
+      const target = prev[targetIndex];
+      rowCounter += 1;
+      const cloned: PassengerRowState = {
+        rowId: `passenger-row-${rowCounter}`,
+        original_status: incrementStatusString(target.original_status),
+        current_status: incrementStatusString(target.current_status),
+        current_status_observed_at: target.current_status_observed_at,
+        timeUnknown: target.timeUnknown,
+      };
+      const next = [...prev];
+      next.splice(targetIndex + 1, 0, cloned);
+      return next;
+    });
   }, []);
 
   const removeRow = useCallback((rowId: string) => {
@@ -64,6 +96,21 @@ export function usePassengerList(): UsePassengerListReturn {
     [],
   );
 
+  const setAllRows = useCallback((newRows: PassengerInput[]) => {
+    setRows(
+      newRows.slice(0, MAX_PASSENGERS).map((input) => {
+        rowCounter += 1;
+        return {
+          rowId: `passenger-row-${rowCounter}`,
+          original_status: input.original_status,
+          current_status: input.current_status,
+          current_status_observed_at: input.current_status_observed_at ?? null,
+          timeUnknown: input.current_status_observed_at === null,
+        };
+      }),
+    );
+  }, []);
+
   const resetRows = useCallback(() => {
     setRows([newRow()]);
   }, []);
@@ -71,8 +118,10 @@ export function usePassengerList(): UsePassengerListReturn {
   return {
     rows,
     addRow,
+    duplicateRow,
     removeRow,
     updateRow,
+    setAllRows,
     resetRows,
     canAddMore: rows.length < MAX_PASSENGERS,
     limitReached: rows.length >= MAX_PASSENGERS,

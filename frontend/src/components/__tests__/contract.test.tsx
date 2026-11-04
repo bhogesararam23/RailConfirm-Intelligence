@@ -451,4 +451,23 @@ describe('PassengerList', () => {
     await user.click(button).catch(() => undefined);
     expect(onAdd).not.toHaveBeenCalled();
   });
+
+  it('renders duplicate button when available and invokes callback', async () => {
+    const user = userEvent.setup();
+    const onDuplicate = vi.fn();
+    render(
+      <PassengerList
+        rows={rows}
+        onAdd={vi.fn()}
+        onDuplicate={onDuplicate}
+        onRemove={vi.fn()}
+        onChange={vi.fn()}
+        limitReached={false}
+      />,
+    );
+    const duplicateBtn = screen.getByRole('button', { name: 'Duplicate passenger 1' });
+    expect(duplicateBtn).toBeInTheDocument();
+    await user.click(duplicateBtn);
+    expect(onDuplicate).toHaveBeenCalledWith('row-1');
+  });
 });

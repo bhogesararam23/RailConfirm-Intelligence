@@ -38,6 +38,83 @@ function defaultPredictionLocal(): string {
   return local.toISOString().slice(0, 16);
 }
 
+interface PresetScenario {
+  id: string;
+  title: string;
+  tag: string;
+  journey: Omit<JourneyInput, 'journey_date'>;
+  passengers: { original_status: string; current_status: string }[];
+}
+
+const PRESET_SCENARIOS: PresetScenario[] = [
+  {
+    id: 'solo_wl',
+    title: 'Solo Waitlist',
+    tag: '1 pax · SL / GN',
+    journey: {
+      train_number: '12301',
+      boarding_station: 'NDLS',
+      destination_station: 'HWH',
+      class_code: 'SL',
+      quota_code: 'GN',
+    },
+    passengers: [{ original_status: 'GNWL/45', current_status: 'GNWL/12' }],
+  },
+  {
+    id: 'family_mixed',
+    title: 'Family Mixed WL & RAC',
+    tag: '3 pax · 3A / GN',
+    journey: {
+      train_number: '12952',
+      boarding_station: 'MMCT',
+      destination_station: 'NDLS',
+      class_code: '3A',
+      quota_code: 'GN',
+    },
+    passengers: [
+      { original_status: 'RAC 5', current_status: 'CNF' },
+      { original_status: 'RAC 6', current_status: 'RAC 1' },
+      { original_status: 'GNWL/8', current_status: 'RAC 2' },
+    ],
+  },
+  {
+    id: 'high_density',
+    title: 'Full Group Booking',
+    tag: '6 pax · SL / GN',
+    journey: {
+      train_number: '12840',
+      boarding_station: 'HWH',
+      destination_station: 'MAS',
+      class_code: 'SL',
+      quota_code: 'GN',
+    },
+    passengers: [
+      { original_status: 'GNWL/101', current_status: 'GNWL/25' },
+      { original_status: 'GNWL/102', current_status: 'GNWL/26' },
+      { original_status: 'GNWL/103', current_status: 'GNWL/27' },
+      { original_status: 'GNWL/104', current_status: 'GNWL/28' },
+      { original_status: 'GNWL/105', current_status: 'GNWL/29' },
+      { original_status: 'GNWL/106', current_status: 'GNWL/30' },
+    ],
+  },
+  {
+    id: 'tatkal_wl',
+    title: 'Tatkal Quota WL',
+    tag: '2 pax · 3A / TQ',
+    journey: {
+      train_number: '12259',
+      boarding_station: 'SDAH',
+      destination_station: 'BKN',
+      class_code: '3A',
+      quota_code: 'TQ',
+    },
+    passengers: [
+      { original_status: 'CKWL/12', current_status: 'CKWL/5' },
+      { original_status: 'CKWL/13', current_status: 'CKWL/6' },
+    ],
+  },
+];
+
 export default function HomePage() {
   const [journey, setJourney] = useState<JourneyInput>(defaultJourney);
   const [predictionLocal, setPredictionLocal] = useState<string>(defaultPredictionLocal);
@@ -45,9 +122,18 @@ export default function HomePage() {
   const [persist, setPersist] = useState(false);
   const [localErrors, setLocalErrors] = useState<Record<string, string>>({});
   const [serverErrors, setServerErrors] = useState<Record<string, string>>({});
+  const [announcement, setAnnouncement] = useState<string>('');
 
-  const { rows, addRow, removeRow, updateRow, resetRows, limitReached } =
-    usePassengerList();
+  const {
+    rows,
+    addRow,
+    duplicateRow,
+    removeRow,
+    updateRow,
+    setAllRows,
+    resetRows,
+    limitReached,
+  } = usePassengerList();
   const { state, result, failure, submit, reset } = usePrediction();
 
   const predictionAt = useMemo(
@@ -110,7 +196,26 @@ export default function HomePage() {
     reset();
     setLocalErrors({});
     setServerErrors({});
+    setAnnouncement('');
     resetRows();
+  };
+
+  const applyPreset = (preset: PresetScenario) => {
+    const inSevenDays = new Date(Date.now() + 7 * 86_400_000);
+    setJourney({
+      ...preset.journey,
+      journey_date: inSevenDays.toISOString().slice(0, 10),
+    });
+    setAllRows(
+      preset.passengers.map((p) => ({
+        original_status: p.original_status,
+        current_status: p.current_status,
+        current_status_observed_at: null,
+      })),
+    );
+    setLocalErrors({});
+    setServerErrors({});
+    setAnnouncement(`Loaded preset scenario: ${preset.title}`);
   };
 
   /**
@@ -188,9 +293,29 @@ export default function HomePage() {
         <PredictionResult result={result} onReset={handleReset} />
       ) : (
         <form onSubmit={handleSubmit} className="space-y-6" noValidate>
-          <div className="rounded-lg border border-blue-100 bg-blue-50/60 px-4 py-2 text-xs text-blue-900">
-            Example journey filled in. Replace it with your booking — nothing here is
-            looked up for you.
+          <div className="rounded-lg border border-blue-100 bg-blue-50/60 p-4 text-xs text-blue-900">
+            <p className="font-semibold text-blue-950">Quick test scenarios:</p>
+            <p className="mt-0.5 text-blue-700">
+              Load realistic sample journeys and multi-passenger bookings to explore different status combinations:
+            </p>
+            <div className="mt-2.5 flex flex-wrap gap-2">
+              {PRESET_SCENARIOS.map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  onClick={() => applyPreset(preset)}
+                  className="rounded-md border border-blue-200 bg-white px-2.5 py-1 text-xs font-medium text-blue-900 shadow-sm hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <span className="font-semibold">{preset.title}</span>{' '}
+                  <span className="text-[11px] text-blue-600">({preset.tag})</span>
+                </button>
+              ))}
+            </div>
+            {announcement && (
+              <p aria-live="polite" className="mt-2 text-xs font-medium text-emerald-800">
+                ✓ {announcement}
+              </p>
+            )}
           </div>
 
           <JourneyForm
@@ -206,6 +331,7 @@ export default function HomePage() {
           <PassengerList
             rows={rows}
             onAdd={addRow}
+            onDuplicate={duplicateRow}
             onRemove={removeRow}
             onChange={updateRow}
             limitReached={limitReached}

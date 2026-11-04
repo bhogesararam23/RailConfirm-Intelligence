@@ -6,6 +6,7 @@ import {
   validateJourney,
   validatePassengers,
 } from '@/lib/validation';
+import { incrementStatusString } from '@/hooks/usePassengerList';
 import { MAX_PASSENGERS } from '@/lib/types';
 import type { JourneyInput, PassengerInput } from '@/lib/types';
 
@@ -151,5 +152,20 @@ describe('serverFieldToLocalKey', () => {
 
   it('returns null for a path the form has no field for', () => {
     expect(serverFieldToLocalKey('some_future_field')).toBeNull();
+  });
+});
+
+describe('incrementStatusString', () => {
+  it.each([
+    ['GNWL/45', 'GNWL/46'],
+    ['RAC 10', 'RAC 11'],
+    ['WL 1', 'WL 2'],
+    ['CNF', 'CNF'],
+    ['RLWL/100', 'RLWL/101'],
+    ['TQWL 5', 'TQWL 6'],
+    ['', ''],
+    ['CAN', 'CAN'],
+  ])('%s → %s', (input, expected) => {
+    expect(incrementStatusString(input)).toBe(expected);
   });
 });

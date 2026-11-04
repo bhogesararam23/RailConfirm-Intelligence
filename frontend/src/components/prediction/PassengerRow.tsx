@@ -10,6 +10,8 @@ interface PassengerRowProps {
   onChange: (updates: Partial<PassengerRowState>) => void;
   onRemove: () => void;
   canRemove: boolean;
+  onDuplicate?: () => void;
+  canDuplicate?: boolean;
   errors?: Record<string, string>;
 }
 
@@ -30,6 +32,8 @@ export function PassengerRow({
   onChange,
   onRemove,
   canRemove,
+  onDuplicate,
+  canDuplicate,
   errors = {},
 }: PassengerRowProps) {
   const baseId = row.rowId;
@@ -48,16 +52,28 @@ export function PassengerRow({
         <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500">
           Passenger {index + 1}
         </h3>
-        {canRemove && (
-          <button
-            type="button"
-            onClick={onRemove}
-            className="rounded text-xs font-medium text-red-600 hover:text-red-800 focus:outline-none focus:ring-2 focus:ring-red-400"
-            aria-label={`Remove passenger ${index + 1}`}
-          >
-            Remove
-          </button>
-        )}
+        <div className="flex items-center gap-3">
+          {canDuplicate && onDuplicate && (
+            <button
+              type="button"
+              onClick={onDuplicate}
+              className="rounded text-xs font-medium text-blue-600 hover:text-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-400"
+              aria-label={`Duplicate passenger ${index + 1}`}
+            >
+              Duplicate
+            </button>
+          )}
+          {canRemove && (
+            <button
+              type="button"
+              onClick={onRemove}
+              className="rounded text-xs font-medium text-red-600 hover:text-red-800 focus:outline-none focus:ring-2 focus:ring-red-400"
+              aria-label={`Remove passenger ${index + 1}`}
+            >
+              Remove
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">

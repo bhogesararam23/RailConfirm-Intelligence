@@ -8,6 +8,7 @@ import type { PassengerRowState } from '@/hooks/usePassengerList';
 interface PassengerListProps {
   rows: PassengerRowState[];
   onAdd: () => void;
+  onDuplicate?: (rowId: string) => void;
   onRemove: (rowId: string) => void;
   onChange: (rowId: string, updates: Partial<PassengerRowState>) => void;
   limitReached: boolean;
@@ -23,6 +24,7 @@ interface PassengerListProps {
 export function PassengerList({
   rows,
   onAdd,
+  onDuplicate,
   onRemove,
   onChange,
   limitReached,
@@ -69,6 +71,8 @@ export function PassengerList({
             onChange={(updates) => onChange(row.rowId, updates)}
             onRemove={() => onRemove(row.rowId)}
             canRemove={rows.length > 1}
+            onDuplicate={onDuplicate ? () => onDuplicate(row.rowId) : undefined}
+            canDuplicate={!limitReached}
             errors={errors[index] || {}}
           />
         ))}
