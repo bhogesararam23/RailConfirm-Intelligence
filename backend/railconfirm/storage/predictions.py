@@ -230,6 +230,7 @@ class PredictionStore:
         model_version: str,
         prediction_at: datetime,
         recorded_at: datetime | None = None,
+        auto_purge: bool = False,
     ) -> StoredPrediction:
         """Persist one report. A repeated id overwrites rather than duplicating a row."""
         if not prediction_id.strip():
@@ -241,6 +242,8 @@ class PredictionStore:
         _aware(prediction_at, "prediction_at")
         stamp = _normalise(stamp)
         assert_storeable(payload)
+        if auto_purge:
+            self.purge_expired(now=stamp)
         # Both bookkeeping columns are written as UTC with a fixed shape, so a text
         # comparison in SQLite is also a chronological one. Comparing ISO strings from
         # mixed offsets would silently order them wrongly. The value is rounded through
@@ -381,7 +384,12 @@ class PredictionStore:
             self._connection.commit()
         return cursor.rowcount > 0
 
-    def summaries(self, *, now: datetime | None = None) -> list[StoredSummary]:
+    def summaries(
+        self,
+        *,
+        now: datetime | None = None,
+        auto_purge: bool = False,
+    ) -> list[StoredSummary]:
         """Every report a reopen would still serve, newest first, without its contents.
 
         A report past its retention is left out rather than listed as available: the list
@@ -389,6 +397,8 @@ class PredictionStore:
         unexplained 404.
         """
         instant = _normalise(_aware(now or datetime.now(UTC), "now"))
+        if auto_purge:
+            self.purge_expired(now=instant)
         with self._lock:
             rows = self._connection.execute(
                 "SELECT prediction_id, recorded_at, expires_at, target, model_version "

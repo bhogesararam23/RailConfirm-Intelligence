@@ -2569,3 +2569,19 @@ the existing storage tests. `delete_live` refuses a naive clock before touching 
 - pytest backend/tests/ -v --tb=short -> 1,195 passed in 52.84s.
 - python scripts/check_repository_hygiene.py -> Passed in 1.4s.
 
+## 2026-11-04 -- Storage auto-purge on routine access
+
+### Scope
+- Extended prediction history store with optional opportunistic auto-purge during routine save and summaries calls.
+- Ensured expired reports past retention are pruned on active operations without requiring external cron jobs or background daemons.
+
+### Changed
+- backend/railconfirm/storage/predictions.py: Added auto_purge=False parameter to save() and summaries(). When True, executes purge_expired(now=...) within the connection lock.
+- backend/tests/storage/test_predictions.py: Added unit tests verifying auto_purge prunes expired rows while preserving live ones.
+- CHANGELOG.md: Recorded storage auto-purge feature.
+
+### Checks run
+- pytest backend/tests/storage/test_predictions.py -v -> 41 passed in 0.77s.
+- ruff check --config backend/pyproject.toml backend/railconfirm/storage/predictions.py backend/tests/storage/test_predictions.py -> All checks passed.
+- python scripts/check_repository_hygiene.py -> Passed in 1.4s.
+

@@ -12,7 +12,6 @@ from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-
 from railconfirm.storage.predictions import (
     SCHEMA_VERSION,
     PredictionStorageError,
@@ -502,3 +501,43 @@ def test_context_manager_closes_the_store(tmp_path: Path) -> None:
     with PredictionStore(tmp_path / "ctx.sqlite3") as instance:
         save(instance)
         assert instance.size == 1
+
+
+def test_save_with_auto_purge_cleans_expired_rows(store: PredictionStore) -> None:
+    # Save row 1 with an older timestamp so it has expired by recorded_at + 35 days
+    old_time = RECORDED_AT
+    save(store, prediction_id="old-0001", recorded_at=old_time)
+    assert store.size == 1
+
+    # Save row 2 with auto_purge=True at old_time + 35 days
+    current_time = old_time + timedelta(days=35)
+    store.save(
+        prediction_id="new-0002",
+        payload={**payload(), "prediction_id": "new-0002"},
+        target="final_chart_cnf",
+        model_version="no_model_v0",
+        prediction_at=PREDICTION_AT,
+        recorded_at=current_time,
+        auto_purge=True,
+    )
+    # The expired row should have been purged during save
+    assert store.size == 1
+    assert store.get("old-0001", now=current_time) is None
+    assert store.get("new-0002", now=current_time) is not None
+
+
+def test_summaries_with_auto_purge_cleans_expired_rows(store: PredictionStore) -> None:
+    old_time = RECORDED_AT
+    save(store, prediction_id="old-0001", recorded_at=old_time)
+    save(store, prediction_id="old-0002", recorded_at=old_time)
+    assert store.size == 2
+
+    current_time = old_time + timedelta(days=35)
+    # summaries without auto_purge leaves expired rows in the database (hidden from return list)
+    assert len(store.summaries(now=current_time, auto_purge=False)) == 0
+    assert store.size == 2
+
+    # summaries with auto_purge=True prunes expired rows from table
+    assert len(store.summaries(now=current_time, auto_purge=True)) == 0
+    assert store.size == 0
+
