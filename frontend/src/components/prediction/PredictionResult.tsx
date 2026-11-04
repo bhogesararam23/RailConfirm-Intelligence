@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
 import type { PredictionResponse } from '@/lib/types';
 import { PassengerOutcomeCard } from './PassengerOutcomeCard';
@@ -10,12 +10,26 @@ import { formatEvidenceCoverage, formatTimestamp } from '@/lib/statusUtils';
 interface PredictionResultProps {
   result: PredictionResponse;
   onReset: () => void;
+  isStoredReportPage?: boolean;
 }
 
 const TARGET_LABELS: Record<string, string> = {
   final_chart_cnf: 'Confirmed berth at final chart preparation',
   final_chart_cnf_or_rac: 'CNF or RAC at final chart preparation',
 };
+
+function exportReportJson(result: PredictionResponse) {
+  const jsonStr = JSON.stringify(result, null, 2);
+  const blob = new Blob([jsonStr], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `railconfirm-report-${result.prediction_id.slice(0, 8)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 
 /**
  * The full prediction report.
@@ -25,7 +39,12 @@ const TARGET_LABELS: Record<string, string> = {
  * reader judge whether a number means anything. `evidence_coverage` is the precise
  * signal — a mixed group is `partial`, which is neither "supported" nor "abstaining".
  */
-export function PredictionResult({ result, onReset }: PredictionResultProps) {
+export function PredictionResult({
+  result,
+  onReset,
+  isStoredReportPage = false,
+}: PredictionResultProps) {
+  const [copied, setCopied] = useState(false);
   const supportedCount = result.passenger_outcomes.filter((p) => p.is_supported).length;
   const coverageTone =
     result.evidence_coverage === 'sufficient'
@@ -34,9 +53,21 @@ export function PredictionResult({ result, onReset }: PredictionResultProps) {
         ? 'bg-amber-100 text-amber-800'
         : 'bg-gray-200 text-gray-800';
 
+  const handleCopyLink = async () => {
+    if (typeof window === 'undefined') return;
+    const url = `${window.location.origin}/prediction/${result.prediction_id}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Ignore clipboard write failures in non-secure or restricted environments
+    }
+  };
+
   return (
     <div className="space-y-6">
-      <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+      <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm print-break-inside-avoid">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <div className="flex flex-wrap items-center gap-2">
@@ -51,13 +82,38 @@ export function PredictionResult({ result, onReset }: PredictionResultProps) {
               estimate.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onReset}
-            className="self-start rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50"
-          >
-            ← New prediction
-          </button>
+          <div className="no-print flex flex-wrap items-center gap-2 self-start">
+            {(result.stored || isStoredReportPage) && (
+              <button
+                type="button"
+                onClick={() => void handleCopyLink()}
+                className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {copied ? '✓ Link copied' : 'Copy report link'}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => exportReportJson(result)}
+              className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              Export JSON
+            </button>
+            <button
+              type="button"
+              onClick={() => typeof window !== 'undefined' && window.print()}
+              className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              Print / PDF
+            </button>
+            <button
+              type="button"
+              onClick={onReset}
+              className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              ← New prediction
+            </button>
+          </div>
         </div>
 
         <dl className="mt-4 grid grid-cols-1 gap-x-6 gap-y-2 text-xs sm:grid-cols-2">

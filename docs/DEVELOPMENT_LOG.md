@@ -2534,14 +2534,15 @@ the existing storage tests. `delete_live` refuses a naive clock before touching 
 - `backend/tests/inference/test_group_invariants.py`: Added 12 property tests for group outcome distributions across sizes 1 to 6 (permutation invariance, tail monotonicity, comonotonic bound dominance, empty and multi-abstention handling).
 - `backend/tests/inference/test_calibration.py`: Added monotonicity and distribution-invariance property tests for logistic calibration layers under parameter sweeps.
 - `frontend/src/app/page.tsx`, `frontend/src/hooks/usePassengerList.ts`, `frontend/src/components/prediction/PassengerList.tsx`, `frontend/src/components/prediction/PassengerRow.tsx`: Added passenger duplication with sequence incrementing, 4 realistic journey preset scenarios, and accessibility announcements.
-- `frontend/src/lib/__tests__/validation.test.ts`, `frontend/src/components/__tests__/contract.test.tsx`: Added unit and component tests for passenger duplication, status incrementing, and limit-respecting button behavior (127 frontend tests passing).
-- `CHANGELOG.md`: Recorded scanner performance optimization, invariant test additions, and multi-passenger UX improvements.
+- `frontend/src/components/prediction/PredictionResult.tsx`, `frontend/src/components/prediction/StoredPredictionReport.tsx`, `frontend/src/app/globals.css`: Added JSON export, copy report link, print/PDF button with print media CSS, and breadcrumb navigation.
+- `frontend/src/lib/__tests__/validation.test.ts`, `frontend/src/components/__tests__/contract.test.tsx`: Added tests for new report actions and passenger duplication (128 frontend tests passing).
+- `CHANGELOG.md`: Recorded scanner performance optimization, invariant test additions, multi-passenger UX improvements, and report export/print capabilities.
 
 ### Checks run
 - `python scripts/check_repository_hygiene.py` → Passed (22 required files, 257 tracked files scanned in 1.4s).
 - `pytest backend/tests/inference/test_group_invariants.py` → 50 passed in 0.21s.
 - `pytest backend/tests/inference/test_calibration.py` → 111 passed in 0.27s.
-- `npm test` in `frontend/` → 127 passed (6 test files).
+- `npm test` in `frontend/` → 128 passed (6 test files).
 - `npm run type-check && npm run lint` in `frontend/` → Passed.
 - `ruff check --config backend/pyproject.toml scripts/ backend/tests/inference/test_group_invariants.py backend/tests/inference/test_calibration.py` → Passed.
 

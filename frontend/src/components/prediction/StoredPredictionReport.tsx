@@ -111,6 +111,15 @@ export function StoredPredictionReport({ predictionId }: StoredPredictionReportP
   if (state === 'found' && report) {
     return (
       <div className="space-y-4">
+        <div className="no-print flex items-center justify-between">
+          <Link
+            href="/history"
+            className="text-xs font-medium text-blue-700 hover:underline focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
+          >
+            ← View all kept reports
+          </Link>
+          <span className="text-xs text-gray-400">ID: {predictionId}</span>
+        </div>
         <p className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-2 text-xs text-gray-700">
           This is the report as it was served, including the model version that produced
           it. Estimates are not recomputed on open.
@@ -118,8 +127,12 @@ export function StoredPredictionReport({ predictionId }: StoredPredictionReportP
             <> This copy stops being retrievable after {report.retention_expires_at}.</>
           )}
         </p>
-        <PredictionResult result={report} onReset={() => router.push('/')} />
-        <div className="rounded-lg border border-gray-200 bg-white p-4">
+        <PredictionResult
+          result={report}
+          onReset={() => router.push('/')}
+          isStoredReportPage
+        />
+        <div className="rounded-lg border border-gray-200 bg-white p-4 no-print">
           {confirmingDelete ? (
             <div className="flex flex-wrap items-center gap-3">
               <span role="status" aria-live="polite" className="text-sm text-gray-800">

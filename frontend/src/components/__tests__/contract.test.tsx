@@ -323,6 +323,21 @@ describe('PredictionResult', () => {
     expect(container.textContent).toContain('2 of 2 passengers have an estimate.');
     expect(container.textContent).toContain('Group outcomes (2 passengers)');
   });
+
+  it('renders Export JSON, Print / PDF and Copy report link buttons', () => {
+    render(
+      <PredictionResult
+        result={response({
+          stored: true,
+          report_url: '/v1/predictions/a1b2c3d4-0000-0000-0000-000000000009',
+        })}
+        onReset={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Export JSON' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Print / PDF' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Copy report link' })).toBeInTheDocument();
+  });
 });
 
 describe('GroupOutcomeCard', alwaysVisibleAssumptions);
