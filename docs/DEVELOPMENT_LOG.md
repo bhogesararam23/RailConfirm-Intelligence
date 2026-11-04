@@ -2715,3 +2715,41 @@ the existing storage tests. `delete_live` refuses a naive clock before touching 
 - `pytest backend/tests` -> 1,256 passed in 233.01s.
 - `ruff check backend/railconfirm/data backend/tests/data` -> All checks passed (0 errors).
 - `python scripts/check_repository_hygiene.py` -> Passed (0 errors on 24 required files and 281 tracked files).
+
+
+## 2026-11-05 -- Full Repository Conformance Audit, Standardized Atomic I/O, and Static Typing Conformance
+
+### Scope
+- Conducted full repository conformance audit and engineering review across backend, frontend, scripts, and documentation against governing contracts and ADRs.
+- Fixed Ruff import sorting error (I001) in `backend/tests/storage/test_predictions.py`.
+- Resolved all ten Mypy static typing failures across the data layer: corrected `ParsedStatus.normalized` attribute access (replacing invalid `.category`), guarded nullable `as_of_datetime.isoformat()`, and eliminated variable type shadowing in `__main__.py`.
+- Standardized atomic file serialization by creating `railconfirm.data._io` (`atomic_write_text`, `atomic_write_json`) and updating `save_longitudinal_dataset()`, `write_manifest()`, and `quarantine_dataset()` to use it, preventing partial file corruption.
+- Added comprehensive unit tests in `backend/tests/data/test_io.py` validating atomic write roundtrip, directory creation, failure rollback, and tempfile cleanup.
+- Reconciled documentation: corrected CI job count in `docs/AGENT_HANDOFF.md` to reflect the 5 jobs in `.github/workflows/ci.yml`, eliminated duplicate status lines in `docs/ROADMAP.md`, updated test counts across `docs/PROJECT_STATUS.md` and `docs/ROADMAP.md` to 1,259 backend tests, and authored ADR-0047.
+
+### Changed
+- `backend/railconfirm/data/_io.py`: Created shared atomic file I/O utilities (`atomic_write_text` and `atomic_write_json`).
+- `backend/railconfirm/data/longitudinal.py`: Switched `save_longitudinal_dataset` to use `atomic_write_text`; corrected `ParsedStatus.normalized` accesses; narrowed `as_of_datetime` before calling `.isoformat()`.
+- `backend/railconfirm/data/manifest.py`: Switched `write_manifest` to use `atomic_write_text`.
+- `backend/railconfirm/data/inspection.py`: Switched `quarantine_dataset` sidecar write to use `atomic_write_json`; defaulted `subs` list to empty list when missing.
+- `backend/railconfirm/data/prospective.py`: Imported `atomic_write_json` from `railconfirm.data._io`.
+- `backend/railconfirm/data/__main__.py`: Disambiguated `lineage_report` variable in `verify-export` and `reconcile` branches.
+- `backend/tests/storage/test_predictions.py`: Fixed Ruff I001 import block formatting.
+- `backend/tests/data/test_io.py`: Added 3 unit tests for atomic file write operations.
+- `scripts/check_repository_hygiene.py`: Replaced `re.S` alias with `re.DOTALL`.
+- `scripts/smoke_full_stack.py`: Cleaned quoted type annotation.
+- `docs/adr/ADR-0047-standardized-atomic-file-io-and-static-typing-conformance.md`: Authored architectural decision record.
+- `docs/adr/README.md`: Updated ADR index with ADR-0047.
+- `docs/PROJECT_STATUS.md`: Updated test counts to 1,259 backend tests and cited ADR-0047.
+- `docs/ROADMAP.md`: Cleaned up duplicate line and updated test count to 1,259 backend tests.
+- `docs/AGENT_HANDOFF.md`: Corrected CI job count to 5 jobs and updated test counts to 1,259 backend tests.
+- `CHANGELOG.md`: Logged ADR-0047 milestone under `[Unreleased]`.
+
+### Checks run
+- `python scripts/check_repository_hygiene.py` -> Passed (22 required files, 283 tracked files scanned, 0 errors).
+- `ruff check backend/ scripts/` -> All checks passed (0 errors).
+- `mypy` in `backend/` -> Success: no issues found in 49 source files.
+- `pytest backend/tests/ --cov=railconfirm --cov-fail-under=90` -> 1,259 passed in 347.27s (93.50% total coverage, 0 failures).
+- `npm --prefix frontend run type-check` -> Passed (0 errors).
+- `npm --prefix frontend run lint` -> Passed (0 errors, 0 warnings).
+- `npm --prefix frontend test` -> 129 passed across 6 test files.

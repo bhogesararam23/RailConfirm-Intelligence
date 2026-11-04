@@ -8,6 +8,12 @@ The format is inspired by Keep a Changelog; dates use ISO 8601.
 
 ### Added
 
+- **Standardized atomic file I/O, static typing conformance, and CI documentation reconciliation** (`backend/railconfirm/data/_io.py`, `backend/railconfirm/data/longitudinal.py`, `backend/railconfirm/data/manifest.py`, `backend/railconfirm/data/inspection.py`, `backend/railconfirm/data/prospective.py`, `backend/tests/data/test_io.py`, ADR-0047).
+  - Centralized atomic file write operations in `railconfirm.data._io` (`atomic_write_text` and `atomic_write_json`) to eliminate partial or corrupted file writes across `save_longitudinal_dataset()`, `write_manifest()`, and `quarantine_dataset()` sidecars via same-filesystem temporary files and atomic `os.replace`.
+  - Resolved all ten Mypy static typing contract violations across `longitudinal.py`, `inspection.py`, and `__main__.py`: aligned `ParsedStatus.normalized` usage, guarded nullable `as_of_datetime.isoformat()`, and disambiguated variable scopes in CLI commands so `mypy` is 100% clean across all 49 backend source files.
+  - Reconciled CI documentation across `AGENT_HANDOFF.md` and `PROJECT_STATUS.md` to accurately state the 5 active GitHub Actions workflow jobs (`backend-checks`, `frontend-checks`, `full-stack-smoke`, `browser-e2e`, and `repository-hygiene`), and cleaned up corrupted duplicate line remnants in `docs/ROADMAP.md`.
+  - Added unit test coverage for `_io.py` in `backend/tests/data/test_io.py`. Expanded backend test suite to 1,259 pytest tests (+3 tests).
+
 - **Withdrawal integrity, export lineage, decoupled governance auditing, and atomic local operations** (`backend/railconfirm/data/prospective.py`, `backend/railconfirm/data/__main__.py`, `backend/tests/data/test_prospective.py`, `backend/tests/data/test_intake_cli.py`, ADR-0046).
   - Embedded structured export lineage metadata into `LongitudinalDataset.metadata["lineage"]`: source batch ID, canonical source batch SHA-256 digest (`compute_canonical_batch_sha256`), sorted included submissions, excluded submissions mapping to reason codes, and submission accounting.
   - Guaranteed 100% reproducible byte-for-byte serialization across runs by enforcing deterministic sorting on journeys, booking groups, and passengers, with an optional fixed `export_timestamp`.
