@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ApiFailure, deleteStoredPrediction, fetchStoredReports } from '@/lib/api';
 import type { StoredReportsResponse } from '@/lib/types';
@@ -25,6 +25,8 @@ export function HistoryList() {
   const [removing, setRemoving] = useState<string | null>(null);
   const [removed, setRemoved] = useState<string[]>([]);
   const [deleteMessage, setDeleteMessage] = useState<string | null>(null);
+  const [filterText, setFilterText] = useState('');
+  const [targetFilter, setTargetFilter] = useState<'all' | 'final_chart_cnf' | 'final_chart_cnf_or_rac'>('all');
 
   const load = useCallback(async () => {
     setState('loading');
@@ -51,6 +53,24 @@ export function HistoryList() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const reports = useMemo(() => data?.reports ?? [], [data?.reports]);
+  const filteredReports = useMemo(() => {
+    return reports.filter((report) => {
+      if (targetFilter !== 'all' && report.target !== targetFilter) {
+        return false;
+      }
+      if (filterText.trim()) {
+        const query = filterText.trim().toLowerCase();
+        return (
+          report.prediction_id.toLowerCase().includes(query) ||
+          report.model_version.toLowerCase().includes(query) ||
+          report.target.toLowerCase().includes(query)
+        );
+      }
+      return true;
+    });
+  }, [reports, filterText, targetFilter]);
 
   async function remove(predictionId: string) {
     setRemoving(predictionId);
@@ -128,7 +148,6 @@ export function HistoryList() {
     );
   }
 
-  const reports = data?.reports ?? [];
   // Built as one string so the count sentence is a single text node a reader — and a test —
   // can match, rather than three interpolated fragments.
   const summary = `${reports.length} kept report${reports.length === 1 ? '' : 's'} on this server.`;
@@ -174,58 +193,123 @@ export function HistoryList() {
         </p>
       )}
 
-      <ul className="divide-y divide-gray-100 overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
-        {reports.map((report) => (
-          <li key={report.prediction_id} className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              <Link
-                href={`/prediction/${report.prediction_id}`}
-                className="truncate text-sm font-medium text-blue-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
-              >
-                Report {report.prediction_id.slice(0, 8)}…
-              </Link>
-              <p className="mt-1 text-xs text-gray-600">
-                target {report.target} · model {report.model_version}
-              </p>
-              <p className="text-xs text-gray-500">
-                kept {report.recorded_at} · retrievable until {report.retention_expires_at}
-              </p>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              {confirming === report.prediction_id ? (
-                <>
+      <div className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-white p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative flex-1">
+          <input
+            type="text"
+            placeholder="Filter by report ID or model…"
+            value={filterText}
+            onChange={(e) => setFilterText(e.target.value)}
+            className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-xs shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            aria-label="Filter reports"
+          />
+          {filterText && (
+            <button
+              type="button"
+              onClick={() => setFilterText('')}
+              className="absolute right-2 top-1.5 text-xs text-gray-400 hover:text-gray-600"
+              aria-label="Clear filter text"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setTargetFilter('all')}
+            className={`rounded px-2.5 py-1 text-xs font-medium ${targetFilter === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+          >
+            All targets
+          </button>
+          <button
+            type="button"
+            onClick={() => setTargetFilter('final_chart_cnf')}
+            className={`rounded px-2.5 py-1 text-xs font-medium ${targetFilter === 'final_chart_cnf' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+          >
+            CNF
+          </button>
+          <button
+            type="button"
+            onClick={() => setTargetFilter('final_chart_cnf_or_rac')}
+            className={`rounded px-2.5 py-1 text-xs font-medium ${targetFilter === 'final_chart_cnf_or_rac' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+          >
+            CNF or RAC
+          </button>
+        </div>
+      </div>
+
+      {filteredReports.length === 0 ? (
+        <div className="rounded-lg border border-gray-200 bg-white p-6 text-center text-xs text-gray-600 shadow-sm">
+          No kept reports match the current filter.
+          <button
+            type="button"
+            onClick={() => {
+              setFilterText('');
+              setTargetFilter('all');
+            }}
+            className="ml-2 font-medium text-blue-700 hover:underline"
+          >
+            Clear filters
+          </button>
+        </div>
+      ) : (
+        <ul className="divide-y divide-gray-100 overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+          {filteredReports.map((report) => (
+            <li
+              key={report.prediction_id}
+              className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between"
+            >
+              <div className="min-w-0">
+                <Link
+                  href={`/prediction/${report.prediction_id}`}
+                  className="truncate text-sm font-medium text-blue-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+                >
+                  Report {report.prediction_id.slice(0, 8)}…
+                </Link>
+                <p className="mt-1 text-xs text-gray-600">
+                  target {report.target} · model {report.model_version}
+                </p>
+                <p className="text-xs text-gray-500">
+                  kept {report.recorded_at} · retrievable until {report.retention_expires_at}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                {confirming === report.prediction_id ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void remove(report.prediction_id)}
+                      disabled={removing === report.prediction_id}
+                      className="rounded-md bg-red-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-600 disabled:opacity-60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+                    >
+                      {removing === report.prediction_id ? 'Removing…' : 'Confirm delete'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirming(null)}
+                      className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-800 hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+                    >
+                      Keep it
+                    </button>
+                  </>
+                ) : (
                   <button
                     type="button"
-                    onClick={() => void remove(report.prediction_id)}
-                    disabled={removing === report.prediction_id}
-                    className="rounded-md bg-red-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-600 disabled:opacity-60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
-                  >
-                    {removing === report.prediction_id ? 'Removing…' : 'Confirm delete'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setConfirming(null)}
+                    onClick={() => {
+                      setDeleteMessage(null);
+                      setConfirming(report.prediction_id);
+                    }}
                     className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-800 hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
                   >
-                    Keep it
+                    Delete report
                   </button>
-                </>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDeleteMessage(null);
-                    setConfirming(report.prediction_id);
-                  }}
-                  className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-800 hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
-                >
-                  Delete report
-                </button>
-              )}
-            </div>
-          </li>
-        ))}
-      </ul>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

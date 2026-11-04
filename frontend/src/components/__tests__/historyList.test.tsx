@@ -213,4 +213,37 @@ describe('HistoryList', () => {
     await waitFor(() => expect(screen.getByText('Nothing is being kept')).toBeInTheDocument());
     expect(screen.getByText('1 report removed in this session.')).toBeInTheDocument();
   });
+
+  it('filters reports by target and query text', async () => {
+    fetchMock().mockResolvedValue(listResponse());
+    render(<HistoryList />);
+    await waitFor(() => expect(screen.getByText('2 kept reports on this server.')).toBeInTheDocument());
+
+    // Initially 2 reports
+    expect(screen.getAllByRole('link', { name: /Report / })).toHaveLength(2);
+
+    // Filter by target CNF
+    await userEvent.click(screen.getByRole('button', { name: 'CNF' }));
+    expect(screen.getAllByRole('link', { name: /Report / })).toHaveLength(1);
+    expect(screen.getByRole('link', { name: /Report 11111111/ })).toBeInTheDocument();
+
+    // Reset to All targets
+    await userEvent.click(screen.getByRole('button', { name: 'All targets' }));
+    expect(screen.getAllByRole('link', { name: /Report / })).toHaveLength(2);
+
+    // Filter by text
+    const searchInput = screen.getByPlaceholderText('Filter by report ID or model…');
+    await userEvent.type(searchInput, '22222222');
+    expect(screen.getAllByRole('link', { name: /Report / })).toHaveLength(1);
+    expect(screen.getByRole('link', { name: /Report 22222222/ })).toBeInTheDocument();
+
+    // Filter mismatch
+    await userEvent.clear(searchInput);
+    await userEvent.type(searchInput, 'nonexistent');
+    expect(screen.getByText('No kept reports match the current filter.')).toBeInTheDocument();
+
+    // Clear filters button resets list
+    await userEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    expect(screen.getAllByRole('link', { name: /Report / })).toHaveLength(2);
+  });
 });
