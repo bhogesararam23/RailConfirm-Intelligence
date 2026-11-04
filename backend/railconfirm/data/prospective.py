@@ -824,7 +824,7 @@ def review_batch(
 
 @dataclass(frozen=True)
 class ProspectiveAuditReport:
-    """Comprehensive validation, privacy, and scientific readiness report for prospective batches."""
+    """Comprehensive validation, privacy, governance, and scientific readiness report."""
 
     batch_id: str
     schema_version: str
@@ -835,6 +835,33 @@ class ProspectiveAuditReport:
     pii_violations: list[str]
     structural_errors: list[str]
     is_valid: bool
+
+    # Eight decoupled governance dimensions
+    is_structurally_valid: bool = True
+    is_technically_eligible: bool = False
+    is_privacy_clean: bool = True
+    is_consent_valid: bool = True
+    is_operator_approved: bool = False
+    is_legally_reviewed: bool = True
+    is_scientifically_adequate: bool = False
+    is_model_training_approved: bool = False
+
+    # Submission accounting breakdown
+    eligible_submissions: int = 0
+    withdrawn_submissions: int = 0
+    pending_submissions: int = 0
+    rejected_submissions: int = 0
+    quarantined_submissions: int = 0
+
+    # Missing observation & outcome diagnostics
+    missing_observation_count: int = 0
+    missing_outcome_count: int = 0
+    unverified_outcome_count: int = 0
+    censored_outcome_count: int = 0
+
+    # Quality warnings
+    quality_warnings: list[str] = field(default_factory=list)
+
     # Scientific pilot coverage metrics
     unique_trains: list[str] = field(default_factory=list)
     unique_journey_dates: list[str] = field(default_factory=list)
@@ -847,6 +874,7 @@ class ProspectiveAuditReport:
     verification_method_counts: dict[str, int] = field(default_factory=dict)
     censored_counts: dict[str, int] = field(default_factory=dict)
     withdrawn_count: int = 0
+
     # Scientific pilot thresholds assessment
     threshold_feasibility_pilot: bool = False
     threshold_technical_intake: bool = False
@@ -874,7 +902,23 @@ class ProspectiveAuditReport:
             f"=== Prospective Batch Audit: {self.batch_id} (schema v{self.schema_version}) ===",
             f"Valid: {'yes' if self.is_valid else 'no'}",
             f"Submissions: {self.total_submissions}, Passengers: {self.total_passengers}, Observations: {self.total_observations}",
+            f"Accounting: eligible={self.eligible_submissions}, pending={self.pending_submissions}, "
+            f"withdrawn={self.withdrawn_submissions}, quarantined={self.quarantined_submissions}, rejected={self.rejected_submissions}",
             f"Review Status: [{status_lines}] (Withdrawn: {self.withdrawn_count})",
+            "Governance Dimensions (8 Gates):",
+            f"  1. Structurally Valid:       {'PASS' if self.is_structurally_valid else 'FAIL'}",
+            f"  2. Technically Eligible:     {'PASS' if self.is_technically_eligible else 'FAIL'}",
+            f"  3. Privacy Clean (No PII):   {'PASS' if self.is_privacy_clean else 'FAIL'}",
+            f"  4. Consent Valid:            {'PASS' if self.is_consent_valid else 'FAIL'}",
+            f"  5. Operator Approved:        {'PASS' if self.is_operator_approved else 'FAIL'}",
+            f"  6. Legally Reviewed:         {'PASS' if self.is_legally_reviewed else 'FAIL'}",
+            f"  7. Scientifically Adequate:  {'PASS' if self.is_scientifically_adequate else 'FAIL'}",
+            f"  8. Model Training Approved:  {'APPROVED' if self.is_model_training_approved else 'BLOCKED'}",
+            "Data Quality & Observation Diagnostics:",
+            f"  - Missing Observations: {self.missing_observation_count}",
+            f"  - Missing Outcomes:     {self.missing_outcome_count}",
+            f"  - Unverified Outcomes:  {self.unverified_outcome_count}",
+            f"  - Censored Outcomes:    {self.censored_outcome_count}",
             f"Trains ({len(self.unique_trains)}): {', '.join(self.unique_trains[:8])}{'...' if len(self.unique_trains) > 8 else ''}",
             f"Journey Dates ({len(self.unique_journey_dates)}): {date_span}",
             f"Classes: [{class_str}]",
@@ -886,6 +930,11 @@ class ProspectiveAuditReport:
             f"  - 3. Temporal Baseline Experiment:   {'MET' if self.threshold_temporal_baseline else 'UNMET'}",
             f"  - 4. Subgroup & Group Evaluation:    {'MET' if self.threshold_subgroup_evaluation else 'UNMET'}",
         ]
+        if self.quality_warnings:
+            lines.append("Quality Warnings:")
+            for w in self.quality_warnings:
+                lines.append(f"  ? {w}")
+
         if self.threshold_notes:
             lines.append("Threshold Evaluation Notes:")
             for note in self.threshold_notes:
@@ -930,6 +979,8 @@ def validate_prospective_batch(batch: ProspectiveBatch) -> ProspectiveAuditRepor
 
     trains: set[str] = set()
     journey_dates: set[str] = set()
+    train_pax_counts: dict[str, int] = {}
+    date_pax_counts: dict[str, int] = {}
     class_dist: dict[str, int] = {}
     quota_dist: dict[str, int] = {}
     group_size_dist: dict[int, int] = {}
@@ -938,6 +989,12 @@ def validate_prospective_batch(batch: ProspectiveBatch) -> ProspectiveAuditRepor
     censored_dist: dict[str, int] = {}
     withdrawn_count = 0
     lead_times: list[int] = []
+
+    missing_obs_count = 0
+    missing_out_count = 0
+    unverified_out_count = 0
+    censored_out_count = 0
+    departure_warning_count = 0
 
     for idx, sub in enumerate(batch.submissions):
         status_counts[sub.review_status.value] = (
@@ -973,10 +1030,13 @@ def validate_prospective_batch(batch: ProspectiveBatch) -> ProspectiveAuditRepor
         journey_keys.add(j_sig)
 
         trains.add(sub.train_number)
-        journey_dates.add(sub.journey_date.isoformat())
-        class_dist[sub.class_code] = class_dist.get(sub.class_code, 0) + len(sub.passengers)
-        quota_dist[sub.quota_code] = quota_dist.get(sub.quota_code, 0) + len(sub.passengers)
+        j_date_str = sub.journey_date.isoformat()
+        journey_dates.add(j_date_str)
         p_count = len(sub.passengers)
+        train_pax_counts[sub.train_number] = train_pax_counts.get(sub.train_number, 0) + p_count
+        date_pax_counts[j_date_str] = date_pax_counts.get(j_date_str, 0) + p_count
+        class_dist[sub.class_code] = class_dist.get(sub.class_code, 0) + p_count
+        quota_dist[sub.quota_code] = quota_dist.get(sub.quota_code, 0) + p_count
         group_size_dist[p_count] = group_size_dist.get(p_count, 0) + 1
 
         if not sub.passengers:
@@ -985,22 +1045,32 @@ def validate_prospective_batch(batch: ProspectiveBatch) -> ProspectiveAuditRepor
         for p in sub.passengers:
             total_passengers += 1
             total_obs += len(p.observations)
+            if len(p.observations) == 0:
+                missing_obs_count += 1
 
             for obs in p.observations:
                 lead_days = (sub.journey_date - obs.observed_at.date()).days
                 lead_times.append(lead_days)
+                if sub.scheduled_departure_at and obs.observed_at > sub.scheduled_departure_at:
+                    departure_warning_count += 1
 
-            if p.outcome is not None:
+            if p.outcome is None:
+                missing_out_count += 1
+            else:
                 outcome_dist[p.outcome.outcome_category.value] = (
                     outcome_dist.get(p.outcome.outcome_category.value, 0) + 1
                 )
                 verif_dist[p.outcome.verification_method.value] = (
                     verif_dist.get(p.outcome.verification_method.value, 0) + 1
                 )
-                if p.outcome.is_censored and p.outcome.censoring_reason:
-                    censored_dist[p.outcome.censoring_reason.value] = (
-                        censored_dist.get(p.outcome.censoring_reason.value, 0) + 1
-                    )
+                if p.outcome.label_confidence != LabelConfidence.VERIFIED:
+                    unverified_out_count += 1
+                if p.outcome.is_censored:
+                    censored_out_count += 1
+                    if p.outcome.censoring_reason:
+                        censored_dist[p.outcome.censoring_reason.value] = (
+                            censored_dist.get(p.outcome.censoring_reason.value, 0) + 1
+                        )
 
     is_valid = len(pii_violations) == 0 and len(errors) == 0
     sorted_dates = sorted(journey_dates)
@@ -1070,6 +1140,69 @@ def validate_prospective_batch(batch: ProspectiveBatch) -> ProspectiveAuditRepor
             f"multi-passenger groups (have: {multi_groups_count} multi-pax groups)."
         )
 
+    # Submission accounting breakdown
+    eligible_submissions = sum(
+        1 for s in batch.submissions
+        if s.review_status == ReviewStatus.APPROVED
+        and not s.consent.withdrawn
+        and len(s.passengers) > 0
+    )
+    withdrawn_submissions = sum(
+        1 for s in batch.submissions
+        if s.consent.withdrawn or s.review_status == ReviewStatus.WITHDRAWN
+    )
+    pending_submissions = status_counts.get(ReviewStatus.PENDING_REVIEW.value, 0)
+    rejected_submissions = status_counts.get(ReviewStatus.REJECTED.value, 0)
+    quarantined_submissions = status_counts.get(ReviewStatus.QUARANTINED.value, 0)
+
+    # Quality warnings
+    quality_warnings: list[str] = []
+    if total_passengers > 0 and (total_obs / total_passengers) < 2.0:
+        quality_warnings.append(
+            f"Low observation density: {total_obs / total_passengers:.2f} observations/pax (< 2.0 target)."
+        )
+    if total_passengers >= 10:
+        for tr, cnt in train_pax_counts.items():
+            if cnt / total_passengers > 0.5:
+                quality_warnings.append(
+                    f"High concentration in single train {tr}: {cnt}/{total_passengers} ({cnt / total_passengers * 100:.1f}%)."
+                )
+        for dt, cnt in date_pax_counts.items():
+            if cnt / total_passengers > 0.5:
+                quality_warnings.append(
+                    f"High concentration in single journey date {dt}: {cnt}/{total_passengers} ({cnt / total_passengers * 100:.1f}%)."
+                )
+    if departure_warning_count > 0:
+        quality_warnings.append(
+            f"{departure_warning_count} observation(s) occurred post-scheduled departure."
+        )
+
+    # Decoupled 8 governance dimensions
+    is_structurally_valid = len(errors) == 0
+    is_privacy_clean = len(pii_violations) == 0
+    is_consent_valid = len(batch.submissions) > 0 and all(
+        s.consent.consent_basis in {"explicit_opt_in", "user_initiated_submission", "research_partner_authorized"}
+        and s.consent.notice_version == DEFAULT_NOTICE_VERSION
+        for s in batch.submissions
+    )
+    is_technically_eligible = t2_pass
+    is_operator_approved = (
+        len(batch.submissions) > 0
+        and eligible_submissions > 0
+        and pending_submissions == 0
+        and quarantined_submissions == 0
+    )
+    is_legally_reviewed = is_privacy_clean and is_consent_valid
+    is_scientifically_adequate = t1_pass
+    is_model_training_approved = (
+        is_structurally_valid
+        and is_privacy_clean
+        and is_consent_valid
+        and is_operator_approved
+        and is_legally_reviewed
+        and is_technically_eligible
+    )
+
     return ProspectiveAuditReport(
         batch_id=batch.batch_id,
         schema_version=batch.schema_version,
@@ -1080,6 +1213,24 @@ def validate_prospective_batch(batch: ProspectiveBatch) -> ProspectiveAuditRepor
         pii_violations=pii_violations,
         structural_errors=errors,
         is_valid=is_valid,
+        is_structurally_valid=is_structurally_valid,
+        is_technically_eligible=is_technically_eligible,
+        is_privacy_clean=is_privacy_clean,
+        is_consent_valid=is_consent_valid,
+        is_operator_approved=is_operator_approved,
+        is_legally_reviewed=is_legally_reviewed,
+        is_scientifically_adequate=is_scientifically_adequate,
+        is_model_training_approved=is_model_training_approved,
+        eligible_submissions=eligible_submissions,
+        withdrawn_submissions=withdrawn_submissions,
+        pending_submissions=pending_submissions,
+        rejected_submissions=rejected_submissions,
+        quarantined_submissions=quarantined_submissions,
+        missing_observation_count=missing_obs_count,
+        missing_outcome_count=missing_out_count,
+        unverified_outcome_count=unverified_out_count,
+        censored_outcome_count=censored_out_count,
+        quality_warnings=quality_warnings,
         unique_trains=sorted(trains),
         unique_journey_dates=sorted_dates,
         lead_time_min_days=min(lead_times) if lead_times else None,

@@ -797,4 +797,76 @@ def test_reconcile_and_regenerate_export(tmp_path: Path, sample_submission: Pros
     assert sample_submission.pseudonym_group_id not in [bg.booking_group_id for bg in reconciled_ds.booking_groups]
 
 
+def test_audit_report_decoupled_dimensions_and_accounting(sample_submission: ProspectiveSubmission):
+    # Setup sub1 as approved with 1 passenger, 1 observation, verified outcome
+    sub1 = sample_submission
+    sub1.review_status = ReviewStatus.APPROVED
+
+    # Setup sub2 with missing observation and missing outcome
+    p2 = ProspectivePassenger(
+        passenger_sequence=1,
+        original_status_raw="RLWL 2",
+        original_status_category=NormalizedStatus.WL,
+        observations=[],  # missing observation
+        outcome=None,  # missing outcome
+    )
+    sub2 = ProspectiveSubmission(
+        submission_id="SUB_DIAG_002",
+        pseudonym_group_id="anon_diag_group_002",
+        train_number="12951",
+        journey_date=date(2026, 12, 10),
+        boarding_station="MMCT",
+        destination_station="NDLS",
+        class_code="2A",
+        quota_code="GN",
+        consent=sub1.consent,
+        passengers=[p2],
+        review_status=ReviewStatus.PENDING_REVIEW,
+    )
+
+    batch = ProspectiveBatch(
+        batch_id="BATCH_DIAG_001",
+        created_at=datetime(2026, 11, 1, 12, 0, tzinfo=UTC),
+        submissions=[sub1, sub2],
+    )
+
+    report = validate_prospective_batch(batch)
+
+    # 1. Submission accounting
+    assert report.total_submissions == 2
+    assert report.total_passengers == 2
+    assert report.eligible_submissions == 1  # only sub1 is approved
+    assert report.pending_submissions == 1  # sub2 is pending
+    assert report.withdrawn_submissions == 0
+    assert report.rejected_submissions == 0
+    assert report.quarantined_submissions == 0
+
+    # 2. Missing data diagnostics
+    assert report.missing_observation_count == 1  # p2 has no observations
+    assert report.missing_outcome_count == 1  # p2 has no outcome
+    assert report.unverified_outcome_count == 0  # sub1's pax is verified
+    assert report.censored_outcome_count == 0
+
+    # 3. Eight decoupled governance dimensions
+    assert report.is_structurally_valid is True
+    assert report.is_privacy_clean is True
+    assert report.is_consent_valid is True
+    assert report.is_operator_approved is False  # sub2 is pending, so not fully approved
+    assert report.is_legally_reviewed is True
+    assert report.is_technically_eligible is False  # < 50 passengers
+    assert report.is_scientifically_adequate is False  # < 30 passengers
+    assert report.is_model_training_approved is False  # blocked by unapproved and insufficient data
+
+    # 4. Summary presentation contains governance dimensions and accounting
+    summ = report.summary()
+    assert "Governance Dimensions (8 Gates):" in summ
+    assert "Structurally Valid:       PASS" in summ
+    assert "Operator Approved:        FAIL" in summ
+    assert "Model Training Approved:  BLOCKED" in summ
+    assert "Missing Observations: 1" in summ
+    assert "Missing Outcomes:     1" in summ
+    assert "Accounting: eligible=1, pending=1" in summ
+
+
+
 
