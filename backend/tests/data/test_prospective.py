@@ -868,5 +868,71 @@ def test_audit_report_decoupled_dimensions_and_accounting(sample_submission: Pro
     assert "Accounting: eligible=1, pending=1" in summ
 
 
+def test_withdrawal_edge_cases_and_all_withdrawn_reconcile(tmp_path: Path, sample_submission: ProspectiveSubmission):
+    sample_submission.review_status = ReviewStatus.APPROVED
+    batch = ProspectiveBatch(
+        batch_id="BATCH_EDGE_001",
+        created_at=datetime(2026, 11, 1, 12, 0, tzinfo=UTC),
+        submissions=[sample_submission],
+    )
+
+    # Empty operator or empty reason raises DatasetValidationError
+    with pytest.raises(DatasetValidationError, match="named operator"):
+        withdraw_submission(batch, submission_id=sample_submission.submission_id, reason="Reason", operator="   ")
+    with pytest.raises(DatasetValidationError, match="non-empty reason"):
+        withdraw_submission(batch, submission_id=sample_submission.submission_id, reason="", operator="operator_1")
+
+    # Non-existent submission ID raises DatasetValidationError
+    with pytest.raises(DatasetValidationError, match="not found in prospective batch"):
+        withdraw_submission(batch, submission_id="NON_EXISTENT_ID", reason="Reason", operator="operator_1")
+
+    # Initial export with 1 submission
+    export_file = tmp_path / "all_withdrawn_export.json"
+    ds = export_batch_to_longitudinal(batch, dataset_id="ds_edge", source_id="src_edge")
+    atomic_write_json(export_file, ds.to_dict())
+
+    # Withdraw only submission in batch
+    withdraw_submission(
+        batch,
+        submission_id=sample_submission.submission_id,
+        reason="Sole participant requested withdrawal",
+        operator="privacy_officer",
+    )
+
+    # Reconciling an all-withdrawn batch should cleanly yield 0 booking groups without error
+    reconciled_ds, report = reconcile_and_regenerate_export(
+        batch,
+        ds,
+        export_file,
+        overwrite=True,
+    )
+    assert len(reconciled_ds.booking_groups) == 0
+    assert report.is_synced is True
+    assert report.status == LineageStatus.VERIFIED_IN_SYNC
+
+
+def test_atomic_write_deep_hierarchy_and_permissions(tmp_path: Path):
+    deep_target = tmp_path / "level1" / "level2" / "level3" / "data.json"
+    payload = {"status": "created_in_deep_tree"}
+    written = atomic_write_json(deep_target, payload)
+    assert written == deep_target
+    assert deep_target.is_file()
+
+    import json
+    assert json.loads(deep_target.read_text(encoding="utf-8")) == payload
+
+
+def test_pii_scanner_comprehensive_types():
+    # Booleans should not be flagged as numbers
+    assert scan_for_personal_data({"flag_true": True, "flag_false": False}) == []
+
+    # Floating point numbers and non-10-digit integers
+    assert scan_for_personal_data({"score": 99.85, "small_int": 42, "huge_num": 10**12}) == []
+
+    # Non-ASCII Hindi/regional text without personal identifiers
+    assert scan_for_personal_data({"station_hi": "नई दिल्ली", "notes": "भारतीय रेल"}) == []
+
+
+
 
 
