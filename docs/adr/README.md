@@ -90,3 +90,4 @@ How will the decision be tested or revisited? Record evidence, not assumptions.
 | [ADR-0044](ADR-0044-consent-aware-prospective-collection-and-operator-governance.md) | Consent-aware prospective collection format (v1.0.0), automated PII/PNR scanner, cryptographic pseudonymization, and operator review governance | Accepted |
 | [ADR-0045](ADR-0045-prospective-pilot-operational-hardening-and-participant-lifecycle.md) | Prospective pilot operational hardening, scientific coverage, and participant withdrawal lifecycle | Accepted |
 | [ADR-0046](ADR-0046-withdrawal-integrity-export-lineage-and-atomic-operations.md) | Withdrawal integrity, export lineage, decoupled governance auditing, and atomic local operations | Accepted |
+| [ADR-0047](ADR-0047-standardized-atomic-file-io-and-static-typing-conformance.md) | Standardized atomic file I/O, static typing conformance, and CI documentation reconciliation | Accepted |

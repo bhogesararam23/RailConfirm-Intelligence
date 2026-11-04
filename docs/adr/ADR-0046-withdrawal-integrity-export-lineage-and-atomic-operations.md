@@ -110,3 +110,4 @@ Following the operational hardening of the prospective pilot framework (ADR-0045
 
 - Downstream training pipelines must invoke `verify_export_lineage` to confirm the export is `VERIFIED_IN_SYNC` before ingesting data for model training.
 - Reconciling an export after a withdrawal requires re-running downstream point-in-time snapshot generation and manifest digest calculation.
+
