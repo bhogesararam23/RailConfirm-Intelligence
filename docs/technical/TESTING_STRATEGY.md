@@ -3,8 +3,8 @@
 Status: this describes what the repository runs, not what it intends to run. Where a
 layer below is still a plan, it says so.
 
-Current totals on a developer machine: **1043 backend tests** at 96.2% branch coverage
-(`--cov-fail-under=90`), **115 frontend tests**, **5 live cross-stack tests** that need a
+Current totals on a developer machine: **1273 backend tests** at 93.2% branch coverage
+(--cov-fail-under=90), **129 frontend tests**, **6 Playwright real-browser E2E user journey tests**,
 running backend, and one **full-stack smoke script** that starts both processes. Every
 suite below that exercises the model pipeline uses clearly-labelled synthetic fixtures;
 none of them measures railway accuracy, because there is no approved real dataset.
@@ -57,9 +57,9 @@ under `next start` on loopback ports, then checks over real sockets:
   fails here rather than passing two separate checks);
 - `npm run test:live` — the client's own `api.ts` — runs against that server.
 
-What it does not cover: no browser, so a JavaScript-only failure still passes and no
-interaction, focus order or accessibility check happens end to end. A browser driver is
-the obvious next layer and is not configured.
+What it does not cover: JavaScript-only interactions and browser rendering are covered
+by the separate Playwright browser E2E test suite (ADR-0041), which tests form submission,
+dynamic passenger row additions, keyboard navigation, and historical report retrieval.
 
 ### Unit tests
 Cover pure logic and edge cases:

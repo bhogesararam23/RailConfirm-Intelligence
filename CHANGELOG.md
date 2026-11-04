@@ -8,6 +8,13 @@ The format is inspired by Keep a Changelog; dates use ISO 8601.
 
 ### Added
 
+- **Post-ADR-0048 reliability audit: copy-first quarantine hashing, orphan reconciliation, and streaming persistence** (`backend/railconfirm/data/_io.py`, `backend/railconfirm/data/inspection.py`, `backend/railconfirm/data/__main__.py`, `backend/tests/data/test_io.py`, `backend/tests/data/test_inspection.py`, `backend/tests/data/test_intake_cli.py`, `docs/adr/ADR-0048-atomic-quarantine-snapshot-persistence-and-ci-conformance.md`, `docs/technical/TESTING_STRATEGY.md`).
+  - Hardened `quarantine_dataset()` to compute the SHA-256 digest and file size directly on the staged copy in the quarantine directory, guaranteeing that sidecar cryptographic digests reflect the exact quarantined bytes even if the source file is modified concurrently.
+  - Implemented `audit_quarantine_directory()` in `inspection.py` and CLI subcommand `python -m railconfirm.data audit-quarantine` with `--purge-orphans` recovery flag, auditing pair consistency, detecting post-crash orphaned data files and orphaned sidecars, and validating cryptographic hash integrity.
+  - Streamed DataFrame serialization directly to disk in `atomic_write_csv()` via open temporary file handles (`newline=""`), eliminating in-memory string buffering for large CSV exports.
+  - Added file permission preservation (`os.chmod`) across `atomic_write_text()` and `atomic_write_csv()` to maintain existing `st_mode` attributes upon atomic replacement, and added best-effort POSIX directory syncing (`_sync_dir`).
+  - Reconciled documentation and test counts across `docs/technical/TESTING_STRATEGY.md`, `docs/ROADMAP.md`, `docs/PROJECT_STATUS.md`, `docs/AGENT_HANDOFF.md`, and `README.md` to 1,273 backend pytest tests (+7 tests) and 93.2% branch coverage.
+
 - **Atomic quarantine ingestion, snapshot persistence, and CI conformance reconciliation** (`backend/railconfirm/data/_io.py`, `backend/railconfirm/data/inspection.py`, `backend/railconfirm/data/__main__.py`, `backend/tests/data/test_io.py`, `backend/tests/data/test_intake_cli.py`, `docs/technical/TESTING_STRATEGY.md`, `README.md`, ADR-0048).
   - Implemented `atomic_copy_file()` in `railconfirm.data._io` using same-filesystem temporary files, cross-platform `"r+b"` buffer syncing (`os.fsync`), and atomic replacement via `os.replace`.
   - Added pair-atomicity to `quarantine_dataset()` in `inspection.py`, immediately unlinking the quarantined copy if cryptographic sidecar JSON generation fails.

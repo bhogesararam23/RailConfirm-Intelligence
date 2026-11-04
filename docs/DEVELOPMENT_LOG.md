@@ -2790,3 +2790,39 @@ the existing storage tests. `delete_live` refuses a naive clock before touching 
 - `npm --prefix frontend run type-check` -> Passed (0 errors).
 - `npm --prefix frontend run lint` -> Passed (0 errors, 0 warnings).
 - `npm --prefix frontend test` -> 129 passed across 6 test files.
+
+
+## 2026-11-05 -- Post-ADR-0048 Reliability Audit: Copy-First Quarantine Hashing, Orphan Recovery, and Streaming Persistence
+
+### Scope
+- Completed reliability audit of atomic I/O and quarantine isolation against power-loss and concurrency boundaries.
+- Hardened \quarantine_dataset()\ to compute SHA-256 and size on the staged copy directly, preventing checksum divergence if the source file is modified concurrently.
+- Clarified pair-atomicity boundaries in ADR-0048: distinguished in-process exception rollback from OS/power loss commit boundaries.
+- Implemented \udit_quarantine_directory()\ in \inspection.py\ and CLI subcommand \python -m railconfirm.data audit-quarantine\ with \--purge-orphans\ recovery to detect and heal post-crash orphaned artifacts.
+- Implemented direct file streaming in \tomic_write_csv()\ via open temporary handles without in-memory string buffering.
+- Added file permission preservation (\st_mode\ via \os.chmod\) across \tomic_write_text()\ and \tomic_write_csv()\, and best-effort POSIX directory syncing (\_sync_dir\).
+- Reconciled documentation baselines across \docs/technical/TESTING_STRATEGY.md\, \docs/ROADMAP.md\, \docs/PROJECT_STATUS.md\, \docs/AGENT_HANDOFF.md\, and \README.md\ to 1,273 backend tests and 93.2% branch coverage.
+
+### Changed
+- \ackend/railconfirm/data/_io.py\: Streamed DataFrame to file handle in \tomic_write_csv()\, added \st_mode\ preservation on existing targets, and added best-effort POSIX directory syncing.
+- \ackend/railconfirm/data/inspection.py\: Staged quarantine copies before computing checksum and size; added \udit_quarantine_directory()\ for pair validation, orphan detection/purging, and hash verification.
+- \ackend/railconfirm/data/__init__.py\: Exposed \udit_quarantine_directory\ and updated \__all__\.
+- \ackend/railconfirm/data/__main__.py\: Added \udit-quarantine\ CLI subcommand with \--purge-orphans\ and \--json\ support.
+- \ackend/tests/data/test_io.py\: Added regression tests for permission preservation and streamed CSV formatting without double carriage returns.
+- \ackend/tests/data/test_inspection.py\: Added unit tests for staged copy checksum verification, \udit_quarantine_directory\ clean runs, orphan detection/purging, and checksum mismatch detection.
+- \ackend/tests/data/test_intake_cli.py\: Added CLI integration test for \udit-quarantine\.
+- \docs/technical/TESTING_STRATEGY.md\: Updated test counts to 1,273 backend tests, 129 frontend tests, 6 Playwright E2E tests, and corrected stale browser driver text.
+- \docs/ROADMAP.md\: Updated review date and ADR references in header.
+- \docs/PROJECT_STATUS.md\: Updated test counts to 1,273 backend tests.
+- \docs/AGENT_HANDOFF.md\: Updated test counts to 1,273 backend tests.
+- \README.md\: Updated test count to 1,273 tests and 93.2% branch coverage.
+- \docs/adr/ADR-0048-atomic-quarantine-snapshot-persistence-and-ci-conformance.md\: Updated with pair atomicity boundaries, orphan auditing, and zero-memory streaming persistence.
+- \CHANGELOG.md\: Logged Post-ADR-0048 reliability audit.
+
+### Checks run
+- uff check backend/ scripts/\ -> All checks passed (0 errors).
+- \cd backend && python -m mypy\ -> Success: no issues found in 49 source files.
+- \cd backend && pytest tests/ --cov=railconfirm --cov-fail-under=90\ -> 1,273 passed in 197.19s (93.16% total coverage, 0 failures).
+- pm --prefix frontend test\ -> 129 passed across 6 test files.
+- \python scripts/check_repository_hygiene.py\ -> Passed (22 required files, 285 tracked files scanned, 0 errors).
+- \python scripts/smoke_full_stack.py --skip-frontend\ -> Passed (9 checks, 0 errors).
