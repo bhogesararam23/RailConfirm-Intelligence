@@ -26,7 +26,13 @@ from typing import Any
 import yaml
 
 from railconfirm.config import REPO_ROOT
+from railconfirm.data.inspection import FormatType, detect_schema
 from railconfirm.data.loader import load_dataset_file
+from railconfirm.data.longitudinal import (
+    LONGITUDINAL_SCHEMA_VERSION,
+    load_longitudinal_dataset,
+)
+from railconfirm.data.longitudinal_validator import validate_longitudinal_dataset
 from railconfirm.data.validator import DatasetValidationReport, validate_dataset
 
 MANIFEST_SCHEMA_VERSION = "1.0.0"
@@ -376,6 +382,64 @@ def generate_manifest(
         "generate_manifest needs retrieved_on (YYYY-MM-DD from the source record).",
     )
 
+    detection = detect_schema(path)
+    if detection.format_type == FormatType.LONGITUDINAL:
+        longitudinal_ds = load_longitudinal_dataset(path)
+        long_report = validate_longitudinal_dataset(longitudinal_ds)
+        m = long_report.metrics
+        j_dates = [j.journey_date.isoformat() for j in longitudinal_ds.journeys.values()]
+        start_date = min(j_dates) if j_dates else None
+        end_date = max(j_dates) if j_dates else None
+        trains = sorted({j.train_number for j in longitudinal_ds.journeys.values()})
+        classes = sorted({j.class_code for j in longitudinal_ds.journeys.values()})
+        quotas = sorted({j.quota_code for j in longitudinal_ds.journeys.values()})
+
+        coverage = CoverageRecord(
+            row_count=m.total_passengers if m else longitudinal_ds.total_passengers,
+            start_date=start_date,
+            end_date=end_date,
+            train_coverage_summary=f"trains covered: {trains}",
+            class_coverage_summary=f"classes: {classes}; initial status: {sorted(m.initial_categories_breakdown.keys()) if m else []}",
+            quota_coverage_summary=f"quotas: {quotas}",
+            status_coverage_summary=f"final outcomes: {sorted(m.outcome_categories_breakdown.keys()) if m else []}",
+            final_outcome_label_definition="final_chart_cnf outcome; verifiable railway outcome",
+            label_verification_method=f"methods: {sorted(m.verification_methods_breakdown.keys()) if m else []}",
+            observation_timestamp_semantics="timezone-aware sequential observation timestamps",
+        )
+        if coverage_extra:
+            coverage = CoverageRecord(**{**_plain(coverage), **coverage_extra})
+
+        quality = QualityRecord(
+            duplicate_count=0,
+            contradictory_record_count=m.transition_anomaly_count if m else 0,
+            censored_or_unverified_outcome_count=m.censored_count if m else 0,
+            exclusions_and_reasons=long_report.errors + long_report.warnings,
+            rejection_reasons={"validation_errors": len(long_report.errors)} if long_report.errors else {},
+        )
+
+        manifest = DatasetManifest(
+            dataset_id=dataset_id,
+            title=title,
+            status=status,
+            source=source or SourceRecord(retrieved_on=retrieved_on),
+            file=FileRecord(
+                local_path=None,
+                format="longitudinal_json",
+                schema_version=LONGITUDINAL_SCHEMA_VERSION,
+                sha256=detection.sha256,
+                size_bytes=path.stat().st_size,
+            ),
+            coverage=coverage,
+            quality=quality,
+            privacy=privacy or PrivacyRecord(),
+            decision=decision or DecisionRecord(),
+        )
+        _require(
+            manifest.source.retrieved_on == retrieved_on,
+            "source.retrieved_on must be recorded.",
+        )
+        return manifest
+
     existing = report
     if existing is None:
         existing = validate_dataset(
@@ -488,6 +552,34 @@ def verify_manifest(
             )
         elif manifest.file.size_bytes is not None:
             checks.append("file.size_bytes matches")
+
+        if (
+            manifest.file.format in ("longitudinal_json", "longitudinal")
+            or manifest.file.schema_version == LONGITUDINAL_SCHEMA_VERSION
+        ):
+            try:
+                long_ds = load_longitudinal_dataset(data_path)
+            except (ValueError, OSError) as exc:
+                findings.append(f"longitudinal dataset file cannot be read: {exc}")
+                return ManifestVerification(manifest.digest(), checks, findings)
+
+            checks.append("file format is valid longitudinal dataset")
+            if manifest.coverage.row_count is not None:
+                if int(manifest.coverage.row_count) != long_ds.total_passengers:
+                    findings.append(
+                        f"coverage.row_count records {manifest.coverage.row_count}, "
+                        f"dataset has {long_ds.total_passengers} passengers."
+                    )
+                else:
+                    checks.append("coverage.row_count matches longitudinal passenger count")
+
+            long_report = validate_longitudinal_dataset(long_ds)
+            if not long_report.is_valid:
+                findings.append(f"longitudinal dataset validation failed: {long_report.errors}")
+            else:
+                checks.append("longitudinal dataset validation passed")
+
+            return ManifestVerification(manifest.digest(), checks, findings)
 
         try:
             frame = load_dataset_file(data_path)

@@ -409,3 +409,92 @@ def test_manifest_yaml_is_human_readable_and_orders_sections():
     text = manifest().to_yaml()
     assert text.index("dataset_id:") < text.index("source:") < text.index("decision:")
     assert "decision:" in text and "privacy:" in text
+
+
+def test_generate_manifest_for_longitudinal_dataset(tmp_path: Path):
+    from datetime import UTC, date, datetime
+
+    from railconfirm.data.longitudinal import (
+        LONGITUDINAL_SCHEMA_VERSION,
+        BookingGroup,
+        FinalOutcome,
+        LabelConfidence,
+        LongitudinalDataset,
+        LongitudinalJourney,
+        PassengerReservation,
+        StatusObservation,
+        VerificationMethod,
+        save_longitudinal_dataset,
+    )
+    from railconfirm.domain.status import NormalizedStatus
+
+    journey = LongitudinalJourney(
+        journey_id="J1",
+        train_number="12301",
+        journey_date=date(2026, 12, 1),
+        boarding_station="NDLS",
+        destination_station="HWH",
+        class_code="3A",
+        quota_code="GN",
+    )
+    p = PassengerReservation(
+        passenger_record_id="P1",
+        booking_group_id="B1",
+        passenger_sequence=1,
+        original_status_raw="GNWL 10",
+        original_status_category=NormalizedStatus.WL,
+        original_observed_at=datetime(2026, 11, 1, 10, 0, tzinfo=UTC),
+        observations=[
+            StatusObservation(
+                observation_id="O1",
+                passenger_record_id="P1",
+                observed_at=datetime(2026, 11, 15, 10, 0, tzinfo=UTC),
+                status_raw="RAC 2",
+                status_category=NormalizedStatus.RAC,
+            )
+        ],
+        outcome=FinalOutcome(
+            outcome_target="final_chart_cnf",
+            outcome_status_raw="CNF",
+            outcome_category=NormalizedStatus.CNF,
+            outcome_observed_at=datetime(2026, 12, 1, 12, 0, tzinfo=UTC),
+            verification_method=VerificationMethod.CHART_SNAPSHOT,
+            label_confidence=LabelConfidence.VERIFIED,
+        ),
+    )
+    group = BookingGroup(
+        booking_group_id="B1",
+        journey_id="J1",
+        passengers=[p],
+    )
+    dataset = LongitudinalDataset(
+        schema_version=LONGITUDINAL_SCHEMA_VERSION,
+        dataset_id="test_long_manifest",
+        source_id="test_source",
+        created_at=datetime(2026, 11, 1, 0, 0, tzinfo=UTC),
+        journeys={"J1": journey},
+        booking_groups=[group],
+    )
+    ds_path = tmp_path / "longitudinal.json"
+    save_longitudinal_dataset(dataset, ds_path)
+
+    gen = generate_manifest(
+        ds_path,
+        dataset_id="test_long_manifest",
+        title="Longitudinal Intake Candidate",
+        retrieved_on=RETRIEVED,
+    )
+
+    assert gen.file.format == "longitudinal_json"
+    assert gen.file.schema_version == LONGITUDINAL_SCHEMA_VERSION
+    assert gen.coverage.row_count == 1
+    assert gen.coverage.start_date == "2026-12-01"
+    assert gen.quality.duplicate_count == 0
+
+    # Verification pass
+    manifest_path = tmp_path / "manifest.yaml"
+    write_manifest(gen, manifest_path)
+
+    verification = verify_manifest(manifest_path, ds_path)
+    assert verification.ok is True
+    assert "file format is valid longitudinal dataset" in verification.checks
