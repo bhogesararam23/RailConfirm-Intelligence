@@ -6,6 +6,10 @@ The format is inspired by Keep a Changelog; dates use ISO 8601.
 
 ## [Unreleased]
 
+### Added
+
+- **Multi-passenger invariant and property tests for group outcome distributions** (`backend/tests/inference/test_group_invariants.py`). Added 12 rigorous tests covering group sizes from 1 to 6 passengers: verifies permutation invariance of passenger order, Fréchet-Hoeffding comonotonic upper bound dominance ($P_{\text{queue}}(\text{all CNF}) \ge P_{\text{indep}}(\text{all CNF})$), total probability sum ($\sum_{k=0}^n P(K = k) = 1.0$), monotonic survival tail decay ($P(K \ge k) \ge P(K \ge k+1)$), empty list handling returning `None`, and multi-passenger abstention reason precedence.
+
 ### Performance
 
 - **Optimized repository hygiene scanner by pruning skipped directories during traversal** (`scripts/check_repository_hygiene.py`). `iter_tracked_text_files` used `REPO_ROOT.rglob("*")`, which recursively enumerated all files across `node_modules` and `.venv` before applying directory skip filters, taking 30–40 seconds per run on systems with large frontend dependency trees. It now uses `os.walk` to prune `SKIP_DIRS` and `.git` subtrees in place, reducing the scan duration to under 2 seconds while checking the exact same tracked repository files for broken relative links, secrets and unlabelled ticket data.

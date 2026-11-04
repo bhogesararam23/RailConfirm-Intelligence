@@ -2531,10 +2531,12 @@ the existing storage tests. `delete_live` refuses a naive clock before touching 
 
 ### Changed
 - `scripts/check_repository_hygiene.py`: Replaced `Path.rglob` with `os.walk` directory pruning, reducing hygiene check runtime from 35s to <2s.
-- `CHANGELOG.md`: Recorded scanner performance optimization.
+- `backend/tests/inference/test_group_invariants.py`: Added 12 property tests for group outcome distributions across sizes 1 to 6 (permutation invariance, tail monotonicity, comonotonic bound dominance, empty and multi-abstention handling).
+- `CHANGELOG.md`: Recorded scanner performance optimization and invariant test additions.
 
 ### Checks run
 - `python scripts/check_repository_hygiene.py` → Passed (22 required files, 257 tracked files scanned in 1.4s).
-- `ruff check --config backend/pyproject.toml scripts/` → Passed.
+- `pytest backend/tests/inference/test_group_invariants.py` → 50 passed in 0.21s.
+- `ruff check --config backend/pyproject.toml scripts/ backend/tests/inference/test_group_invariants.py` → Passed.
 
 

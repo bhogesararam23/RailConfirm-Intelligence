@@ -330,3 +330,103 @@ def test_both_methods_abstain_for_the_same_reason():
         assert result.abstention_reason == AbstentionReason.UNSUPPORTED_STATUS
         assert result.method == "insufficient_data"
         assert result.p_exactly_k_cnf is None and result.p_at_least_k_cnf is None
+
+
+def test_empty_passenger_outcomes_returns_none_for_all_methods():
+    assert compute_group_outcomes([], method="independence_baseline") is None
+    assert compute_group_outcomes([], method="queue_dependent_comonotonic") is None
+    assert compute_queue_dependent_bounds([]) is None
+
+
+def test_group_outcome_permutation_invariance():
+    """Shuffling the passenger sequence does not alter the joint group probabilities."""
+    p1 = passenger("p-1", 0.85, 0.10, 0.05)
+    p2 = passenger("p-2", 0.60, 0.20, 0.15)
+    p3 = passenger("p-3", 0.35, 0.25, 0.35)
+    p4 = passenger("p-4", 0.10, 0.30, 0.50)
+
+    original = [p1, p2, p3, p4]
+    permuted = [p3, p1, p4, p2]
+
+    for method in GROUP_METHODS:
+        res1 = compute_group_outcomes(original, method=method)
+        res2 = compute_group_outcomes(permuted, method=method)
+        assert res1 is not None and res2 is not None
+        assert res1.p_all_cnf == res2.p_all_cnf
+        assert res1.p_all_cnf_or_rac == res2.p_all_cnf_or_rac
+        assert res1.p_at_least_one_wl == res2.p_at_least_one_wl
+        assert res1.p_exactly_k_cnf == res2.p_exactly_k_cnf
+        assert res1.p_at_least_k_cnf == res2.p_at_least_k_cnf
+
+
+@pytest.mark.parametrize("group_size", [2, 3, 4, 5, 6])
+def test_comonotonic_dominance_across_group_sizes_1_to_6(group_size: int):
+    """The Fréchet-Hoeffding comonotonic bound always dominates or equals the independence baseline."""
+    # Construct decreasing marginal probabilities for diverse passenger statuses
+    outcomes = [
+        passenger(
+            f"p-{i}",
+            cnf=round(0.9 - 0.12 * i, 4),
+            rac=round(0.05 + 0.02 * i, 4),
+            wl=round(0.05 + 0.10 * i, 4),
+        )
+        for i in range(group_size)
+    ]
+
+    indep = compute_group_outcomes(outcomes, method="independence_baseline")
+    queue = compute_group_outcomes(outcomes, method="queue_dependent_comonotonic")
+
+    assert indep is not None and queue is not None
+    # P(all CNF) comonotonic >= independence
+    assert (queue.p_all_cnf or 0.0) >= (indep.p_all_cnf or 0.0) - 1e-6
+    # P(all CNF or RAC) comonotonic >= independence
+    assert (queue.p_all_cnf_or_rac or 0.0) >= (indep.p_all_cnf_or_rac or 0.0) - 1e-6
+    # P(at least one WL) comonotonic <= independence
+    assert (queue.p_at_least_one_wl or 0.0) <= (indep.p_at_least_one_wl or 0.0) + 1e-6
+
+
+@pytest.mark.parametrize(
+    "prob_tuples",
+    [
+        [(0.1, 0.2, 0.7), (0.2, 0.3, 0.5), (0.3, 0.4, 0.3)],
+        [(0.95, 0.03, 0.02), (0.90, 0.05, 0.04), (0.85, 0.10, 0.03), (0.80, 0.15, 0.04)],
+        [(0.5, 0.2, 0.3), (0.5, 0.2, 0.3), (0.5, 0.2, 0.3)],
+        [(0.01, 0.09, 0.90), (0.99, 0.005, 0.005)],
+    ],
+)
+def test_tail_monotonicity_and_law_of_total_probability_sweep(prob_tuples):
+    """Cumulative P(K >= k) is monotonically non-increasing and total sum of P(K = k) is 1.0."""
+    outcomes = [
+        passenger(f"p-{idx}", cnf=c, rac=r, wl=w)
+        for idx, (c, r, w) in enumerate(prob_tuples)
+    ]
+    n = len(outcomes)
+
+    for method in GROUP_METHODS:
+        res = compute_group_outcomes(outcomes, method=method)
+        assert res is not None
+        assert res.p_exactly_k_cnf is not None
+        assert res.p_at_least_k_cnf is not None
+
+        # Total probability is 1.0
+        assert sum(res.p_exactly_k_cnf.values()) == pytest.approx(1.0, abs=1e-5)
+
+        # Monotonicity: P(K >= 1) >= P(K >= 2) >= ... >= P(K >= n)
+        for k in range(1, n):
+            assert res.p_at_least_k_cnf[k] >= res.p_at_least_k_cnf[k + 1] - 1e-6
+
+        # Terminal tail matches all-CNF
+        assert res.p_at_least_k_cnf[n] == pytest.approx(res.p_all_cnf or 0.0, abs=1e-5)
+
+
+def test_multiple_abstentions_preserves_first_reason():
+    """First passenger with abstention sets the reported group reason."""
+    outcomes = [
+        passenger("p-1", 0.7, 0.2, 0.1),
+        make_abstention_outcome("p-2", AbstentionReason.UNSUPPORTED_STATUS),
+        make_abstention_outcome("p-3", AbstentionReason.NO_TRAINED_MODEL),
+    ]
+    res = compute_group_outcomes(outcomes)
+    assert res is not None
+    assert res.abstention_reason == AbstentionReason.UNSUPPORTED_STATUS
+
