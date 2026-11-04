@@ -68,3 +68,8 @@ class InferenceError(RailConfirmError):
 
 class ModelRegistryError(RailConfirmError):
     """Raised when a requested model version cannot be resolved."""
+
+
+class SecurityError(RailConfirmError, ValueError):
+    """Raised when an operation violates security, credential, or privacy bounds."""
+
