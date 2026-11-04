@@ -2621,3 +2621,27 @@ the existing storage tests. `delete_live` refuses a naive clock before touching 
 - `npx playwright test` in `frontend/` -> 6 passed in 35.1s.
 - `python scripts/check_repository_hygiene.py` -> Passed in 1.4s.
 - `ruff check --config backend/pyproject.toml backend/railconfirm/data backend/tests/data backend/tests/support` -> All checks passed.
+
+## 2026-11-04 -- Real Dataset Acquisition Investigation, Candidate Qualification, and Phase 2 Exit Decision Brief
+
+### Scope
+- Conducted evidence-driven real dataset acquisition investigation and qualification across government, enterprise, commercial, academic, and open-source sources against the 10 formal qualification criteria.
+- Established authoritative findings for data.gov.in, CRIS Pravah Enterprise Gateway (`crisapis.indianrail.gov.in`), IRCTC B2C PSP scheme, commercial aggregators (ConfirmTkt, Ixigo, RailYatri), academic literature, and public repositories.
+- Produced `docs/data/DATA_ACQUISITION_DECISION_BRIEF.md` ranking viable pathways (Rank 1: Local Prospective Pilot, Rank 2: Academic MoU with CRIS, Rank 3: Commercial Aggregator Licensing; Disqualified: Scraping & Synthetic Passing).
+- Authored operational operator-ready `docs/data/PROSPECTIVE_COLLECTION_PROTOCOL.md` defining protocol workflows, PII scrubbing, salted HMAC pseudonymization, independent chart verification via public IRCTC charts, censoring accounting, operator review, and participant consent notice (v2026.1).
+- Updated `docs/data/SOURCE_REGISTER.md` (fourth pass) and `docs/data/CANDIDATE_DATASET_REVIEW.md` (third pass).
+- Reconciled review dates and test baselines across `docs/ROADMAP.md`, `docs/PROJECT_STATUS.md`, and `docs/AGENT_HANDOFF.md`.
+
+### Changed
+- `docs/data/SOURCE_REGISTER.md`: Completed fourth-pass registry update evaluating official portals, enterprise gateways, academic publications, open-source repositories, and prospective collection protocols against qualification gates.
+- `docs/data/CANDIDATE_DATASET_REVIEW.md`: Documented third-pass deep-dive research into CRIS Pravah enterprise terms, IRCTC B2C PSP policies, data.gov.in NDSAP restrictions, academic paper dataset availability, and Kaggle/GitHub schemas.
+- `docs/data/DATA_ACQUISITION_DECISION_BRIEF.md`: Created comprehensive acquisition decision brief with 10-criteria evaluation matrix, ranked pathways, remaining blockers, and maintainer action plan.
+- `docs/data/PROSPECTIVE_COLLECTION_PROTOCOL.md`: Created operator implementation protocol for local-first, consent-governed prospective reservation outcome collection under ADR-0044.
+- `docs/ROADMAP.md`: Reconciled review date to 2026-11-04 and documented Phase 2 data exit gate conditions.
+- `docs/PROJECT_STATUS.md`: Reconciled verified test counts across backend, frontend, and browser E2E suites.
+- `docs/AGENT_HANDOFF.md`: Updated test counts, ADR references, and handoff directives.
+- `CHANGELOG.md`: Logged acquisition decision brief, prospective protocol, and roadmap reconciliation.
+
+### Checks run
+- `python scripts/check_repository_hygiene.py` -> Passed (0 errors on 22 required files and 279 tracked files).
+

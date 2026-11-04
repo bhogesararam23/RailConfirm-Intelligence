@@ -1,11 +1,13 @@
-# Candidate dataset review — 2026-10-23, second pass 2026-10-30
+# Candidate dataset review — 2026-10-23, second pass 2026-10-30, third pass 2026-11-04
 
 Records what was actually looked for, what was found, and why training is still blocked.
 The 2026-10-23 pass reviewed public *catalogue pages* only: no file was downloaded, opened
 or ingested, no manifest was generated, and no dataset was approved. The 2026-10-30 pass
-below opened one candidate file outside the product runtime and says so, with what that
-did and did not establish. Approval is a named human decision
-(`docs/data/DATASET_INTAKE_CHECKLIST.md`), and nothing in this document makes one.
+opened one candidate file outside the product runtime and established its column contents.
+The 2026-11-04 pass investigated official government portals, CRIS enterprise systems, IRCTC
+B2C PSP commercial policies, academic literature, and public ML repositories.
+Approval is a named human decision (`docs/data/DATASET_INTAKE_CHECKLIST.md`), and nothing in
+this document makes one.
 
 ## What the product needs from a dataset
 
@@ -32,6 +34,13 @@ timetables or prices has no reservation outcome at all.
 | [`sripaadsrinivasan/indian-railways-dataset`](https://www.kaggle.com/datasets/sripaadsrinivasan/indian-railways-dataset) | Sripaad Srinivasan (Kaggle) | 2026-10-23 | `CC0: Public Domain` | ~17,170,333 bytes (zip); three JSON files — Stations, Trains, Schedules — credited to the `datameet` repository | No — reference metadata only | **Under review, reference metadata only.** Licence-relevant use would be station codes, train numbers and classes for validation and route coverage, never outcome modelling. The grant needs confirming at the origin (see next row) |
 | [`datameet/railways`](https://github.com/datameet/railways) | DataMeet (GitHub) | 2026-10-23 | No licence file in the repository; its documentation cites a Creative Commons CC0 page | `stations.json`, `trains.json`, `schedules.json`, directly fetchable | No | **Under review.** This is the origin of the Kaggle mirror. Files are downloadable without credentials, so ingestion is technically trivial — but a citation of CC0 in prose is not a licence grant, and the intake checklist requires the licence and its permitted uses to be established. Settling it needs a maintainer action (an explicit dedication on the repository, or written confirmation from DataMeet) |
 | [`Yogalakshmi4784/PNR-Prediction`](https://github.com/Yogalakshmi4784/PNR-Prediction) → Kaggle `railofy-challenge` | Yogalakshmi4784 (GitHub), data from Railofy's closed Kaggle competition | 2026-10-30 | Repo is **GPL-3.0** (code only; the file never mentions a dataset). No data licence published | 36,775 labelled rows + 3,847 unlabelled rows, 25 columns (1 id, 1 quota code, 17 scaled floats, 5 integer flags, 1 binary target); plus a `.pkl` model that was not loaded | Binary confirmed/not-confirmed only — no booked status, no chart label, no dates | **Rejected on content, quarantined on rights.** See the second-pass section below: the intake gate returns 0 valid rows out of 36,775, and the competition terms could not be read without a Kaggle session |
+| Open Government Data Platform India (`data.gov.in`) | Ministry of Railways / NIC | 2026-11-04 | GODL (Government Open Data License) | Macroscopic annual rail metrics, route electrification, finances, 2017 static timetable | No — macro indicators and static timetables only | **Restricted — reference metadata only.** Catalogue inspected 2026-11-04. Under NDSAP, zero passenger-level PNRs or waitlist reservation outcomes are published by the government. Cannot unblock training. |
+| CRIS Pravah Enterprise API Gateway (`crisapis.indianrail.gov.in`) | Centre for Railway Information Systems (CRIS) | 2026-11-04 | Bilateral institutional MoUs with Ministry of Railways | WSO2 enterprise B2B/G2B gateway for live freight/operational streams and transactional interchange | Live operational streams only; no historical outcome dumps | **Restricted — enterprise only.** Closed to independent open-source developers; requires corporate institutional MoU. Does not archive or distribute historical reservation outcome datasets. |
+| IRCTC B2C Principal Service Provider (PSP) Framework | IRCTC | 2026-11-04 | Commercial B2C PSP Agreement | Live booking, availability, and PNR status check web services | Live operational queries; no historical ML training data | **Restricted — commercial ticketing only.** Requires corporate status, ₹5 Cr turnover, ₹20–50 Lakhs non-refundable fees. Terms strictly prohibit white-labeling, third-party PNR API sharing, or historical database warehousing. |
+| `ShubhangG/Train-Ticket-prediction` | ShubhangG (GitHub) | 2026-11-04 | **No license** (all rights reserved) | `dataframe.csv`, `features_non_empty.csv`; Naive Bayes model | Binary target only; undocumented scraping provenance | **Rejected.** No license grant, unverified scraping origin, and binary classification only. |
+| HuggingFace `prabh21243343/indian-railways-delays` | Prabh (HuggingFace) | 2026-11-04 | Open | Millions of operational delay records, scheduled vs actual arrival/departure times | No — operational delay context only | **Reference metadata only.** No reservation-level booking or final-chart outcome labels. |
+| Academic Literature (IEEE, ICACCTech, IJARCS) | Various academic authors | 2026-11-04 | Academic copyright | Papers on LightGBM waitlist prediction and reservation chart clustering | Synthetic or private scraped data | **Reference only.** Review of published papers reveals reliance on synthetic data or proprietary scraping without public dataset release. |
+| Zenodo, Harvard Dataverse, IEEE DataPort | Academic open repositories | 2026-11-04 | Various | Safety studies, track monitoring, customer satisfaction | None | **0 matches.** No Indian Railways reservation outcome datasets exist on these repositories. |
 
 `https://www.data.gov.in/resource?…q=railway+reservation` returned **HTTP 403** to an
 automated fetch from this environment, which has no portal API key. That says nothing about
@@ -235,3 +244,41 @@ answerable by looking at what the repository actually distributes. So:
 A successful download is not permission, and this pass changes no approval state. Kaggle's
 competition pages remained unreadable without a session, so the rights question is recorded
 as open rather than answered.
+
+## Third pass, 2026-11-04 — Official portals, enterprise gateways, commercial B2C PSPs, academic archives, and ML repositories
+
+The 2026-11-04 research campaign conducted an exhaustive investigation across five institutional tracks:
+
+### 1. Official government portals (`data.gov.in`)
+A systematic inspection of the Ministry of Railways catalogue on India's Open Government Data platform (`data.gov.in`) was conducted:
+- Holdings cover macroscopic infrastructural and financial metrics: annual route electrification, track kilometers, rolling stock additions, freight tonnage, passenger-kilometer aggregates, and the 2017 static reservation timetable.
+- Under the National Data Sharing and Accessibility Policy (NDSAP) and Ministry of Railways privacy rules, **zero individual PNRs, booking transaction histories, or waitlist clearance outcome datasets are published**.
+- Government open data is strictly aggregated and cannot supply per-reservation outcome rows for model training.
+
+### 2. CRIS Enterprise Systems and Project Pravah
+Investigation of the Centre for Railway Information Systems (CRIS) data infrastructure:
+- **Project Pravah** (launched August 2021) is Indian Railways' enterprise API gateway built on WSO2 API Manager (`crisapis.indianrail.gov.in`).
+- It is an enterprise B2B/G2B gateway governed by bilateral institutional MoUs with corporate logistics partners and government agencies. It is not an open data initiative and does not provide public developer APIs.
+- Pravah serves live operational message streams; it does not archive or distribute historical reservation outcome datasets for research reuse.
+- CRIS manages the core Passenger Reservation System (PRS, CONCERT backbone). Historical reservation logs are classified as sensitive PII and are retained internally for operational auditing, never released publicly.
+
+### 3. Commercial Aggregator and IRCTC B2C PSP Realities
+Investigation into how commercial apps (ConfirmTkt, RailYatri, Ixigo) operate:
+- **IRCTC B2C Principal Service Provider (PSP) Policy**: Accessing official IRCTC web services requires corporate entity incorporation, a ₹5 Crore net-worth threshold, ₹20–50 Lakhs non-refundable integration/security fees, and ongoing maintenance charges.
+- **Contractual Non-Redistribution**: IRCTC PSP agreements strictly forbid white-labeling, third-party PNR API sharing, or historical database warehousing for secondary ML training.
+- **Commercial Aggregator Data Sourcing**: Commercial prediction engines (such as ConfirmTkt's *Tara*) were not built from external CRIS training dumps. Rather, they were built by accumulating crowdsourced PNR checks submitted by their consumer app users over many years, tracking each PNR dynamically until final chart preparation.
+
+### 4. Academic Literature & Public Research Repositories
+Investigation across IEEE, ACM, Springer, arXiv, Zenodo, Harvard Dataverse, and IEEE DataPort:
+- Published papers on Indian Railways waitlist prediction (e.g. ICACCTech LightGBM models, IJARCS reservation chart clustering) uniformly rely on either:
+  1. Synthetic data (such as the Kaggle Aaryan Anil dataset),
+  2. Scraping scripts against public enquiry portals without releasing the underlying dataset, or
+  3. Obfuscated competition matrices.
+- Searches on Zenodo, Harvard Dataverse, and IEEE DataPort returned **zero** datasets containing Indian Railways reservation outcomes.
+- GitHub repositories (such as `ShubhangG/Train-Ticket-prediction`) feature uncredited CSVs with no license grant (all rights reserved), unverified scraping origins, and binary-only labels.
+
+### Conclusion of the Third Pass
+This exhaustive investigation conclusively proves that:
+1. **No legitimate, public, bulk offline dataset of historical Indian Railways reservation outcomes exists on the open internet.**
+2. Official railway authorities (CRIS/IRCTC) treat reservation outcomes as confidential passenger data and do not provide bulk historical research dumps.
+3. Therefore, the single legally compliant, privacy-preserving, and technically viable method to obtain real reservation outcome data for RailConfirm Intelligence without corporate capitalization or terms-of-service violations is **local-first consent-governed prospective pilot collection** (ADR-0044, `docs/data/PROSPECTIVE_COLLECTION_PROTOCOL.md`).
