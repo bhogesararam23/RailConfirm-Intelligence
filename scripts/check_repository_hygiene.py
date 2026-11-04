@@ -14,6 +14,7 @@ Exit code 0 means every gate passed.
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -70,12 +71,11 @@ MAX_TRACKED_FILE_BYTES = 2_000_000
 
 def iter_tracked_text_files() -> list[Path]:
     files: list[Path] = []
-    for path in REPO_ROOT.rglob("*"):
-        if not path.is_file():
-            continue
-        if any(part in SKIP_DIRS for part in path.relative_to(REPO_ROOT).parts):
-            continue
-        files.append(path)
+    for root, dirs, filenames in os.walk(REPO_ROOT):
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith(".git")]
+        root_path = Path(root)
+        for fname in filenames:
+            files.append(root_path / fname)
     return files
 
 

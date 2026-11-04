@@ -2523,3 +2523,18 @@ the existing storage tests. `delete_live` refuses a naive clock before touching 
 - The eight research documents are delivered; no engineering defect was found to fix,
   and the codebase is verified as sound. No further work this session.
 
+## 2026-11-04 — Autonomous build and continuation: scanner performance and invariant testing
+
+### Scope
+- Began autonomous engineering campaign to harden the frontend, backend, invariant tests, and introduce browser E2E verification.
+- Audited repository hygiene scanning performance; optimized file traversal in `scripts/check_repository_hygiene.py` to prune skipped directories in place.
+
+### Changed
+- `scripts/check_repository_hygiene.py`: Replaced `Path.rglob` with `os.walk` directory pruning, reducing hygiene check runtime from 35s to <2s.
+- `CHANGELOG.md`: Recorded scanner performance optimization.
+
+### Checks run
+- `python scripts/check_repository_hygiene.py` → Passed (22 required files, 257 tracked files scanned in 1.4s).
+- `ruff check --config backend/pyproject.toml scripts/` → Passed.
+
+

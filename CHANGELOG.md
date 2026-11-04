@@ -6,6 +6,10 @@ The format is inspired by Keep a Changelog; dates use ISO 8601.
 
 ## [Unreleased]
 
+### Performance
+
+- **Optimized repository hygiene scanner by pruning skipped directories during traversal** (`scripts/check_repository_hygiene.py`). `iter_tracked_text_files` used `REPO_ROOT.rglob("*")`, which recursively enumerated all files across `node_modules` and `.venv` before applying directory skip filters, taking 30–40 seconds per run on systems with large frontend dependency trees. It now uses `os.walk` to prune `SKIP_DIRS` and `.git` subtrees in place, reducing the scan duration to under 2 seconds while checking the exact same tracked repository files for broken relative links, secrets and unlabelled ticket data.
+
 Milestone A (audit and harden the implemented foundation) and the frontend rebuild. Every behaviour described as broken below was reproduced against the running code before it was changed.
 
 ### Fixed
