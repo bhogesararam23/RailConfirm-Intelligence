@@ -126,7 +126,7 @@ def _lower_headers(headers) -> dict[str, str]:
     return {name.lower(): value for name, value in headers.items()}
 
 
-def wait_until_answering(url: str, *, timeout: float, server: "Server") -> None:
+def wait_until_answering(url: str, *, timeout: float, server: Server) -> None:
     deadline = time.monotonic() + timeout
     last_error = ""
     while time.monotonic() < deadline:

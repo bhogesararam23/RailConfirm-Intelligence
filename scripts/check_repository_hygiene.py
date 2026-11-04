@@ -94,7 +94,7 @@ def check_markdown_links(failures: list[str]) -> None:
         except UnicodeDecodeError:
             continue
         rel = path.relative_to(REPO_ROOT)
-        stripped = re.sub(r"```.*?```", "", text, flags=re.S)
+        stripped = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
         for match in LINK_RE.finditer(stripped):
             target = match.group(1)
             if EXTERNAL_RE.match(target) or target.startswith("{"):
