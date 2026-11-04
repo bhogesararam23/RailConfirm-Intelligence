@@ -2681,3 +2681,37 @@ the existing storage tests. `delete_live` refuses a naive clock before touching 
 - `pytest backend/tests` -> 1,244 passed in 93.14s.
 - `ruff check --config backend/pyproject.toml backend/railconfirm/data backend/tests/data backend/tests/support` -> Passed (0 errors).
 - `python scripts/check_repository_hygiene.py` -> Passed (0 errors on 23 required files and 280 tracked files).
+
+
+## 2026-11-04 -- Withdrawal Integrity, Export Lineage, Decoupled Governance Auditing, and Atomic Local Operations
+
+### Scope
+- Solved the central research question: reliably demonstrating which prospective records are eligible for research, why they were eligible, which were excluded or withdrawn, and which source records produced a particular exported dataset.
+- Implemented structured export lineage metadata (`source_batch_id`, canonical `source_batch_sha256`, `included_submissions`, `excluded_submissions`) in `export_batch_to_longitudinal()`.
+- Guaranteed 100% deterministic, byte-for-byte reproducible longitudinal dataset serialization by canonically ordering journeys, booking groups, and passengers, with optional fixed `export_timestamp`.
+- Implemented lineage verification and stale export detection (`LineageStatus`, `verify_export_lineage`, `ExportLineageReport`) to audit exports against source batches and identify post-export consent withdrawals or unapproved records.
+- Implemented safe automated export reconciliation and atomic re-export (`reconcile_and_regenerate_export`) to purge stale records and restore verified synchronization.
+- Ensured participant withdrawal idempotency in `withdraw_submission()`, preserving original `withdrawn_at` timestamps on repeated actions, permitting withdrawal from any prior review status, and logging non-identifying `WithdrawalAuditRecord` entries in `batch.withdrawal_log`.
+- Created atomic JSON serialization utility (`atomic_write_json`) using temporary files in the target directory and `os.replace` to prevent partial or corrupted file writes on write interruptions.
+- Decoupled eight governance dimensions in `ProspectiveAuditReport` (`is_structurally_valid`, `is_technically_eligible`, `is_privacy_clean`, `is_consent_valid`, `is_operator_approved`, `is_legally_reviewed`, `is_scientifically_adequate`, `is_model_training_approved`), added explicit submission accounting, and surfaced missing data diagnostics and quality warnings.
+- Expanded CLI subcommands in `backend/railconfirm/data/__main__.py`: added `prospective verify-export` and `prospective reconcile`, plus `--dry-run` simulation modes for `withdraw` and `review`.
+- Authored ADR-0046, updated prospective collection protocol, dataset intake checklist, roadmap, project status, agent handoff, and changelog.
+
+### Changed
+- `backend/railconfirm/data/prospective.py`: Added `mask_sensitive_token` to redact tokens in diagnostic violation messages; added circular structure protection in `scan_for_personal_data`; added `get_configured_pseudonym_salt` and updated `derive_pseudonym`; added `atomic_write_json`; added `WithdrawalAuditRecord` and `batch.withdrawal_log`; implemented withdrawal idempotency; added `compute_canonical_batch_sha256`; added `LineageStatus` and `ExportLineageReport`; added structured lineage metadata and deterministic sorting in `export_batch_to_longitudinal`; implemented `verify_export_lineage` and `reconcile_and_regenerate_export`; decoupled 8 governance dimensions and added submission accounting and diagnostics to `ProspectiveAuditReport` and `validate_prospective_batch`.
+- `backend/railconfirm/data/__main__.py`: Added `--dry-run` to `prospective withdraw` and `prospective review`; added `prospective verify-export` and `prospective reconcile` subcommands.
+- `backend/tests/data/test_prospective.py`: Added 11 unit and edge-case regression tests covering token masking, circular protection, environment salt resolution, atomic write safety, export lineage metadata, deterministic serialization, lineage verification, stale detection, safe reconciliation, and decoupled governance dimensions (23 tests total).
+- `backend/tests/data/test_intake_cli.py`: Added CLI integration tests covering `verify-export`, `reconcile`, and `--dry-run` modes for review and withdraw (19 tests total).
+- `docs/adr/ADR-0046-withdrawal-integrity-export-lineage-and-atomic-operations.md`: Architectural record defining lineage, reconciliation, withdrawal idempotency, and atomic write operations.
+- `docs/adr/README.md`: Updated ADR index with ADR-0046.
+- `docs/data/PROSPECTIVE_COLLECTION_PROTOCOL.md`: Updated operator lifecycle steps with export lineage verification and reconciliation procedures.
+- `docs/data/DATASET_INTAKE_CHECKLIST.md`: Added export lineage and reconciliation verification checks.
+- `docs/PROJECT_STATUS.md`: Cleaned up table formatting, updated test count to 1,256 backend tests, and cited ADR-0046.
+- `docs/ROADMAP.md`: Reconciled review date and Phase 2 status with ADR-0046 and 1,256 tests.
+- `docs/AGENT_HANDOFF.md`: Updated test counts and ADR index.
+- `CHANGELOG.md`: Logged withdrawal integrity, export lineage, decoupled governance auditing, and atomic CLI operations under `[Unreleased]`.
+
+### Checks run
+- `pytest backend/tests` -> 1,256 passed in 233.01s.
+- `ruff check backend/railconfirm/data backend/tests/data` -> All checks passed (0 errors).
+- `python scripts/check_repository_hygiene.py` -> Passed (0 errors on 24 required files and 281 tracked files).

@@ -8,6 +8,16 @@ The format is inspired by Keep a Changelog; dates use ISO 8601.
 
 ### Added
 
+- **Withdrawal integrity, export lineage, decoupled governance auditing, and atomic local operations** (`backend/railconfirm/data/prospective.py`, `backend/railconfirm/data/__main__.py`, `backend/tests/data/test_prospective.py`, `backend/tests/data/test_intake_cli.py`, ADR-0046).
+  - Embedded structured export lineage metadata into `LongitudinalDataset.metadata["lineage"]`: source batch ID, canonical source batch SHA-256 digest (`compute_canonical_batch_sha256`), sorted included submissions, excluded submissions mapping to reason codes, and submission accounting.
+  - Guaranteed 100% reproducible byte-for-byte serialization across runs by enforcing deterministic sorting on journeys, booking groups, and passengers, with an optional fixed `export_timestamp`.
+  - Implemented export lineage verification (`verify_export_lineage`) and stale export detection (`LineageStatus`) to audit exports against source batches and identify post-export consent withdrawals or unapproved records.
+  - Implemented safe automated export reconciliation (`reconcile_and_regenerate_export`) and `prospective reconcile` CLI subcommand to automatically purge stale records and re-export clean longitudinal datasets.
+  - Ensured participant withdrawal idempotency in `withdraw_submission()`, preserving original `withdrawn_at` timestamps on repeated actions, permitting withdrawal from any prior status (`APPROVED`, `QUARANTINED`, `REJECTED`, `PENDING_REVIEW`), and recording non-identifying `WithdrawalAuditRecord` logs in `batch.withdrawal_log`.
+  - Introduced `atomic_write_json()` utility using same-directory temporary files and `os.replace` to prevent partial or corrupted file writes across batch saving, reviews, withdrawals, and exports.
+  - Decoupled eight governance dimensions in `ProspectiveAuditReport` (`is_structurally_valid`, `is_technically_eligible`, `is_privacy_clean`, `is_consent_valid`, `is_operator_approved`, `is_legally_reviewed`, `is_scientifically_adequate`, `is_model_training_approved`), added explicit submission accounting, and surfaced missing data diagnostics and quality warnings.
+  - Added CLI subcommands `prospective verify-export` and `prospective reconcile`, plus `--dry-run` simulation modes for `withdraw` and `review`. Expanded backend test suite to 1,256 pytest tests (+12 tests).
+
 - **Prospective pilot operational hardening, consent withdrawal lifecycle, and scientific threshold auditing** (`backend/railconfirm/data/prospective.py`, `backend/railconfirm/data/__main__.py`, `backend/tests/data/test_prospective.py`, `backend/tests/data/test_intake_cli.py`, ADR-0045).
   - Enforced minimum 32-character cryptographic salt length (`MIN_SALT_LENGTH = 32`) in `derive_pseudonym` to protect the finite 10-digit Indian Railway PNR space ($10^{10}$) against dictionary attacks.
   - Enhanced PII scanner (`scan_for_personal_data`) to detect numeric integer PNRs, Indian PAN tax IDs, passport numbers, and URL credential query tokens, with explicit documentation that regex scanning is a technical filter, not legal proof of zero personal data.
