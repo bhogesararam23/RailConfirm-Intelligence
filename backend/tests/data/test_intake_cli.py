@@ -3,10 +3,10 @@
 from pathlib import Path
 
 import pytest
+
 from railconfirm.data.__main__ import main
 from railconfirm.data.manifest import parse_manifest
 from railconfirm.data.prospective import ProspectiveBatch, ReviewStatus
-
 from tests.support.datasets import (
     build_synthetic_longitudinal_dataset,
     build_synthetic_prospective_batch,
@@ -204,6 +204,7 @@ def test_cli_validate_and_snapshot_longitudinal(tmp_path: Path, capsys):
     from datetime import UTC, date, datetime
 
     import pandas as pd
+
     from railconfirm.data.longitudinal import (
         LONGITUDINAL_SCHEMA_VERSION,
         BookingGroup,
@@ -640,5 +641,174 @@ def test_prospective_cli_template_audit_withdraw_and_dryrun(tmp_path: Path, caps
         == 1
     )
     assert "withdrawn participant consent" in capsys.readouterr().err
+
+
+def test_prospective_cli_verify_export_and_reconcile(tmp_path: Path, capsys):
+    import json
+
+    tmpl_batch = tmp_path / "recon_batch.json"
+    main(["prospective", "template", str(tmpl_batch), "--submissions", "2", "--overwrite"])
+    capsys.readouterr()
+
+    # Review with dry-run does not modify file
+    assert (
+        main(
+            [
+                "prospective",
+                "review",
+                str(tmpl_batch),
+                "--action",
+                "approve",
+                "--reviewer",
+                "lead_op",
+                "--rationale",
+                "Simulated approval",
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+    assert "[DRY-RUN]" in capsys.readouterr().out
+    b_check = ProspectiveBatch.load(tmpl_batch)
+    assert b_check.submissions[0].review_status == ReviewStatus.PENDING_REVIEW
+
+    # Review for real
+    assert (
+        main(
+            [
+                "prospective",
+                "review",
+                str(tmpl_batch),
+                "--action",
+                "approve",
+                "--reviewer",
+                "lead_op",
+                "--rationale",
+                "Real approval",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    # Export to longitudinal
+    long_export = tmp_path / "recon_longitudinal.json"
+    assert (
+        main(
+            [
+                "prospective",
+                "export",
+                str(tmpl_batch),
+                str(long_export),
+                "--dataset-id",
+                "recon_ds",
+                "--source-id",
+                "recon_src",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    # 1. verify-export: initially in sync
+    assert main(["prospective", "verify-export", str(tmpl_batch), str(long_export)]) == 0
+    out_verify = capsys.readouterr().out
+    assert "Lineage Status: verified_in_sync" in out_verify
+    assert "Is In Sync: True" in out_verify
+
+    # JSON output for verify-export
+    assert (
+        main(
+            ["prospective", "verify-export", "--json", str(tmpl_batch), str(long_export)]
+        )
+        == 0
+    )
+    json_verify = json.loads(capsys.readouterr().out)
+    assert json_verify["is_synced"] is True
+    assert json_verify["status"] == "verified_in_sync"
+
+    # Withdraw with dry-run
+    assert (
+        main(
+            [
+                "prospective",
+                "withdraw",
+                str(tmpl_batch),
+                "--submission-id",
+                "SUB_TEMPLATE_001",
+                "--reason",
+                "Test dry run withdrawal",
+                "--operator",
+                "op_test",
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+    assert "[DRY-RUN]" in capsys.readouterr().out
+
+    # Withdraw for real
+    assert (
+        main(
+            [
+                "prospective",
+                "withdraw",
+                str(tmpl_batch),
+                "--submission-id",
+                "SUB_TEMPLATE_001",
+                "--reason",
+                "Participant opted out after export",
+                "--operator",
+                "op_test",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    # 2. verify-export: now detects stale withdrawn records
+    assert main(["prospective", "verify-export", str(tmpl_batch), str(long_export)]) == 1
+    stale_verify = capsys.readouterr().out
+    assert "Lineage Status: stale_withdrawn_records_present" in stale_verify
+    assert "withdrawn booking group(s) present" in stale_verify
+
+    # 3. reconcile dry-run
+    assert (
+        main(
+            [
+                "prospective",
+                "reconcile",
+                str(tmpl_batch),
+                str(long_export),
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+    recon_dry = capsys.readouterr().out
+    assert "[DRY-RUN] Reconciliation needed" in recon_dry
+    assert "withdrawn group(s)" in recon_dry
+
+    # 4. reconcile for real
+    assert (
+        main(
+            [
+                "prospective",
+                "reconcile",
+                str(tmpl_batch),
+                str(long_export),
+                "--overwrite",
+            ]
+        )
+        == 0
+    )
+    recon_out = capsys.readouterr().out
+    assert "Successfully reconciled export" in recon_out
+    assert "Lineage status: verified_in_sync" in recon_out
+
+    # Verify again: now in sync!
+    assert main(["prospective", "verify-export", str(tmpl_batch), str(long_export)]) == 0
+    assert "Lineage Status: verified_in_sync" in capsys.readouterr().out
+
 
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
@@ -43,9 +44,11 @@ from railconfirm.data.prospective import (
     ReviewStatus,
     export_batch_to_longitudinal,
     generate_prospective_template,
+    reconcile_and_regenerate_export,
     review_batch,
     scan_for_personal_data,
     validate_prospective_batch,
+    verify_export_lineage,
     withdraw_submission,
 )
 from railconfirm.data.validator import validate_dataset
@@ -164,6 +167,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="destination JSON path (default: update in place)",
     )
+    p_withdraw.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="simulate withdrawal without writing changes",
+    )
 
     p_review = p_subs.add_parser("review", help="record human operator review decision")
     p_review.add_argument("batch", type=Path, help="path to prospective batch JSON")
@@ -183,6 +191,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="destination JSON path (default: update in place)",
+    )
+    p_review.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="simulate review action without writing changes",
     )
 
     p_export = p_subs.add_parser(
@@ -206,6 +219,37 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="validate and simulate export without writing output dataset to disk",
+    )
+
+    p_verify_export = p_subs.add_parser(
+        "verify-export",
+        help="verify that a longitudinal export dataset is in sync with its source batch",
+    )
+    p_verify_export.add_argument("batch", type=Path, help="path to source prospective batch JSON")
+    p_verify_export.add_argument("dataset", type=Path, help="path to exported longitudinal dataset JSON")
+    p_verify_export.add_argument("--json", action="store_true", help="emit lineage report as JSON")
+
+    p_reconcile = p_subs.add_parser(
+        "reconcile",
+        help="reconcile export with current batch, purging withdrawn or unapproved records",
+    )
+    p_reconcile.add_argument("batch", type=Path, help="path to source prospective batch JSON")
+    p_reconcile.add_argument("dataset", type=Path, help="path to current exported longitudinal dataset JSON")
+    p_reconcile.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="destination JSON path (default: overwrite dataset in place)",
+    )
+    p_reconcile.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="allow overwriting target export file",
+    )
+    p_reconcile.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="check reconciliation needs without writing updated export to disk",
     )
 
     return parser
@@ -427,6 +471,13 @@ def _prospective(args: argparse.Namespace) -> int:
             print(f"Withdrawal action failed: {exc}", file=sys.stderr)
             return 1
 
+        if args.dry_run:
+            print(
+                f"[DRY-RUN] Simulated consent withdrawal for submission '{updated_sub.submission_id}'. "
+                "Review status would become WITHDRAWN. No files modified."
+            )
+            return 0
+
         out_path = args.output if args.output else args.batch
         batch.save(out_path)
         print(
@@ -493,13 +544,93 @@ def _prospective(args: argparse.Namespace) -> int:
             print(f"Review action failed: {exc}", file=sys.stderr)
             return 1
 
+        target_desc = f"submission '{args.submission_id}'" if args.submission_id else f"batch '{batch.batch_id}'"
+        if args.dry_run:
+            print(
+                f"[DRY-RUN] Simulated review status '{target_action.value}' to {target_desc}. "
+                "No files modified."
+            )
+            return 0
+
         out_path = args.output if args.output else args.batch
         batch.save(out_path)
-        target_desc = f"submission '{args.submission_id}'" if args.submission_id else f"batch '{batch.batch_id}'"
         print(
             f"Applied review status '{target_action.value}' to {target_desc}. Saved to {out_path}"
         )
         return 0
+
+    if args.prospective_action == "verify-export":
+        try:
+            batch = ProspectiveBatch.load(args.batch)
+        except Exception as exc:
+            print(f"Cannot read prospective batch: {exc}", file=sys.stderr)
+            return 1
+        try:
+            long_ds = load_longitudinal_dataset(args.dataset)
+        except Exception as exc:
+            print(f"Cannot read longitudinal dataset: {exc}", file=sys.stderr)
+            return 1
+
+        report = verify_export_lineage(batch, long_ds)
+        if args.json:
+            print(json.dumps(asdict(report), indent=2, sort_keys=True, default=str))
+        else:
+            print(report.summary())
+        return 0 if report.is_synced else 1
+
+    if args.prospective_action == "reconcile":
+        try:
+            batch = ProspectiveBatch.load(args.batch)
+        except Exception as exc:
+            print(f"Cannot read prospective batch: {exc}", file=sys.stderr)
+            return 1
+        try:
+            long_ds = load_longitudinal_dataset(args.dataset)
+        except Exception as exc:
+            print(f"Cannot read longitudinal dataset: {exc}", file=sys.stderr)
+            return 1
+
+        target_out = args.output if args.output else args.dataset
+        if target_out.is_file() and not args.overwrite and not args.dry_run and target_out.resolve() != args.dataset.resolve():
+            print(
+                f"Reconcile failed: target file already exists at {target_out}. Pass --overwrite to replace.",
+                file=sys.stderr,
+            )
+            return 1
+
+        pre_report = verify_export_lineage(batch, long_ds)
+        if pre_report.is_synced:
+            print(
+                f"Export '{long_ds.dataset_id}' is already in sync with batch '{batch.batch_id}'. "
+                "No reconciliation needed."
+            )
+            return 0
+
+        if args.dry_run:
+            print(
+                f"[DRY-RUN] Reconciliation needed for '{long_ds.dataset_id}': "
+                f"{len(pre_report.withdrawn_groups_present)} withdrawn group(s) and "
+                f"{len(pre_report.unapproved_groups_present)} unapproved group(s) would be purged. "
+                f"Target: {target_out}. No files modified."
+            )
+            return 0
+
+        try:
+            reconciled_ds, report = reconcile_and_regenerate_export(
+                batch,
+                long_ds,
+                target_out,
+                overwrite=True,
+            )
+        except Exception as exc:
+            print(f"Reconciliation failed: {exc}", file=sys.stderr)
+            return 1
+
+        print(
+            f"Successfully reconciled export: {len(reconciled_ds.booking_groups)} booking groups written to {target_out}. "
+            f"Lineage status: {report.status.value}."
+        )
+        return 0 if report.is_synced else 1
 
     if args.prospective_action == "export":
         if args.output.is_file() and not args.overwrite and not args.dry_run:
