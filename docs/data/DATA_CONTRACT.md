@@ -192,3 +192,31 @@ Every dataset import should record:
 - licence/authority decision.
 
 This contract is a starting point. Any material change to target semantics, status mapping or privacy-sensitive fields requires an ADR and a changelog entry.
+
+
+## Implemented longitudinal contract (schema v2.0.0)
+
+`backend/railconfirm/data/longitudinal.py` implements the full multi-observation longitudinal entity contract (ADR-0043). It captures:
+- Hierarchical structure: `LongitudinalJourney` -> `BookingGroup` -> `PassengerReservation` -> sequential `StatusObservation` instances -> `FinalOutcome`.
+- Timezone-aware clocks on all observations, departures, booking creation, and chart snapshots.
+- Exact sequential ordering guarantees per passenger ($t_{booking} \le t_1 < t_2 < \dots < t_n \le t_{departure}$).
+- Verification provenance: `VerificationMethod` (`chart_snapshot`, `sms_confirmation`, `status_enquiry`, `operator_attestation`, `passenger_submission`) and `LabelConfidence` (`verified`, `provisional`, `unverified`).
+- Censoring accounting: `CensoringReason` (`user_cancelled`, `train_cancelled`, `chart_not_recorded`, `outcome_missing`, `contradictory_source`).
+- Transition anomaly detection via `railconfirm.data.longitudinal_validator.validate_longitudinal_dataset` (e.g., impossible RAC -> WL regression).
+
+### Point-in-time snapshot conversion
+
+Longitudinal datasets convert into flat row interchange frames (contract v1.1.0) via `create_point_in_time_snapshot(dataset, as_of_lead_days=..., as_of_datetime=...)`:
+- Evaluates the latest status observed at or before the target instant.
+- Strictly refuses retrodiction or same-day observations without clear lead time.
+- Excludes censored outcomes by default to guarantee clean training labels.
+- Preserves synthetic dataset markers (`is_synthetic`).
+
+## Prospective collection contract (schema v1.0.0)
+
+`backend/railconfirm/data/prospective.py` provides a consent-aware prospective intake foundation (ADR-0044):
+- Explicit consent records: `consent_basis` (`explicit_opt_in`, `user_initiated_submission`, `institutional_research_agreement`), `notice_version`, `purpose_records`, `retention_policy`.
+- Data minimization and automated PII scanner (`scan_for_personal_data`): scans and rejects raw 10-digit Indian Railways PNR numbers, email addresses, phone numbers, and Aadhaar numbers.
+- Cryptographically salted pseudonymous identifier derivation (`derive_pseudonym`).
+- Local operator review workflow: `PENDING_REVIEW` -> `APPROVED` / `REJECTED` / `QUARANTINED`.
+- Export to longitudinal dataset via `export_batch_to_longitudinal`.

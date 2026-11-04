@@ -50,3 +50,12 @@ The current build has no third-party runtime API or provider integration (ADR-00
 ## Approval rule
 
 A source cannot enter model training until its data rights, label meaning, quality, provenance and publication constraints are clear. If a contract allows live display but does not allow historical storage or model training, treat those as distinct permissions.
+
+
+## Prospective pilot collection protocol (ADR-0044)
+
+Prospective data collection is governed by `backend/railconfirm/data/prospective.py`:
+- Mode: local-first, disabled by default.
+- PII/PNR scanner automatically enforces data minimization before storage.
+- Storage requires explicit consent metadata, notice version, and permitted research purposes.
+- Human operator review and sign-off are required prior to export into longitudinal research datasets.
