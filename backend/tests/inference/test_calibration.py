@@ -284,3 +284,52 @@ def test_a_malformed_row_count_is_refused_by_the_loader_and_not_raised_through_i
     block["fitted_rows"] = bad
     with pytest.raises(ModelArtifactError, match="row count is an integer"):
         spec_from_mapping(block, artifact_target="final_chart_cnf")
+
+
+@pytest.mark.parametrize("slope", [0.1, 0.5, 1.0, 2.5, 5.0])
+@pytest.mark.parametrize("intercept", [-3.0, -1.0, 0.0, 1.0, 3.0])
+def test_calibration_strictly_preserves_probability_ordering(slope: float, intercept: float):
+    """When slope > 0, the logistic transform is strictly monotonic, preserving likelihood rankings."""
+    sp = spec(slope=slope, intercept=intercept)
+    probabilities = [0.001, 0.05, 0.15, 0.30, 0.50, 0.70, 0.85, 0.95, 0.999]
+    calibrated = [calibrate_probability(sp, p) for p in probabilities]
+
+    for i in range(len(calibrated) - 1):
+        assert calibrated[i] < calibrated[i + 1], (
+            f"Monotonicity violated: calibrate({probabilities[i]})={calibrated[i]} >= "
+            f"calibrate({probabilities[i+1]})={calibrated[i+1]} with slope={slope}, intercept={intercept}"
+        )
+
+
+@pytest.mark.parametrize(
+    "dist",
+    [
+        {"CNF": 0.5, "RAC": 0.2, "WL": 0.2, "CANCELLED": 0.05, "OTHER": 0.05},
+        {"CNF": 0.01, "RAC": 0.01, "WL": 0.96, "CANCELLED": 0.01, "OTHER": 0.01},
+        {"CNF": 0.95, "RAC": 0.02, "WL": 0.01, "CANCELLED": 0.01, "OTHER": 0.01},
+        {"CNF": 0.0, "RAC": 0.1, "WL": 0.8, "CANCELLED": 0.05, "OTHER": 0.05},
+    ],
+)
+@pytest.mark.parametrize("slope", [0.5, 1.0, 2.0])
+@pytest.mark.parametrize("intercept", [-2.0, 0.0, 2.0])
+def test_calibration_distribution_preserves_unit_sum_and_positivity(
+    dist: dict[str, float], slope: float, intercept: float
+):
+    """Applied calibration always yields valid probability distributions summing to 1.0 with non-negative entries."""
+    sp = spec(slope=slope, intercept=intercept)
+    calibrated = apply_calibration(sp, dist, EVENT)
+
+    assert sum(calibrated.values()) == pytest.approx(1.0, abs=1e-6)
+    for class_name, prob in calibrated.items():
+        assert prob >= 0.0, f"Class {class_name} has negative probability: {prob}"
+        assert prob <= 1.0, f"Class {class_name} exceeds probability 1.0: {prob}"
+
+
+def test_calibration_boundary_extreme_inputs():
+    """Extreme probabilities at the boundary of [0, 1] do not produce NaN or unhandled errors."""
+    sp = spec(slope=2.0, intercept=-1.0)
+    for extreme_p in [0.0, 1.0, 1e-15, 1.0 - 1e-15]:
+        out = calibrate_probability(sp, extreme_p)
+        assert math.isfinite(out)
+        assert 0.0 <= out <= 1.0
+
