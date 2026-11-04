@@ -302,6 +302,107 @@ def test_cli_validate_and_snapshot_longitudinal(tmp_path: Path, capsys):
     assert df.iloc[0]["final_chart_status"] == "CNF"
 
 
+def test_cli_snapshot_atomic_failure_safety(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys):
+    from datetime import UTC, date, datetime, timedelta
+
+    from railconfirm.data.longitudinal import (
+        LONGITUDINAL_SCHEMA_VERSION,
+        BookingGroup,
+        FinalOutcome,
+        LabelConfidence,
+        LongitudinalDataset,
+        LongitudinalJourney,
+        PassengerReservation,
+        StatusObservation,
+        VerificationMethod,
+        save_longitudinal_dataset,
+    )
+    from railconfirm.domain.status import NormalizedStatus
+
+    dep_dt = datetime(2026, 12, 1, 16, 0, tzinfo=UTC)
+    journey = LongitudinalJourney(
+        journey_id="J_SNAP_FAIL",
+        train_number="12301",
+        journey_date=date(2026, 12, 1),
+        class_code="SL",
+        quota_code="GN",
+        boarding_station="HWH",
+        destination_station="NDLS",
+        scheduled_departure_at=dep_dt,
+    )
+    obs = StatusObservation(
+        observation_id="OBS_1",
+        passenger_record_id="P_1",
+        observed_at=dep_dt - timedelta(days=15),
+        status_raw="WL 5",
+        status_category=NormalizedStatus.WL,
+        status_position=5,
+    )
+    outcome = FinalOutcome(
+        outcome_target="final_chart_cnf",
+        outcome_status_raw="CNF",
+        outcome_category=NormalizedStatus.CNF,
+        outcome_observed_at=dep_dt - timedelta(hours=4),
+        verification_method=VerificationMethod.CHART_SNAPSHOT,
+        verification_source="irctc",
+        label_confidence=LabelConfidence.VERIFIED,
+    )
+    passenger = PassengerReservation(
+        passenger_record_id="P_1",
+        booking_group_id="G_1",
+        passenger_sequence=1,
+        original_status_raw="WL 10",
+        original_status_category=NormalizedStatus.WL,
+        original_status_position=10,
+        observations=[obs],
+        outcome=outcome,
+    )
+    bg = BookingGroup(
+        booking_group_id="G_1",
+        journey_id="J_SNAP_FAIL",
+        booking_created_at=dep_dt - timedelta(days=20),
+        passengers=[passenger],
+    )
+    ds = LongitudinalDataset(
+        dataset_id="snap_fail_ds",
+        source_id="unit_test",
+        created_at=datetime.now(tz=UTC),
+        journeys={"J_SNAP_FAIL": journey},
+        booking_groups=[bg],
+        schema_version=LONGITUDINAL_SCHEMA_VERSION,
+        metadata={"is_synthetic": True},
+    )
+    ds_path = tmp_path / "dataset.json"
+    save_longitudinal_dataset(ds, ds_path)
+
+    out_csv = tmp_path / "existing_target.csv"
+    existing_content = "preserved,headers\nval1,val2\n"
+    out_csv.write_text(existing_content, encoding="utf-8")
+
+    import railconfirm.data.__main__ as cli_main
+
+    def failing_atomic_write_csv(path, df, index=False):
+        raise OSError("Simulated disk error during snapshot CSV write")
+
+    monkeypatch.setattr(cli_main, "atomic_write_csv", failing_atomic_write_csv)
+
+    exit_code = main(
+        [
+            "snapshot",
+            str(ds_path),
+            str(out_csv),
+            "--as-of-lead-days",
+            "10",
+        ]
+    )
+    # Failure is caught or raised
+    assert exit_code != 0 or out_csv.read_text(encoding="utf-8") == existing_content
+    # Target file content must remain uncorrupted
+    assert out_csv.read_text(encoding="utf-8") == existing_content
+    # No temporary files should linger
+    assert len(list(out_csv.parent.glob(".tmp_*"))) == 0
+
+
 def test_cli_quarantine_subcommand(candidate_csv: Path, tmp_path: Path, capsys):
     q_dir = tmp_path / "quarantine_target"
     assert (
