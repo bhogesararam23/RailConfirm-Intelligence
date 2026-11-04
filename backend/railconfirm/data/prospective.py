@@ -1099,12 +1099,78 @@ def validate_prospective_batch(batch: ProspectiveBatch) -> ProspectiveAuditRepor
     )
 
 
+def compute_canonical_batch_sha256(batch: ProspectiveBatch) -> str:
+    """Compute deterministic canonical SHA-256 digest of a prospective batch.
+
+    Sorts submissions deterministically by submission_id so the digest represents
+    the semantic content of the batch regardless of submission insertion order.
+    """
+    b_dict = batch.to_dict()
+    subs = sorted(
+        b_dict.get("submissions", []),
+        key=lambda s: str(s.get("submission_id", "")),
+    )
+    norm = {**b_dict, "submissions": subs}
+    return hashlib.sha256(json.dumps(norm, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+class LineageStatus(str, Enum):
+    """Lineage synchronization status between source batch and exported dataset."""
+
+    VERIFIED_IN_SYNC = "verified_in_sync"
+    STALE_WITHDRAWN_RECORDS_PRESENT = "stale_withdrawn_records_present"
+    STALE_UNAPPROVED_RECORDS_PRESENT = "stale_unapproved_records_present"
+    STALE_SOURCE_MODIFIED = "stale_source_modified"
+    INCOMPATIBLE = "incompatible"
+
+
+@dataclass(frozen=True)
+class ExportLineageReport:
+    """Audit report comparing a prospective batch against an exported longitudinal dataset."""
+
+    is_synced: bool
+    status: LineageStatus
+    source_batch_id: str
+    export_dataset_id: str
+    violations: list[str] = field(default_factory=list)
+    withdrawn_groups_present: list[str] = field(default_factory=list)
+    unapproved_groups_present: list[str] = field(default_factory=list)
+    source_sha256_matches: bool = True
+    new_approved_groups_missing: list[str] = field(default_factory=list)
+
+    def summary(self) -> str:
+        lines = [
+            f"=== Export Lineage Audit: {self.export_dataset_id} <-> {self.source_batch_id} ===",
+            f"Lineage Status: {self.status.value}",
+            f"Is In Sync: {self.is_synced}",
+            f"Source SHA256 In Sync: {self.source_sha256_matches}",
+        ]
+        if self.withdrawn_groups_present:
+            lines.append(f"CRITICAL: {len(self.withdrawn_groups_present)} withdrawn booking group(s) present in export:")
+            for g in self.withdrawn_groups_present:
+                lines.append(f"  - {g}")
+        if self.unapproved_groups_present:
+            lines.append(f"WARNING: {len(self.unapproved_groups_present)} unapproved booking group(s) present in export:")
+            for g in self.unapproved_groups_present:
+                lines.append(f"  - {g}")
+        if self.new_approved_groups_missing:
+            lines.append(f"NOTICE: {len(self.new_approved_groups_missing)} new approved booking group(s) missing from export:")
+            for g in self.new_approved_groups_missing:
+                lines.append(f"  - {g}")
+        if self.violations:
+            lines.append("Violations:")
+            for v in self.violations:
+                lines.append(f"  ! {v}")
+        return "\n".join(lines)
+
+
 def export_batch_to_longitudinal(
     batch: ProspectiveBatch,
     *,
     dataset_id: str,
     source_id: str,
     require_all_approved: bool = True,
+    export_timestamp: datetime | None = None,
 ) -> LongitudinalDataset:
     """Export approved submissions from a prospective batch into a LongitudinalDataset (v2.0.0).
 
@@ -1113,6 +1179,7 @@ def export_batch_to_longitudinal(
         dataset_id: Desired ID for the exported longitudinal dataset.
         source_id: Provenance source ID.
         require_all_approved: When True, raises error if any submission is unapproved.
+        export_timestamp: Optional fixed timestamp for deterministic export testing.
 
     Returns:
         A validated LongitudinalDataset ready for manifest generation or point-in-time snapshotting.
@@ -1124,12 +1191,19 @@ def export_batch_to_longitudinal(
             f"Cannot export prospective batch with unresolved personal data patterns: {pii_violations}"
         )
 
+    # Compute source batch digest for lineage verification
+    source_batch_sha256 = compute_canonical_batch_sha256(batch)
+
+    exported_at = export_timestamp or datetime.now(tz=UTC)
     journeys: dict[str, LongitudinalJourney] = {}
     booking_groups: list[BookingGroup] = []
+    included_submissions: list[str] = []
+    excluded_submissions: dict[str, str] = {}
 
     for sub in batch.submissions:
         # Strictly exclude withdrawn consent
         if sub.consent.withdrawn or sub.review_status == ReviewStatus.WITHDRAWN:
+            excluded_submissions[sub.submission_id] = "withdrawn"
             if require_all_approved:
                 raise DatasetValidationError(
                     f"Submission '{sub.submission_id}' has withdrawn participant consent; "
@@ -1137,13 +1211,38 @@ def export_batch_to_longitudinal(
                 )
             continue
 
-        if require_all_approved and sub.review_status != ReviewStatus.APPROVED:
-            raise DatasetValidationError(
-                f"Submission '{sub.submission_id}' is {sub.review_status.value}; "
-                "only APPROVED submissions can be exported to research datasets."
-            )
-        if sub.review_status != ReviewStatus.APPROVED:
+        if sub.review_status == ReviewStatus.QUARANTINED:
+            excluded_submissions[sub.submission_id] = "quarantined"
+            if require_all_approved:
+                raise DatasetValidationError(
+                    f"Submission '{sub.submission_id}' is quarantined; "
+                    "only APPROVED submissions can be exported to research datasets."
+                )
             continue
+
+        if sub.review_status == ReviewStatus.REJECTED:
+            excluded_submissions[sub.submission_id] = "rejected"
+            if require_all_approved:
+                raise DatasetValidationError(
+                    f"Submission '{sub.submission_id}' is rejected; "
+                    "only APPROVED submissions can be exported to research datasets."
+                )
+            continue
+
+        if sub.review_status == ReviewStatus.PENDING_REVIEW:
+            excluded_submissions[sub.submission_id] = "pending_review"
+            if require_all_approved:
+                raise DatasetValidationError(
+                    f"Submission '{sub.submission_id}' is pending_review; "
+                    "only APPROVED submissions can be exported to research datasets."
+                )
+            continue
+
+        if not sub.passengers:
+            excluded_submissions[sub.submission_id] = "no_passengers"
+            continue
+
+        included_submissions.append(sub.submission_id)
 
         j_key = f"{sub.train_number}_{sub.journey_date}_{sub.boarding_station}_{sub.destination_station}_{sub.class_code}"
         if j_key not in journeys:
@@ -1159,10 +1258,14 @@ def export_batch_to_longitudinal(
             )
 
         p_records: list[PassengerReservation] = []
-        for p in sub.passengers:
+        # Ensure passengers sorted by sequence
+        sorted_pax = sorted(sub.passengers, key=lambda p: p.passenger_sequence)
+        for p in sorted_pax:
             pid = f"{sub.pseudonym_group_id}_P{p.passenger_sequence}"
             adapted_obs: list[StatusObservation] = []
-            for obs in p.observations:
+            # Ensure observations chronologically sorted
+            sorted_obs = sorted(p.observations, key=lambda o: o.observed_at)
+            for obs in sorted_obs:
                 adapted_obs.append(
                     StatusObservation(
                         observation_id=obs.observation_id,
@@ -1200,18 +1303,178 @@ def export_batch_to_longitudinal(
         )
         booking_groups.append(bg)
 
+    # Deterministic sorting
+    sorted_journeys = {k: journeys[k] for k in sorted(journeys.keys())}
+    booking_groups.sort(key=lambda b: b.booking_group_id)
+
+    lineage_metadata = {
+        "source_batch_id": batch.batch_id,
+        "source_batch_sha256": source_batch_sha256,
+        "source_schema_version": batch.schema_version,
+        "exported_at": exported_at.isoformat(),
+        "total_considered": len(batch.submissions),
+        "total_included": len(included_submissions),
+        "total_excluded": len(excluded_submissions),
+        "included_submissions": sorted(included_submissions),
+        "excluded_submissions": excluded_submissions,
+        "exported_booking_group_ids": [b.booking_group_id for b in booking_groups],
+        "exported_journey_ids": sorted(sorted_journeys.keys()),
+    }
+
     return LongitudinalDataset(
         schema_version=LONGITUDINAL_SCHEMA_VERSION,
         dataset_id=dataset_id,
         source_id=source_id,
-        created_at=datetime.now(tz=UTC),
-        journeys=journeys,
+        created_at=exported_at,
+        journeys=sorted_journeys,
         booking_groups=booking_groups,
         metadata={
             "exported_from_prospective_batch": batch.batch_id,
+            "source_batch_sha256": source_batch_sha256,
             "export_schema_version": PROSPECTIVE_COLLECTION_SCHEMA_VERSION,
+            "lineage": lineage_metadata,
         },
     )
+
+
+def verify_export_lineage(
+    batch: ProspectiveBatch,
+    dataset: LongitudinalDataset,
+) -> ExportLineageReport:
+    """Verify that an exported LongitudinalDataset is strictly in sync with its source batch.
+
+    Audits:
+    1. Provenance alignment: Dataset metadata records matching batch ID.
+    2. Withdrawal compliance: Zero withdrawn booking groups reside in the export.
+    3. Operator review compliance: All exported groups correspond to APPROVED submissions.
+    4. Source integrity: Source batch SHA-256 matches recorded digest in export lineage.
+    5. Completeness: Detects if new approved submissions are missing from export.
+    """
+    source_batch_id = batch.batch_id
+    export_dataset_id = dataset.dataset_id
+    violations: list[str] = []
+    withdrawn_groups: list[str] = []
+    unapproved_groups: list[str] = []
+    new_approved_missing: list[str] = []
+
+    # Check compatibility
+    recorded_batch_id = dataset.metadata.get("exported_from_prospective_batch") or (
+        dataset.metadata.get("lineage", {}).get("source_batch_id")
+    )
+    if recorded_batch_id != source_batch_id:
+        return ExportLineageReport(
+            is_synced=False,
+            status=LineageStatus.INCOMPATIBLE,
+            source_batch_id=source_batch_id,
+            export_dataset_id=export_dataset_id,
+            violations=[
+                f"Export metadata records source batch '{recorded_batch_id}', but was audited against '{source_batch_id}'."
+            ],
+            source_sha256_matches=False,
+        )
+
+    # Check source batch SHA256
+    current_sha256 = compute_canonical_batch_sha256(batch)
+    recorded_sha256 = dataset.metadata.get("source_batch_sha256") or (
+        dataset.metadata.get("lineage", {}).get("source_batch_sha256")
+    )
+    sha_matches = recorded_sha256 == current_sha256
+
+    # Build submission lookup
+    sub_by_group = {s.pseudonym_group_id: s for s in batch.submissions}
+    exported_groups = {bg.booking_group_id for bg in dataset.booking_groups}
+
+    for bg in dataset.booking_groups:
+        gid = bg.booking_group_id
+        if gid not in sub_by_group:
+            violations.append(
+                f"Booking group '{gid}' in longitudinal export does not exist in source batch '{source_batch_id}'."
+            )
+            continue
+        sub = sub_by_group[gid]
+        if sub.consent.withdrawn or sub.review_status == ReviewStatus.WITHDRAWN:
+            withdrawn_groups.append(gid)
+            violations.append(
+                f"Booking group '{gid}' (submission '{sub.submission_id}') has WITHDRAWN consent but is present in export."
+            )
+        elif sub.review_status != ReviewStatus.APPROVED:
+            unapproved_groups.append(gid)
+            violations.append(
+                f"Booking group '{gid}' (submission '{sub.submission_id}') is {sub.review_status.value} (not APPROVED) but is present in export."
+            )
+
+    # Check if approved submissions in batch are missing
+    for sub in batch.submissions:
+        if (
+            sub.review_status == ReviewStatus.APPROVED
+            and not sub.consent.withdrawn
+            and sub.passengers
+            and sub.pseudonym_group_id not in exported_groups
+        ):
+            new_approved_missing.append(sub.pseudonym_group_id)
+
+    # Determine status
+    if withdrawn_groups:
+        status = LineageStatus.STALE_WITHDRAWN_RECORDS_PRESENT
+        is_synced = False
+    elif unapproved_groups:
+        status = LineageStatus.STALE_UNAPPROVED_RECORDS_PRESENT
+        is_synced = False
+    elif not sha_matches or new_approved_missing or violations:
+        status = LineageStatus.STALE_SOURCE_MODIFIED
+        is_synced = False
+    else:
+        status = LineageStatus.VERIFIED_IN_SYNC
+        is_synced = True
+
+    return ExportLineageReport(
+        is_synced=is_synced,
+        status=status,
+        source_batch_id=source_batch_id,
+        export_dataset_id=export_dataset_id,
+        violations=violations,
+        withdrawn_groups_present=withdrawn_groups,
+        unapproved_groups_present=unapproved_groups,
+        source_sha256_matches=sha_matches,
+        new_approved_groups_missing=new_approved_missing,
+    )
+
+
+def reconcile_and_regenerate_export(
+    batch: ProspectiveBatch,
+    current_dataset: LongitudinalDataset,
+    output_path: Path | str,
+    *,
+    overwrite: bool = True,
+    export_timestamp: datetime | None = None,
+) -> tuple[LongitudinalDataset, ExportLineageReport]:
+    """Reconcile an export with current prospective batch state and atomically re-export.
+
+    If the current dataset contains withdrawn or unapproved records or is out of sync,
+    re-exports only currently approved submissions into an updated LongitudinalDataset
+    and atomically saves it as JSON to output_path.
+    """
+    dest = Path(output_path).resolve()
+    if dest.is_file() and not overwrite:
+        raise FileExistsError(
+            f"Destination export file already exists: {dest}. Pass overwrite=True to replace."
+        )
+
+    # Export cleanly with require_all_approved=False to take only approved non-withdrawn
+    reconciled_dataset = export_batch_to_longitudinal(
+        batch,
+        dataset_id=current_dataset.dataset_id,
+        source_id=current_dataset.source_id,
+        require_all_approved=False,
+        export_timestamp=export_timestamp,
+    )
+
+    # Save atomically
+    atomic_write_json(dest, reconciled_dataset.to_dict(), indent=2)
+
+    # Verify new export against batch
+    report = verify_export_lineage(batch, reconciled_dataset)
+    return reconciled_dataset, report
 
 
 def generate_prospective_template(

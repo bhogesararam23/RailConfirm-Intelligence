@@ -17,6 +17,8 @@ from railconfirm.data.prospective import (
     MIN_SALT_LENGTH,
     PROSPECTIVE_COLLECTION_SCHEMA_VERSION,
     ConsentMetadata,
+    ExportLineageReport,
+    LineageStatus,
     ProspectiveBatch,
     ProspectivePassenger,
     ProspectiveSubmission,
@@ -30,9 +32,11 @@ from railconfirm.data.prospective import (
     get_configured_pseudonym_salt,
     intake_prospective_submission,
     mask_sensitive_token,
+    reconcile_and_regenerate_export,
     review_batch,
     scan_for_personal_data,
     validate_prospective_batch,
+    verify_export_lineage,
     withdraw_submission,
 )
 from railconfirm.domain.exceptions import DatasetValidationError, SecurityError
@@ -623,5 +627,174 @@ def test_atomic_write_json_roundtrip_and_safety(tmp_path: Path):
     # No leftover temporary files
     temp_files = list(target.parent.glob(".tmp_*"))
     assert len(temp_files) == 0
+
+
+def test_export_lineage_metadata_and_deterministic_ordering(sample_submission: ProspectiveSubmission):
+    sub1 = sample_submission
+    sub1.review_status = ReviewStatus.APPROVED
+
+    # Create sub2 with a distinct group ID and train
+    sub2 = ProspectiveSubmission(
+        submission_id="SUB_EXPORT_002",
+        pseudonym_group_id="anon_group_002",
+        train_number="12951",
+        journey_date=date(2026, 12, 10),
+        boarding_station="MMCT",
+        destination_station="NDLS",
+        class_code="2A",
+        quota_code="GN",
+        consent=sub1.consent,
+        passengers=sub1.passengers,
+        review_status=ReviewStatus.APPROVED,
+    )
+
+    batch_a = ProspectiveBatch(
+        batch_id="BATCH_LINEAGE_001",
+        created_at=datetime(2026, 11, 1, 12, 0, tzinfo=UTC),
+        submissions=[sub2, sub1],  # sub2 first
+    )
+
+    fixed_time = datetime(2026, 11, 2, 10, 0, tzinfo=UTC)
+    exp_a = export_batch_to_longitudinal(
+        batch_a,
+        dataset_id="long_a",
+        source_id="src_a",
+        export_timestamp=fixed_time,
+    )
+
+    assert "lineage" in exp_a.metadata
+    lineage = exp_a.metadata["lineage"]
+    assert lineage["source_batch_id"] == "BATCH_LINEAGE_001"
+    assert lineage["total_considered"] == 2
+    assert lineage["total_included"] == 2
+    assert lineage["total_excluded"] == 0
+    assert lineage["included_submissions"] == sorted([sub1.submission_id, sub2.submission_id])
+
+    # Invert input order in batch_b
+    batch_b = ProspectiveBatch(
+        batch_id="BATCH_LINEAGE_001",
+        created_at=datetime(2026, 11, 1, 12, 0, tzinfo=UTC),
+        submissions=[sub1, sub2],  # sub1 first
+    )
+    exp_b = export_batch_to_longitudinal(
+        batch_b,
+        dataset_id="long_a",
+        source_id="src_a",
+        export_timestamp=fixed_time,
+    )
+
+    # Booking groups must be deterministically sorted by booking_group_id
+    assert [bg.booking_group_id for bg in exp_a.booking_groups] == [
+        bg.booking_group_id for bg in exp_b.booking_groups
+    ]
+    # Byte-for-byte serialization must be identical
+    import json
+    json_a = json.dumps(exp_a.to_dict(), sort_keys=True)
+    json_b = json.dumps(exp_b.to_dict(), sort_keys=True)
+    assert json_a == json_b
+
+
+def test_verify_export_lineage_and_stale_detection(sample_submission: ProspectiveSubmission):
+    sample_submission.review_status = ReviewStatus.APPROVED
+    batch = ProspectiveBatch(
+        batch_id="BATCH_LINEAGE_002",
+        created_at=datetime(2026, 11, 1, 12, 0, tzinfo=UTC),
+        submissions=[sample_submission],
+    )
+
+    exp = export_batch_to_longitudinal(
+        batch,
+        dataset_id="long_sync_test",
+        source_id="src_test",
+    )
+
+    # 1. Initially verified in sync
+    report = verify_export_lineage(batch, exp)
+    assert isinstance(report, ExportLineageReport)
+    assert report.is_synced is True
+    assert report.status == LineageStatus.VERIFIED_IN_SYNC
+    assert "Lineage Status: verified_in_sync" in report.summary()
+
+    # 2. Incompatible batch ID
+    other_batch = ProspectiveBatch(
+        batch_id="BATCH_OTHER_999",
+        created_at=datetime(2026, 11, 1, 12, 0, tzinfo=UTC),
+        submissions=[sample_submission],
+    )
+    incompat_report = verify_export_lineage(other_batch, exp)
+    assert incompat_report.is_synced is False
+    assert incompat_report.status == LineageStatus.INCOMPATIBLE
+
+    # 3. Withdrawal after export triggers STALE_WITHDRAWN_RECORDS_PRESENT
+    withdraw_submission(
+        batch,
+        submission_id=sample_submission.submission_id,
+        reason="Revoking research consent after export",
+        operator="data_officer",
+    )
+    stale_report = verify_export_lineage(batch, exp)
+    assert stale_report.is_synced is False
+    assert stale_report.status == LineageStatus.STALE_WITHDRAWN_RECORDS_PRESENT
+    assert sample_submission.pseudonym_group_id in stale_report.withdrawn_groups_present
+    assert "CRITICAL: 1 withdrawn booking group(s) present in export" in stale_report.summary()
+
+
+def test_reconcile_and_regenerate_export(tmp_path: Path, sample_submission: ProspectiveSubmission):
+    sample_submission.review_status = ReviewStatus.APPROVED
+    sub2 = ProspectiveSubmission(
+        submission_id="SUB_RECON_002",
+        pseudonym_group_id="anon_recon_group_002",
+        train_number="12951",
+        journey_date=date(2026, 12, 10),
+        boarding_station="MMCT",
+        destination_station="NDLS",
+        class_code="2A",
+        quota_code="GN",
+        consent=sample_submission.consent,
+        passengers=sample_submission.passengers,
+        review_status=ReviewStatus.APPROVED,
+    )
+    batch = ProspectiveBatch(
+        batch_id="BATCH_RECON_001",
+        created_at=datetime(2026, 11, 1, 12, 0, tzinfo=UTC),
+        submissions=[sample_submission, sub2],
+    )
+
+    # Initial export with 2 submissions
+    out_file = tmp_path / "longitudinal_recon.json"
+    initial_exp = export_batch_to_longitudinal(
+        batch,
+        dataset_id="long_recon",
+        source_id="src_recon",
+    )
+    atomic_write_json(out_file, initial_exp.to_dict())
+
+    # Withdraw first submission
+    withdraw_submission(
+        batch,
+        submission_id=sample_submission.submission_id,
+        reason="Withdrawing first submission",
+        operator="op_lead",
+    )
+
+    # Export is now stale
+    stale_report = verify_export_lineage(batch, initial_exp)
+    assert stale_report.is_synced is False
+
+    # Reconcile and regenerate
+    fixed_time = datetime(2026, 11, 3, 10, 0, tzinfo=UTC)
+    reconciled_ds, clean_report = reconcile_and_regenerate_export(
+        batch,
+        initial_exp,
+        out_file,
+        overwrite=True,
+        export_timestamp=fixed_time,
+    )
+    assert clean_report.is_synced is True
+    assert clean_report.status == LineageStatus.VERIFIED_IN_SYNC
+    assert len(reconciled_ds.booking_groups) == 1
+    assert reconciled_ds.booking_groups[0].booking_group_id == sub2.pseudonym_group_id
+    assert sample_submission.pseudonym_group_id not in [bg.booking_group_id for bg in reconciled_ds.booking_groups]
+
 
 
