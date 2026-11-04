@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+
 from railconfirm.storage.predictions import (
     SCHEMA_VERSION,
     PredictionStorageError,
