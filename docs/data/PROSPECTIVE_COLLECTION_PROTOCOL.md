@@ -296,6 +296,16 @@ To prevent severe class imbalance and cohort starvation, participant recruitment
        --status candidate
    ```
 
+11. **Pre-flight: run the offline synthetic rehearsal** (optional, before any real collection):
+   ```bash
+   # Whole lifecycle on synthetic fixtures; writes reports under <outdir>/reports/
+   python -m railconfirm.data prospective rehearsal /tmp/railconfirm_rehearsal
+
+   # Machine-readable report on stdout
+   python -m railconfirm.data prospective rehearsal /tmp/railconfirm_rehearsal --json
+   ```
+   This runs the entire intake → scan → audit → review → withdrawal → export → lineage → mutation → stale-detection → reconciliation → quarantine → filesystem → scientific → abstention sequence end to end against fixed synthetic data (no network, no real participant). It exits `0` only when every gate passed. The report is labelled synthetic and states a software result — **SOFTWARE REHEARSAL PASSED** — never a pilot authorization (`REAL-WORLD PILOT AUTHORIZED: NO`). A passing rehearsal does not replace the human consent, legal/privacy review, operator approval and approved real data the pilot still requires.
+
 ---
 
 ## 9. Draft participant consent notice

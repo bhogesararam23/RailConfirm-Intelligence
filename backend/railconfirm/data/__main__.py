@@ -266,6 +266,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="check reconciliation needs without writing updated export to disk",
     )
 
+    p_rehearsal = p_subs.add_parser(
+        "rehearsal",
+        help="run the deterministic offline synthetic prospective-lifecycle rehearsal",
+    )
+    p_rehearsal.add_argument(
+        "outdir",
+        type=Path,
+        help="isolated directory to write rehearsal artifacts and reports into",
+    )
+    p_rehearsal.add_argument(
+        "--salt",
+        default=None,
+        help="override the deterministic synthetic pseudonymisation salt",
+    )
+    p_rehearsal.add_argument(
+        "--timestamp",
+        default=None,
+        help="ISO-8601 timezone-aware run timestamp override (default: fixed synthetic value)",
+    )
+    p_rehearsal.add_argument(
+        "--json",
+        action="store_true",
+        help="emit the rehearsal report as machine-readable JSON",
+    )
+
     return parser
 
 
@@ -713,6 +738,38 @@ def _prospective(args: argparse.Namespace) -> int:
             f"Exported {len(long_ds.booking_groups)} booking groups to longitudinal dataset at {args.output}"
         )
         return 0
+
+    if args.prospective_action == "rehearsal":
+        from railconfirm.data.rehearsal import run_prospective_rehearsal
+        from railconfirm.domain.exceptions import DatasetValidationError, SecurityError
+
+        run_timestamp = None
+        if args.timestamp:
+            try:
+                run_timestamp = datetime.fromisoformat(args.timestamp)
+            except ValueError as exc:
+                print(f"Invalid --timestamp: {exc}", file=sys.stderr)
+                return 1
+            if run_timestamp.tzinfo is None:
+                print(
+                    "--timestamp must include a timezone offset, e.g. 2026-05-01T12:00:00+00:00.",
+                    file=sys.stderr,
+                )
+                return 1
+
+        try:
+            rehearsal_report = run_prospective_rehearsal(
+                args.outdir, salt=args.salt, run_timestamp=run_timestamp
+            )
+        except (DatasetValidationError, SecurityError) as exc:
+            print(f"Rehearsal could not start: {exc}", file=sys.stderr)
+            return 1
+
+        if args.json:
+            print(json.dumps(rehearsal_report.to_dict(), indent=2, sort_keys=True, default=str))
+        else:
+            print(rehearsal_report.summary())
+        return 0 if rehearsal_report.software_rehearsal_passed else 1
 
     return 2
 

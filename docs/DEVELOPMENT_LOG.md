@@ -2755,6 +2755,42 @@ the existing storage tests. `delete_live` refuses a naive clock before touching 
 - `npm --prefix frontend test` -> 129 passed across 6 test files.
 
 
+## 2026-11-05 -- Post-ADR-0048 Reliability Audit: Copy-First Quarantine Hashing, Orphan Recovery, and Streaming Persistence
+
+### Scope
+- Completed reliability audit of atomic I/O and quarantine isolation against power-loss and concurrency boundaries.
+- Hardened `quarantine_dataset()` to compute SHA-256 and size on the staged copy directly, preventing checksum divergence if the source file is modified concurrently.
+- Clarified pair-atomicity boundaries in ADR-0048: distinguished in-process exception rollback from OS/power loss commit boundaries.
+- Implemented `audit_quarantine_directory()` in `inspection.py` and CLI subcommand `python -m railconfirm.data audit-quarantine` with `--purge-orphans` recovery to detect and heal post-crash orphaned artifacts.
+- Implemented direct file streaming in `atomic_write_csv()` via open temporary handles without in-memory string buffering.
+- Added file permission preservation (`st_mode` via `os.chmod`) across `atomic_write_text()` and `atomic_write_csv()`, and best-effort POSIX directory syncing (`_sync_dir`).
+- Reconciled documentation baselines across `docs/technical/TESTING_STRATEGY.md`, `docs/ROADMAP.md`, `docs/PROJECT_STATUS.md`, `docs/AGENT_HANDOFF.md`, and `README.md` to 1,273 backend tests and 93.2% branch coverage.
+
+### Changed
+- `backend/railconfirm/data/_io.py`: Streamed DataFrame to file handle in `atomic_write_csv()`, added `st_mode` preservation on existing targets, and added best-effort POSIX directory syncing.
+- `backend/railconfirm/data/inspection.py`: Staged quarantine copies before computing checksum and size; added `audit_quarantine_directory()` for pair validation, orphan detection/purging, and hash verification.
+- `backend/railconfirm/data/__init__.py`: Exposed `audit_quarantine_directory` and updated `__all__`.
+- `backend/railconfirm/data/__main__.py`: Added `audit-quarantine` CLI subcommand with `--purge-orphans` and `--json` support.
+- `backend/tests/data/test_io.py`: Added regression tests for permission preservation and streamed CSV formatting without double carriage returns.
+- `backend/tests/data/test_inspection.py`: Added unit tests for staged copy checksum verification, `audit_quarantine_directory` clean runs, orphan detection/purging, and checksum mismatch detection.
+- `backend/tests/data/test_intake_cli.py`: Added CLI integration test for `audit-quarantine`.
+- `docs/technical/TESTING_STRATEGY.md`: Updated test counts to 1,273 backend tests, 129 frontend tests, 6 Playwright E2E tests, and corrected stale browser driver text.
+- `docs/ROADMAP.md`: Updated review date and ADR references in header.
+- `docs/PROJECT_STATUS.md`: Updated test counts to 1,273 backend tests.
+- `docs/AGENT_HANDOFF.md`: Updated test counts to 1,273 backend tests.
+- `README.md`: Updated test count to 1,273 tests and 93.2% branch coverage.
+- `docs/adr/ADR-0048-atomic-quarantine-snapshot-persistence-and-ci-conformance.md`: Updated with pair atomicity boundaries, orphan auditing, and zero-memory streaming persistence.
+- `CHANGELOG.md`: Logged Post-ADR-0048 reliability audit.
+
+### Checks run
+- `ruff check backend/ scripts/` -> All checks passed (0 errors).
+- `cd backend && python -m mypy` -> Success: no issues found in 49 source files.
+- `cd backend && pytest tests/ --cov=railconfirm --cov-fail-under=90` -> 1,273 passed in 197.19s (93.16% total coverage, 0 failures).
+- `npm --prefix frontend test` -> 129 passed across 6 test files.
+- `python scripts/check_repository_hygiene.py` -> Passed (22 required files, 285 tracked files scanned, 0 errors).
+- `python scripts/smoke_full_stack.py --skip-frontend` -> Passed (9 checks, 0 errors).
+
+
 ## 2026-11-05 -- Atomic Quarantine Ingestion, Snapshot Persistence, and CI Conformance Reconciliation
 
 ### Scope
@@ -2826,3 +2862,75 @@ the existing storage tests. `delete_live` refuses a naive clock before touching 
 - pm --prefix frontend test\ -> 129 passed across 6 test files.
 - \python scripts/check_repository_hygiene.py\ -> Passed (22 required files, 285 tracked files scanned, 0 errors).
 - \python scripts/smoke_full_stack.py --skip-frontend\ -> Passed (9 checks, 0 errors).
+
+
+## 2026-11-05 -- Post-ADR-0048 Reliability Audit: Copy-First Quarantine Hashing, Orphan Recovery, and Streaming Persistence
+
+### Scope
+- Completed reliability audit of atomic I/O and quarantine isolation against power-loss and concurrency boundaries.
+- Hardened `quarantine_dataset()` to compute SHA-256 and size on the staged copy directly, preventing checksum divergence if the source file is modified concurrently.
+- Clarified pair-atomicity boundaries in ADR-0048: distinguished in-process exception rollback from OS/power loss commit boundaries.
+- Implemented `audit_quarantine_directory()` in `inspection.py` and CLI subcommand `python -m railconfirm.data audit-quarantine` with `--purge-orphans` recovery to detect and heal post-crash orphaned artifacts.
+- Implemented direct file streaming in `atomic_write_csv()` via open temporary handles without in-memory string buffering.
+- Added file permission preservation (`st_mode` via `os.chmod`) across `atomic_write_text()` and `atomic_write_csv()`, and best-effort POSIX directory syncing (`_sync_dir`).
+- Reconciled documentation baselines across `docs/technical/TESTING_STRATEGY.md`, `docs/ROADMAP.md`, `docs/PROJECT_STATUS.md`, `docs/AGENT_HANDOFF.md`, and `README.md` to 1,273 backend tests and 93.2% branch coverage.
+
+### Changed
+- `backend/railconfirm/data/_io.py`: Streamed DataFrame to file handle in `atomic_write_csv()`, added `st_mode` preservation on existing targets, and added best-effort POSIX directory syncing.
+- `backend/railconfirm/data/inspection.py`: Staged quarantine copies before computing checksum and size; added `audit_quarantine_directory()` for pair validation, orphan detection/purging, and hash verification.
+- `backend/railconfirm/data/__init__.py`: Exposed `audit_quarantine_directory` and updated `__all__`.
+- `backend/railconfirm/data/__main__.py`: Added `audit-quarantine` CLI subcommand with `--purge-orphans` and `--json` support.
+- `backend/tests/data/test_io.py`: Added regression tests for permission preservation and streamed CSV formatting without double carriage returns.
+- `backend/tests/data/test_inspection.py`: Added unit tests for staged copy checksum verification, `audit_quarantine_directory` clean runs, orphan detection/purging, and checksum mismatch detection.
+- `backend/tests/data/test_intake_cli.py`: Added CLI integration test for `audit-quarantine`.
+- `docs/technical/TESTING_STRATEGY.md`: Updated test counts to 1,273 backend tests, 129 frontend tests, 6 Playwright E2E tests, and corrected stale browser driver text.
+- `docs/ROADMAP.md`: Updated review date and ADR references in header.
+- `docs/PROJECT_STATUS.md`: Updated test counts to 1,273 backend tests.
+- `docs/AGENT_HANDOFF.md`: Updated test counts to 1,273 backend tests.
+- `README.md`: Updated test count to 1,273 tests and 93.2% branch coverage.
+- `docs/adr/ADR-0048-atomic-quarantine-snapshot-persistence-and-ci-conformance.md`: Updated with pair atomicity boundaries, orphan auditing, and zero-memory streaming persistence.
+- `CHANGELOG.md`: Logged Post-ADR-0048 reliability audit.
+
+### Checks run
+- `ruff check backend/ scripts/` -> All checks passed (0 errors).
+- `cd backend && python -m mypy` -> Success: no issues found in 49 source files.
+- `cd backend && pytest tests/ --cov=railconfirm --cov-fail-under=90` -> 1,273 passed in 197.19s (93.16% total coverage, 0 failures).
+- `npm --prefix frontend test` -> 129 passed across 6 test files.
+- `python scripts/check_repository_hygiene.py` -> Passed (22 required files, 285 tracked files scanned, 0 errors).
+- `python scripts/smoke_full_stack.py --skip-frontend` -> Passed (9 checks, 0 errors).
+
+
+## 2026-11-05 -- Prospective Pilot Rehearsal: Deterministic Offline Synthetic Lifecycle Run
+
+### Scope
+- Added a deterministic, offline, synthetic end-to-end rehearsal of the prospective data lifecycle so intake, review, withdrawal, export lineage, quarantine integrity, filesystem atomicity and scientific safeguards can be demonstrated before any real pilot.
+- The rehearsal is orchestration-only. `backend/railconfirm/data/rehearsal.py` drives existing prospective, inspection, longitudinal and inference APIs; no business logic was duplicated.
+- No real recruitment, PNRs, personal data, network calls, railway integrations or hosted inference. The entire run is explicitly labelled synthetic and trains no model.
+
+### Added
+- `backend/railconfirm/data/rehearsal.py`: exposes `run_prospective_rehearsal(workspace, *, salt=None, run_timestamp=None)`. It runs 15 fail-closed gates in a fixed order and writes a labelled machine-readable (`rehearsal_report.json`) and human-readable (`rehearsal_report.txt`) report under `reports/`.
+- `backend/tests/data/test_rehearsal.py`: 16 regression tests covering the full gate run, determinism, report labelling, withdrawal non-survival into a verified-current export, salt/timestamp validation, fail-closed gate semantics, missing-gate failure and the CLI surface.
+- `docs/adr/ADR-0049-deterministic-offline-synthetic-lifecycle-rehearsal.md`: records the orchestration-only decision, the fail-closed gate contract, the software-result vs authorization split and the offline/determinism guarantees.
+
+### Changed
+- `backend/railconfirm/data/__main__.py`: added the `rehearsal` subcommand (`prospective rehearsal <outdir> [--salt] [--timestamp] [--json]`), refusing naive timestamps and short salts and exiting 1 when the rehearsal does not pass.
+- `docs/adr/README.md`, `docs/data/PROSPECTIVE_COLLECTION_PROTOCOL.md`, `docs/technical/TESTING_STRATEGY.md`, `docs/ROADMAP.md`, `docs/PROJECT_STATUS.md`, `docs/AGENT_HANDOFF.md`, `CHANGELOG.md`, `README.md`: indexed ADR-0049, documented the pre-flight rehearsal command and reconciled test baselines to 1,289 backend tests at 92.73%.
+
+### Decisions
+- ADR-0049: keep the rehearsal a thin orchestration layer over existing APIs; fail a gate closed when it records no evidence; split the software result (SOFTWARE REHEARSAL PASSED/FAILED) from any real-world authorization (REAL-WORLD PILOT AUTHORIZED: NO).
+
+### Bugs found and fixed
+- Quarantine gate tampered the only valid pair before asserting it survived a purge. Reordered to audit, purge orphans (asserting the valid pair is retained), then tamper and assert checksum-mismatch detection.
+- Filesystem-determinism gate rebuilt the source batch twice; `review_batch` stamps a wall-clock `reviewed_at`, so the two exports differed. Now builds one source batch and exports it twice.
+
+### Checks run
+- `ruff check backend/ scripts/` -> All checks passed (0 errors).
+- `cd backend && python -m mypy` -> Success: no issues found in 50 source files.
+- `cd backend && python -m pytest tests/ --cov=railconfirm --cov-fail-under=90 -q` -> 1,289 passed in 101.63s (92.73% total coverage, 0 failures).
+- `python scripts/check_repository_hygiene.py` -> Passed (22 required files, 288 tracked files scanned, 0 errors).
+- `python scripts/smoke_full_stack.py --skip-frontend` -> Passed (9 checks, 0 errors).
+- `python -m railconfirm.data prospective rehearsal <tmp>` -> exit 0, 15/15 gates passed, labelled synthetic.
+
+### Open items
+- Real-world pilot remains unauthorized: no dataset is approved, no model is promoted, and no railway probability is validated. Passing the rehearsal does not change any of that.
+- Frontend was untouched, so frontend type-check, lint, tests, build and Playwright E2E were not re-run for this change.

@@ -3,7 +3,7 @@
 Status: this describes what the repository runs, not what it intends to run. Where a
 layer below is still a plan, it says so.
 
-Current totals on a developer machine: **1273 backend tests** at 93.2% branch coverage
+Current totals on a developer machine: **1289 backend tests** at 92.7% branch coverage
 (--cov-fail-under=90), **129 frontend tests**, **6 Playwright real-browser E2E user journey tests**,
 running backend, and one **full-stack smoke script** that starts both processes. Every
 suite below that exercises the model pipeline uses clearly-labelled synthetic fixtures;
@@ -117,6 +117,25 @@ Check:
 - group event probabilities agree with their defined joint distribution;
 - synthetic records are excluded from empirical evaluation;
 - results are reproducible for a fixed code/data/configuration version.
+
+### Lifecycle rehearsal (ADR-0049)
+`backend/tests/data/test_rehearsal.py` drives the whole prospective lifecycle end to end on
+one fixed synthetic fixture through the same functions a pilot would call, and asserts on
+observable behaviour rather than a parallel implementation:
+
+- every gate in `REHEARSAL_GATE_ORDER` is present and passes, and the run is deterministic
+  (identical report for a repeated run into the same workspace);
+- a withdrawn submission is absent from the verified-current export and stale detection
+  names the withdrawn records;
+- the gate and report contract is fail-closed: no evidence or any failure is a `fail`, a
+  warning warns, and a missing gate fails the whole report;
+- a salt below the minimum and a naive run timestamp are refused;
+- the CLI surface: exit `0` on pass, parseable `--json`, non-zero on a naive timestamp or
+  short salt.
+
+The rehearsal writes both a machine-readable and a human-readable report, each labelled
+synthetic. It calls no network, promotes no artifact and measures no railway accuracy:
+passing it is a software result (`SOFTWARE REHEARSAL PASSED`), never a pilot authorization.
 
 ## Golden edge cases
 

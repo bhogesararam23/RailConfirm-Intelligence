@@ -92,3 +92,4 @@ How will the decision be tested or revisited? Record evidence, not assumptions.
 | [ADR-0046](ADR-0046-withdrawal-integrity-export-lineage-and-atomic-operations.md) | Withdrawal integrity, export lineage, decoupled governance auditing, and atomic local operations | Accepted |
 | [ADR-0047](ADR-0047-standardized-atomic-file-io-and-static-typing-conformance.md) | Standardized atomic file I/O, static typing conformance, and CI documentation reconciliation | Accepted |
 | [ADR-0048](ADR-0048-atomic-quarantine-snapshot-persistence-and-ci-conformance.md) | Atomic quarantine ingestion, snapshot persistence, and CI conformance reconciliation | Accepted |
+| [ADR-0049](ADR-0049-deterministic-offline-synthetic-lifecycle-rehearsal.md) | Deterministic offline synthetic rehearsal of the prospective data lifecycle, with a fail-closed gate contract and a software-result/authorization split | Accepted |
