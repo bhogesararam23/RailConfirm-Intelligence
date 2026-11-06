@@ -8,6 +8,7 @@ registry or baseline without importing and patching private globals.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+
 from fastapi import Request
 
 from railconfirm.api.problems import ApiProblem

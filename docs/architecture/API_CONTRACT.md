@@ -28,6 +28,18 @@ Status: describes the implemented `/v1` surface of `backend/railconfirm/api/`. F
 | `GET /v1/predictions/{prediction_id}` | Reopen a stored report by the internal id that served it (ADR-0012) |
 | `GET /v1/predictions` | List kept reports as ids, clocks and provenance only (ADR-0015) |
 | `DELETE /v1/predictions/{prediction_id}` | Remove one kept report now instead of waiting for retention (ADR-0015, ADR-0040) |
+| `GET /v1/operator/status` | Current workbench status, batch counts, loopback and configuration state (ADR-0050) |
+| `GET /v1/operator/batches` | List registered prospective batches with counts and PII scan status (ADR-0050) |
+| `POST /v1/operator/batches/seed` | Seed an isolated deterministic synthetic prospective batch fixture (ADR-0050) |
+| `GET /v1/operator/batches/{batch_id}` | Detailed inspection: metadata, PII scan, audit report, submissions (ADR-0050) |
+| `POST /v1/operator/batches/{batch_id}/review` | Record operator review decision, reviewer id and rationale (ADR-0050) |
+| `POST /v1/operator/batches/{batch_id}/withdraw` | Record participant consent withdrawal and log audit entry (ADR-0050) |
+| `GET /v1/operator/batches/{batch_id}/export-preview` | Preview approved submissions eligible for export (ADR-0050) |
+| `POST /v1/operator/batches/{batch_id}/export` | Execute standardized longitudinal export in v2.0.0 format (ADR-0050) |
+| `GET /v1/operator/batches/{batch_id}/lineage` | Verify export lineage against current source state (ADR-0050) |
+| `POST /v1/operator/batches/{batch_id}/reconcile` | Atomically purge withdrawn records from stale export (ADR-0050) |
+| `POST /v1/operator/rehearsal/run` | Execute 15-gate offline lifecycle rehearsal (ADR-0050) |
+| `GET /v1/operator/rehearsal/latest` | Retrieve latest rehearsal report and gate results (ADR-0050) |
 
 ## `POST /v1/predictions/manual`
 
@@ -246,10 +258,27 @@ All handled errors use one envelope, including an unrouted path and a disallowed
 | `405` | `invalid_input` | The path exists but the method does not |
 | `500` | `storage_unavailable` | A stored report exists but no longer matches the API contract, or disagrees with the id it is filed under |
 | `500` | `INTERNAL_ERROR` | Unhandled failure. The exception text stays server-side; the response carries only the request id |
+| `403` | `OPERATOR_DISABLED` | Operator workbench is disabled by configuration (`RAILCONFIRM_OPERATOR_ENABLED=false`) |
+| `403` | `LOCAL_OPERATOR_REQUIRED` | Requesting client is not from a loopback address (`127.0.0.1`, `::1`) |
+| `404` | `BATCH_NOT_FOUND` | No prospective batch or export candidate found for the given `batch_id` |
+| `404` | `REHEARSAL_NOT_FOUND` | No prior rehearsal report has been generated in the operator workspace |
 
 Unknown statuses, unsupported categories, an unavailable model and insufficient evidence are **not** HTTP errors: they are `200` responses carrying an abstention, so a client can present the limitation instead of guessing from a failure.
 
 Abstention reason values: `unknown_status`, `unsupported_status`, `unsupported_class`, `unsupported_quota`, `no_trained_model`, `no_approved_data`, `model_artifact_invalid`, `insufficient_sample`, `invalid_input`. Their meanings and separations are documented in `docs/technical/INFERENCE_AND_GROUP_PROBABILITIES.md`.
+
+## Operator workbench endpoints (ADR-0050)
+
+The operator endpoints (`/v1/operator/*`) expose prospective data governance, batch audit, submission review, consent withdrawal, longitudinal export, lineage reconciliation, and rehearsal execution.
+
+**Security and Boundary Rules:**
+1. **Disabled by Default:** The endpoints refuse all requests with `403 OPERATOR_DISABLED` unless `RAILCONFIRM_OPERATOR_ENABLED=true` is explicitly configured.
+2. **Strict Loopback Binding:** The endpoints refuse requests from non-loopback client IPs with `403 LOCAL_OPERATOR_REQUIRED`.
+3. **Synthetic Governance Simulation:** All batches inspected and rehearsal runs executed operate on local synthetic fixtures. They do not constitute real railway data or authorize a real-world pilot.
+4. **No PII Persistence:** Submissions are pseudonymized (`anon_*`). Participant withdrawal purges or marks records stale across exports.
+
+Recent contract changes:
+- Operator workbench endpoints added under `/v1/operator/` with loopback gating and typed error envelopes (ADR-0050).
 
 ## Future tracking and context routes
 

@@ -3,8 +3,8 @@
 Status: this describes what the repository runs, not what it intends to run. Where a
 layer below is still a plan, it says so.
 
-Current totals on a developer machine: **1289 backend tests** at 92.7% branch coverage
-(--cov-fail-under=90), **129 frontend tests**, **6 Playwright real-browser E2E user journey tests**,
+Current totals on a developer machine: **1,303 backend tests** at 94.4% branch coverage
+(--cov-fail-under=90), **144 frontend tests**, **8 Playwright real-browser E2E user journey tests**,
 running backend, and one **full-stack smoke script** that starts both processes. Every
 suite below that exercises the model pipeline uses clearly-labelled synthetic fixtures;
 none of them measures railway accuracy, because there is no approved real dataset.

@@ -1,9 +1,9 @@
 # Prospective pilot collection operating protocol
 
-Last reviewed: 2026-11-04  
+Last reviewed: 2026-11-06  
 Status: Active operational protocol  
-Governance: [ADR-0045](../adr/ADR-0045-prospective-pilot-operational-hardening-and-participant-lifecycle.md), [ADR-0044](../adr/ADR-0044-consent-aware-prospective-collection-and-operator-governance.md), [ADR-0043](../adr/ADR-0043-versioned-longitudinal-observation-contract-and-point-in-time-snapshot-conversion.md), and [ADR-0007](../adr/ADR-0007-local-first-no-external-runtime-apis.md)  
-Implementation: [backend/railconfirm/data/prospective.py](../../backend/railconfirm/data/prospective.py) and [backend/railconfirm/data/longitudinal.py](../../backend/railconfirm/data/longitudinal.py)
+Governance: [ADR-0050](../adr/ADR-0050-local-pilot-operations-workbench-and-rehearsal-reliability.md), [ADR-0049](../adr/ADR-0049-deterministic-offline-synthetic-lifecycle-rehearsal.md), [ADR-0045](../adr/ADR-0045-prospective-pilot-operational-hardening-and-participant-lifecycle.md), [ADR-0044](../adr/ADR-0044-consent-aware-prospective-collection-and-operator-governance.md), [ADR-0043](../adr/ADR-0043-versioned-longitudinal-observation-contract-and-point-in-time-snapshot-conversion.md), and [ADR-0007](../adr/ADR-0007-local-first-no-external-runtime-apis.md)  
+Implementation: [backend/railconfirm/data/prospective.py](../../backend/railconfirm/data/prospective.py), [backend/railconfirm/data/operator.py](../../backend/railconfirm/data/operator.py), [backend/railconfirm/data/rehearsal.py](../../backend/railconfirm/data/rehearsal.py), and [frontend/src/app/operator/page.tsx](../../frontend/src/app/operator/page.tsx)
 
 ---
 
@@ -305,6 +305,19 @@ To prevent severe class imbalance and cohort starvation, participant recruitment
    python -m railconfirm.data prospective rehearsal /tmp/railconfirm_rehearsal --json
    ```
    This runs the entire intake → scan → audit → review → withdrawal → export → lineage → mutation → stale-detection → reconciliation → quarantine → filesystem → scientific → abstention sequence end to end against fixed synthetic data (no network, no real participant). It exits `0` only when every gate passed. The report is labelled synthetic and states a software result — **SOFTWARE REHEARSAL PASSED** — never a pilot authorization (`REAL-WORLD PILOT AUTHORIZED: NO`). A passing rehearsal does not replace the human consent, legal/privacy review, operator approval and approved real data the pilot still requires.
+
+12. **Visual governance via Local Operator Workbench UI (ADR-0050)**:
+   ```bash
+   # Enable operator endpoints locally and run the stack
+   RAILCONFIRM_OPERATOR_ENABLED=true uvicorn railconfirm.api.app:app --port 8010
+   ```
+   Navigate to `/operator` in the local web interface. The workbench provides a visual, loopback-gated governance interface to:
+   - Inspect batch provenance, metadata, automated PII scan results, and technical eligibility checklists.
+   - Review prospective submissions, view passenger observation sequences, and record auditable review decisions with technical rationales.
+   - Record participant consent withdrawals and inspect the immutable withdrawal audit trail.
+   - Preview approved export candidates, execute longitudinal dataset exports (v2.0.0), and check export lineage status (`Verified In Sync` vs. `STALE`).
+   - Atomically reconcile and purge withdrawn records from stale exports.
+   - Trigger the 15-gate synthetic rehearsal and view individual gate evidence, warnings, failures, and human action items.
 
 ---
 

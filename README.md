@@ -47,8 +47,8 @@ cd frontend
 npm ci
 npm run type-check
 npm run lint
-npm test                        # 129 tests, no backend needed; the live cross-stack suite has its own command (section 4)
-npm run test:e2e                # 6 Playwright real-browser E2E user journey tests
+npm test                        # 144 tests, no backend needed; the live cross-stack suite has its own command (section 4)
+npm run test:e2e                # 8 Playwright real-browser E2E user journey tests
 npm run dev
 ```
 
@@ -154,6 +154,7 @@ ever run on real data.
   - Chronological splitting that reports an inability to evaluate rather than returning an empty test set.
 - **Web Interface (`frontend/`):** journey and target entry, dynamic passenger rows (1–6), observed and estimated status shown separately, null-safe probability rendering with all five outcome classes, evidence cohort and sample size, per-reason abstention text, provenance block, skip link and labelled controls. `/prediction/[id]` reopens a report the user chose to keep, as it was served.
 - **Prediction history (`backend/railconfirm/storage/`, ADR-0012):** off by default and opt-in per request. When both switches are on, the served report is kept in one local SQLite file with a retention window, and reopening it returns the numbers and model version it was produced with. The write refuses a payload carrying a passenger-name key or a PNR-shaped value.
+- **Operator Workbench & Governance Simulation (`frontend/src/app/operator/`, `backend/railconfirm/data/operator.py`, ADR-0050):** local-only governance interface (`/operator`) for inspecting prospective batches, automated PII pre-scans, submission reviews with technical rationales, participant consent withdrawals with audit trails, longitudinal exports (v2.0.0), lineage tracking (`Verified In Sync` vs `STALE`), atomic reconciliation, and 15-gate synthetic lifecycle rehearsals. Strictly loopback-gated (`127.0.0.1`, `::1`) and disabled by default (`RAILCONFIRM_OPERATOR_ENABLED=false`). Rehearsal reliability hardened with run isolation, explicit directory overwrite policies, and cross-workspace canonical determinism.
 
 ## Principles
 

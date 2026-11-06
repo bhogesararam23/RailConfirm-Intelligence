@@ -76,6 +76,19 @@ This is the one feature that can store submitted ticket data, so it is stated ex
 
 Research datasets should be de-identified and access-controlled. Remove raw PNRs and passenger names. Preserve source IDs, sampling methodology and transformation version without exposing credentials or private data. Small subgroup metrics may also reveal information and should be aggregated appropriately.
 
+## Local operator workbench and loopback security boundary (ADR-0050)
+
+The operator workbench (`/v1/operator/*` and `frontend/src/app/operator/`) is a local-only administrative governance environment. It is **not** a public participant collection portal.
+
+- **Disabled by Default:** `RAILCONFIRM_OPERATOR_ENABLED` defaults to `false`. When disabled, the server returns `403 OPERATOR_DISABLED` for all operator routes.
+- **Strict Server-Side Loopback Gating:** The `require_local_operator` FastAPI dependency inspects `request.client.host`. If the request originates from any IP other than `127.0.0.1` or `::1`, it is immediately rejected with `403 LOCAL_OPERATOR_REQUIRED`. This boundary cannot be bypassed by client headers.
+- **Local Directory Isolation:** Runtime batches, reviews, exports, and rehearsal outputs live under `data/operator/`, which is Git-ignored.
+- **Mandatory PII Pre-Scan:** Automated regex scanning (`scan_for_personal_data`) inspects all prospective batch files for PNR patterns, emails, phone numbers, and passenger names before persistence or display.
+- **Cryptographic Pseudonymization:** All submission identifiers and booking groups are pseudonymized via salted HMAC-SHA256 (`anon_*`). Raw ticket identifiers are never retained.
+- **Consent Withdrawal & Stale Lineage:** Under Digital Personal Data Protection (DPDP) principles, participant consent may be withdrawn at any time. A withdrawal immediately excludes the submission from future exports, marks existing exports as stale (`STALE: Withdrawn Records Present`), and enables atomic reconciliation to purge withdrawn rows.
+- **Synthetic Rehearsal Boundary:** Rehearsal outcomes operate strictly on synthetic fixtures. Rehearsal success proves software path integrity only and does **not** authorize a live pilot or real data collection.
+- **Draft Notice Legal Prerequisite:** The participant consent notice (v2026.1) is a draft that requires qualified legal counsel review before any actual participant recruitment can begin.
+
 ## Incident response
 
 If a credential, PNR or private provider output is accidentally committed:

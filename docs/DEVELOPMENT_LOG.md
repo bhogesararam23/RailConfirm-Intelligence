@@ -2934,3 +2934,67 @@ the existing storage tests. `delete_live` refuses a naive clock before touching 
 ### Open items
 - Real-world pilot remains unauthorized: no dataset is approved, no model is promoted, and no railway probability is validated. Passing the rehearsal does not change any of that.
 - Frontend was untouched, so frontend type-check, lint, tests, build and Playwright E2E were not re-run for this change.
+
+## 2026-11-06 — Local Pilot Operations Workbench & Rehearsal Reliability (ADR-0050)
+
+### Scope
+Delivered Milestone ADR-0050: hardened the 15-gate prospective lifecycle rehearsal, implemented a typed local operator service layer, established server-side loopback and disabled-by-default security boundaries on the API, built the Next.js Operator Workbench UI, and verified the complete operator lifecycle with Playwright browser E2E and unit test suites.
+
+### Added
+- `backend/railconfirm/data/operator.py`: Typed local operator service layer providing `OperatorWorkspace`, `OperatorService`, and lifecycle contracts (`OperatorBatchStatus`, `ProspectiveBatchInspection`, `ProspectiveExportPreview`, `OperatorReviewDecision`, `ConsentWithdrawalRecord`, `LineageReconciliationResult`). Reuses existing prospective, inspection, withdrawal, export, lineage, and rehearsal primitives.
+- `backend/railconfirm/api/v1/operator.py`: Loopback-gated operator workbench endpoints (`/v1/operator/status`, `/v1/operator/batches`, `/v1/operator/batches/seed`, `/v1/operator/batches/{batch_id}`, `/v1/operator/batches/{batch_id}/review`, `/v1/operator/batches/{batch_id}/withdraw`, `/v1/operator/batches/{batch_id}/export-preview`, `/v1/operator/batches/{batch_id}/export`, `/v1/operator/batches/{batch_id}/lineage`, `/v1/operator/batches/{batch_id}/reconcile`, `/v1/operator/rehearsal/run`, `/v1/operator/rehearsal/latest`).
+- `backend/tests/data/test_operator.py`: 6 tests covering the operator service lifecycle: seeding, inspection, review recording, participant consent withdrawal, export preview/execution, lineage verification, and reconciliation.
+- `backend/tests/api/test_operator_api.py`: 3 tests verifying loopback IP gating (`require_local_operator`), configuration disabled toggle (`OPERATOR_DISABLED`), and full API lifecycle.
+- `frontend/src/app/operator/page.tsx`: Operator Workbench page managing batch selection, metrics, seeding, and tab navigation.
+- `frontend/src/components/operator/OperatorBanner.tsx`: Prominent warning banner clarifying offline synthetic governance simulation and non-authorization of real pilots.
+- `frontend/src/components/operator/OperatorOverview.tsx`: Workbench overview metric cards and batch selector controls.
+- `frontend/src/components/operator/BatchAuditView.tsx`: Provenance metadata, automated PII scan audit, and technical eligibility checklist.
+- `frontend/src/components/operator/SubmissionReviewView.tsx`: Submissions table, observation drill-down, and decision drawer with accessible labels and mandatory technical rationale.
+- `frontend/src/components/operator/WithdrawalLineageView.tsx`: Participant consent withdrawal form, immutable audit trail, export preview, longitudinal export execution (v2.0.0), lineage status tracking (`Verified In Sync` vs `STALE`), and atomic reconciliation.
+- `frontend/src/components/operator/RehearsalView.tsx`: 15-gate rehearsal execution, per-gate breakdown with evidence, warnings, failures, and non-authorization callout.
+- `frontend/src/lib/__tests__/operatorApi.test.ts`: 9 unit tests for operator API client functions.
+- `frontend/src/components/operator/__tests__/operatorViews.test.tsx`: 6 unit tests for operator component rendering and interactions.
+- `frontend/e2e/operator.spec.ts`: 2 Playwright real-browser E2E user journeys: navigation via header link, and complete operational lifecycle (seed fixture -> inspect audit -> review submission -> export dataset -> withdraw consent -> detect stale lineage -> reconcile -> execute 15-gate rehearsal).
+- `docs/adr/ADR-0050-local-pilot-operations-workbench-and-rehearsal-reliability.md`: ADR recording rehearsal reliability hardening, operator service layer, loopback security boundary, and workbench UI.
+
+### Changed
+- `backend/railconfirm/data/rehearsal.py`: Hardened run isolation (`runs/{run_id}` and `quarantine/{run_id}`), enforced clean output directory policies against dirty workspaces with existing reports, canonical sorted dict key determinism for cross-workspace consistency, and fail-closed diagnostic report recovery on unhandled exceptions.
+- `backend/tests/data/test_rehearsal.py`: Expanded to 21 tests (+5 tests) covering dirty directory rejection, unhandled exception diagnostic recovery, cross-workspace determinism, and isolated quarantine runs.
+- `backend/railconfirm/config.py`: Added `operator_enabled: bool = False` and `operator_dir: Path = Path("data/operator")`.
+- `backend/railconfirm/api/dependencies.py`: Added `require_local_operator` dependency checking loopback client IP (`127.0.0.1`, `::1`) and operator enabled toggle.
+- `backend/railconfirm/api/app.py`: Registered operator router and injected `OperatorService` into `app.state.operator_service`.
+- `backend/railconfirm/api/v1/schemas.py`: Added typed request/response schemas for operator workbench.
+- `frontend/src/lib/types.ts`: Added TypeScript interfaces for operator status, batches, inspections, submissions, exports, lineage, and rehearsal reports.
+- `frontend/src/lib/api.ts`: Added operator API client methods with error handling and loopback checks.
+- `frontend/src/components/layout/Header.tsx`: Added "Operator" navigation link.
+- `frontend/playwright.config.ts`: Configured `RAILCONFIRM_OPERATOR_ENABLED: 'true'` for web server process.
+- `.gitignore`: Added `data/operator/` to prevent runtime workspace data from being committed.
+- Reconciled documentation across `README.md`, `docs/ROADMAP.md`, `docs/PROJECT_STATUS.md`, `docs/architecture/API_CONTRACT.md`, `docs/data/PROSPECTIVE_COLLECTION_PROTOCOL.md`, `docs/SECURITY_AND_PRIVACY.md`, `docs/technical/TESTING_STRATEGY.md`, and `CHANGELOG.md`.
+
+### Decisions
+- ADR-0050: Enforce strict local-first and loopback-only boundaries for operator endpoints (`require_local_operator`), disabled by default. Isolate rehearsal runs under `runs/{run_id}` and `quarantine/{run_id}`. Require named reviewer and technical rationale for submission review. Maintain clear synthetic disclaimer across UI and rehearsal outputs.
+
+### Bugs found and fixed
+- Rehearsal quarantine integrity gate staging path error with isolated run directories: `_gate_quarantine_integrity_audit` had assumed `quarantine_dir.parent / "batch"`, which broke when quarantined was nested inside `quarantine/{run_id}`. Fixed by explicitly passing `batch_dir`.
+- Mypy import error for pandas stubs when executed from root: resolved by invoking `mypy` from within `backend/` where `pyproject.toml` configuration applies.
+- Mypy attribute mismatch on `ProspectiveAuditReport` and `ExportLineageReport` in `operator.py`: inspected actual dataclass fields via python reflection and aligned `operator.py` with true properties.
+- React unescaped entity warnings in JSX for single quotes: replaced with `&apos;`.
+- Full-screen loading reset cascade in `frontend/src/app/operator/page.tsx`: `loadInitialData` included `selectedBatchId` in its dependency array, which triggered `loadInitialData` on every batch selection or seed event, setting `loading = true` and unmounting the active tab. Fixed by removing `selectedBatchId` from `loadInitialData` dependencies and running `loadInitialData` once on mount.
+- `fetchBatches` object unpack in `page.tsx`: `fetchBatches()` returns `{ batches: [...], count }`. Fixed unpack to `setBatches(bList.batches)` preventing `batches.map is not a function`.
+- Ambiguous Playwright button locator: `getByRole('button', { name: 'Review' })` matched the tab button `Submissions & Review (8)` because Playwright substring matching matches tab headers. Fixed by adding explicit accessible `aria-label="Review ${sub.submission_id}"` on the table button and targeting it in the test.
+- Full-stack smoke bundle origin check: smoke test asserts built client bundles name `http://127.0.0.1:8010`. Built production frontend with `NEXT_PUBLIC_API_URL=http://127.0.0.1:8010`.
+
+### Checks run
+- `ruff check backend/` -> All checks passed (0 errors).
+- `cd backend && python -m mypy` -> Success: no issues found in 52 source files.
+- `pytest backend/tests/ --cov=railconfirm --cov-fail-under=90` -> 1,303 passed in 105.35s (94.43% coverage, required 90%).
+- `cd frontend && npm run type-check` -> Success: 0 errors.
+- `cd frontend && npm run lint` -> Success: 0 warnings, 0 errors.
+- `cd frontend && npm test -- --run` -> 144 passed across 8 test files.
+- `cd frontend && npm run build` -> Next.js production build succeeded cleanly (`/operator` static route 10.3 kB).
+- `cd frontend && npx playwright test` -> 8 passed (17.5s, all E2E user journeys).
+- `python scripts/smoke_full_stack.py` -> Full-stack smoke passed: 11 checks over real loopback sockets.
+- `python scripts/check_repository_hygiene.py` -> Hygiene checks passed: 22 required files, 315 tracked files scanned, 0 secrets, 0 broken links, 0 unlabelled ticket data.
+
+### Open items
+- Pilot collection remains prospective and unauthorized: no real participant data has been collected or approved, and draft consent notices require qualified legal counsel review. The workbench provides the operational tool to govern that pilot once authorized.
