@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from railconfirm.api.v1 import health, predictions
+from railconfirm.api.v1 import health, operator, predictions
 
 router = APIRouter(prefix="/v1")
 router.include_router(health.router)
 router.include_router(predictions.router)
+router.include_router(operator.router)

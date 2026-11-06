@@ -82,6 +82,12 @@ class Settings(BaseSettings):
     # How long a stored report survives before a purge may remove it.
     prediction_retention_days: int = 30
 
+    # ── Operator workbench (ADR-0050) ──────────────────────────────────────────
+    # Local operator tools are disabled by default. Enabling requires local-only
+    # access (127.0.0.1 / ::1) and an explicit operator directory.
+    operator_enabled: bool = False
+    operator_dir: Path = Path("data/operator")
+
     # ── Inference ──────────────────────────────────────────────────────────────
     # Minimum sample threshold below which the baseline abstains.
     min_sample_threshold: int = 30
@@ -98,7 +104,7 @@ class Settings(BaseSettings):
     # Version tag for the currently loaded dataset.
     data_version: str = "none"
 
-    @field_validator("data_dir", "models_dir", "storage_dir", mode="after")
+    @field_validator("data_dir", "models_dir", "storage_dir", "operator_dir", mode="after")
     @classmethod
     def _anchor_directories(cls, value: Path) -> Path:
         return anchor_path(value)

@@ -15,6 +15,7 @@ Key rules
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -444,3 +445,165 @@ class HealthResponse(BaseModel):
             "are stored. Empty when history is disabled — nothing is written by default."
         ),
     )
+
+
+# ── Operator workbench schemas (ADR-0050) ──────────────────────────────────────
+
+
+class OperatorStatusResponse(BaseModel):
+    """GET /v1/operator/status response."""
+
+    operator_enabled: bool
+    workspace_root: str
+    batches_count: int
+    total_submissions: int
+    total_pending_review: int
+    total_approved: int
+    total_withdrawn: int
+    latest_rehearsal_passed: bool | None = None
+    is_synthetic_environment: bool = True
+
+
+class BatchSummarySchema(BaseModel):
+    """Summary of a prospective collection batch."""
+
+    batch_id: str
+    file_path: str
+    schema_version: str
+    created_at: str
+    total_submissions: int
+    approved_count: int
+    rejected_count: int
+    quarantined_count: int
+    pending_count: int
+    withdrawn_count: int
+    canonical_sha256: str
+
+
+class BatchListResponse(BaseModel):
+    """GET /v1/operator/batches response."""
+
+    batches: list[BatchSummarySchema] = Field(default_factory=list)
+    count: int
+
+
+class BatchInspectionResponse(BaseModel):
+    """GET /v1/operator/batches/{batch_id} response."""
+
+    summary: BatchSummarySchema
+    pii_scan: dict[str, Any]
+    audit_report: dict[str, Any]
+    submissions: list[dict[str, Any]]
+    withdrawal_log: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ReviewSubmissionRequestBody(BaseModel):
+    """POST /v1/operator/batches/{batch_id}/review request body."""
+
+    submission_id: str = Field(..., min_length=1)
+    action: str = Field(..., description="Review action: approved, rejected, quarantined, flagged_for_clarification")
+    reviewer: str = Field(..., min_length=1)
+    rationale: str = Field(..., min_length=1)
+
+
+class ReviewSubmissionResponse(BaseModel):
+    """POST /v1/operator/batches/{batch_id}/review response."""
+
+    submission_id: str
+    action: str
+    reviewer: str
+    reviewed_at: str
+    rationale: str
+    batch_sha256: str
+    batch_summary: BatchSummarySchema
+
+
+class WithdrawSubmissionRequestBody(BaseModel):
+    """POST /v1/operator/batches/{batch_id}/withdraw request body."""
+
+    submission_id: str = Field(..., min_length=1)
+    reason: str = Field(..., min_length=1)
+    operator: str = Field(..., min_length=1)
+
+
+class WithdrawSubmissionResponse(BaseModel):
+    """POST /v1/operator/batches/{batch_id}/withdraw response."""
+
+    submission_id: str
+    operator: str
+    reason: str
+    withdrawn_at: str
+    batch_sha256: str
+    audit_record: dict[str, Any]
+    batch_summary: BatchSummarySchema
+
+
+class ExportPreviewResponse(BaseModel):
+    """GET /v1/operator/batches/{batch_id}/export-preview response."""
+
+    batch_id: str
+    total_considered: int
+    approved_count: int
+    excluded_count: int
+    booking_groups_count: int
+    passenger_reservations_count: int
+    preview_booking_groups: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ExportExecutionRequestBody(BaseModel):
+    """POST /v1/operator/batches/{batch_id}/export request body."""
+
+    dataset_id: str | None = None
+    source_id: str | None = None
+
+
+class ExportExecutionResponse(BaseModel):
+    """POST /v1/operator/batches/{batch_id}/export response."""
+
+    batch_id: str
+    dataset_id: str
+    export_path: str
+    source_batch_sha256: str
+    booking_groups_count: int
+    passenger_reservations_count: int
+    lineage_status: str
+
+
+class LineageInspectionResponse(BaseModel):
+    """GET /v1/operator/batches/{batch_id}/lineage response."""
+
+    batch_id: str
+    export_path: str
+    is_synced: bool
+    status: str
+    source_sha256_matches: bool
+    recorded_source_sha256: str
+    current_source_sha256: str
+    withdrawn_groups_present: list[str] = Field(default_factory=list)
+    unapproved_groups_present: list[str] = Field(default_factory=list)
+    new_approved_groups_missing: list[str] = Field(default_factory=list)
+    violations: list[str] = Field(default_factory=list)
+
+
+class ReconcileExecutionResponse(BaseModel):
+    """POST /v1/operator/batches/{batch_id}/reconcile response."""
+
+    batch_id: str
+    export_path: str
+    reconciled_booking_groups: int
+    lineage: LineageInspectionResponse
+
+
+class RehearsalRunRequestBody(BaseModel):
+    """POST /v1/operator/rehearsal/run request body."""
+
+    salt: str | None = None
+    run_timestamp: datetime | None = None
+
+
+class RehearsalRunResponse(BaseModel):
+    """POST /v1/operator/rehearsal/run response."""
+
+    report: dict[str, Any]
+    summary_text: str
+

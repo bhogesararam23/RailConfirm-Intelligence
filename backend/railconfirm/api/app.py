@@ -16,7 +16,10 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from railconfirm.data.operator import OperatorService
 
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -161,6 +164,8 @@ class MaxBodySizeMiddleware(BaseHTTPMiddleware):
 def create_app(
     engine: InferenceEngine | None = None,
     prediction_store: PredictionStore | None = None,
+    operator_service: OperatorService | None = None,
+    operator_enabled: bool | None = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application.
 
@@ -173,6 +178,11 @@ def create_app(
         Optional history store. When it is omitted, one is opened only if
         ``RAILCONFIRM_PERSIST_PREDICTIONS`` is enabled — otherwise the app keeps no
         history at all and says so in the response.
+    operator_service:
+        Optional operator service instance. When omitted, one is opened from
+        ``settings.operator_dir`` if operator mode is enabled.
+    operator_enabled:
+        Optional explicit operator mode flag. Defaults to ``settings.operator_enabled`` (False).
     """
     configure_logging()
 
@@ -183,6 +193,15 @@ def create_app(
             settings.storage_dir / "predictions.sqlite3",
             retention_days=settings.prediction_retention_days,
         )
+
+    resolved_operator_enabled = (
+        operator_enabled if operator_enabled is not None else settings.operator_enabled
+    )
+    resolved_operator_service = operator_service
+    if resolved_operator_service is None and resolved_operator_enabled:
+        from railconfirm.data.operator import OperatorService
+
+        resolved_operator_service = OperatorService.from_directory(settings.operator_dir)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -207,6 +226,8 @@ def create_app(
 
     app.state.engine = resolved_engine
     app.state.prediction_store = store
+    app.state.operator_enabled = resolved_operator_enabled
+    app.state.operator_service = resolved_operator_service
 
     # ── Middleware (outermost last) ────────────────────────────────────────────
     app.add_middleware(MaxBodySizeMiddleware, max_bytes=settings.max_request_bytes)
