@@ -27,7 +27,9 @@ steps, and no synthetic result is a statement about railway behaviour.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import shutil
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from enum import Enum
@@ -295,6 +297,22 @@ class RehearsalReport:
             "gates": [g.to_dict() for g in self.gates],
         }
 
+    def canonical_dict(self) -> dict[str, Any]:
+        """A workspace-independent projection of the rehearsal report.
+
+        Used to demonstrate that two runs under the same configuration are
+        semantically and byte-for-byte identical regardless of which absolute
+        directory was used as the workspace.
+        """
+        payload = self.to_dict()
+        payload["workspace"] = "<canonical_workspace>"
+        return payload
+
+    def canonical_fingerprint(self) -> str:
+        """Cryptographic SHA-256 fingerprint of the workspace-independent report."""
+        data = json.dumps(self.canonical_dict(), sort_keys=True, indent=2).encode("utf-8")
+        return hashlib.sha256(data).hexdigest()
+
 
 # ── Deterministic synthetic fixtures ───────────────────────────────────────────
 
@@ -519,6 +537,18 @@ def _contaminated_batch(batch: ProspectiveBatch) -> ProspectiveBatch:
 # ── Runner ─────────────────────────────────────────────────────────────────────
 
 
+ALLOWED_WORKSPACE_ROOT_ENTRIES: frozenset[str] = frozenset({
+    "batch",
+    "export",
+    "quarantine",
+    "reports",
+    "fs_integrity",
+    "runs",
+    "rehearsal_report.json",
+    "rehearsal_report.txt",
+})
+
+
 def run_prospective_rehearsal(
     workspace: Path | str,
     *,
@@ -547,56 +577,107 @@ def run_prospective_rehearsal(
             f"Rehearsal salt must be at least {MIN_SALT_LENGTH} characters."
         )
 
+    if ws.exists():
+        if not ws.is_dir():
+            raise DatasetValidationError(
+                f"Rehearsal workspace path must be a directory, but found an existing file: {ws}"
+            )
+        for entry in ws.iterdir():
+            if entry.name.startswith(".tmp_"):
+                continue
+            if entry.name not in ALLOWED_WORKSPACE_ROOT_ENTRIES:
+                raise DatasetValidationError(
+                    f"Rehearsal workspace '{ws}' contains unrelated existing file or directory '{entry.name}'. "
+                    "Explicit output-directory policy requires an empty directory or a dedicated rehearsal "
+                    "workspace to prevent accidental modification or data contamination."
+                )
+
+    run_id = f"REH_{ts.strftime('%Y%m%dT%H%M%SZ')}"
     batch_dir = ws / "batch"
     export_dir = ws / "export"
-    quarantine_dir = ws / "quarantine"
+    quarantine_dir = ws / "quarantine" / run_id
     reports_dir = ws / "reports"
-    for directory in (batch_dir, export_dir, quarantine_dir, reports_dir):
+    runs_dir = ws / "runs" / run_id
+    run_reports_dir = runs_dir / "reports"
+
+    for directory in (batch_dir, export_dir, reports_dir, runs_dir, run_reports_dir):
         directory.mkdir(parents=True, exist_ok=True)
+
+    if quarantine_dir.exists():
+        shutil.rmtree(quarantine_dir)
+    quarantine_dir.mkdir(parents=True, exist_ok=True)
 
     gates: list[RehearsalGate] = []
 
-    batch = build_primary_batch(salt=effective_salt)
-    batch_path = batch_dir / "primary_batch.json"
-    batch.save(batch_path)
+    def _fail_remaining(after_gate_id: str, reason: str) -> None:
+        found = False
+        for gid in REHEARSAL_GATE_ORDER:
+            if gid == "final_readiness":
+                continue
+            if gid == after_gate_id:
+                found = True
+                continue
+            if found:
+                gate = RehearsalGate(gid, gid.replace("_", " ").title())
+                gate.fail(f"Skipped due to upstream failure: {reason}")
+                gates.append(gate)
 
-    gates.append(_gate_synthetic_batch_generation(batch, batch_path, ts))
-    gates.append(_gate_pii_and_identifier_scan(batch, effective_salt))
-    gates.append(_gate_schema_and_governance_audit(batch, batch_path))
+    try:
+        batch = build_primary_batch(salt=effective_salt)
+        batch_path = batch_dir / "primary_batch.json"
+        batch.save(batch_path)
 
-    _review_primary_batch(batch)
-    gates.append(_gate_human_review_workflow(batch))
+        gates.append(_gate_synthetic_batch_generation(batch, batch_path, ts))
+        gates.append(_gate_pii_and_identifier_scan(batch, effective_salt))
+        gates.append(_gate_schema_and_governance_audit(batch, batch_path))
 
-    withdrawal_evidence = _withdraw_submission_006(batch, ts)
-    gates.append(_gate_withdrawal_lifecycle(batch, withdrawal_evidence))
-    batch.save(batch_path)
+        _review_primary_batch(batch)
+        gates.append(_gate_human_review_workflow(batch))
 
-    export_path = export_dir / "approved_export.json"
-    export_gate, exported = _run_approved_export(batch, export_path, ts)
-    gates.append(export_gate)
+        withdrawal_evidence = _withdraw_submission_006(batch, ts)
+        gates.append(_gate_withdrawal_lifecycle(batch, withdrawal_evidence))
+        batch.save(batch_path)
 
-    gates.append(_gate_export_lineage_verification(batch, exported))
+        export_path = export_dir / "approved_export.json"
+        export_gate, exported = _run_approved_export(batch, export_path, ts)
+        gates.append(export_gate)
 
-    mutation_gate, stale_gate = _run_source_mutation_scenarios(batch, exported)
-    gates.append(mutation_gate)
-    gates.append(stale_gate)
+        gates.append(_gate_export_lineage_verification(batch, exported))
 
-    reconcile_gate, reconciled = _run_safe_reconciliation(batch, export_path, ts)
-    gates.append(reconcile_gate)
+        mutation_gate, stale_gate = _run_source_mutation_scenarios(batch, exported)
+        gates.append(mutation_gate)
+        gates.append(stale_gate)
 
-    gates.append(_gate_quarantine_integrity_audit(batch, quarantine_dir))
-    gates.append(_gate_filesystem_integrity(ws, reconciled, ts))
-    gates.append(_gate_scientific_safeguards(batch, reconciled))
-    gates.append(_gate_structured_abstention())
+        reconcile_gate, reconciled = _run_safe_reconciliation(batch, export_path, ts)
+        gates.append(reconcile_gate)
+
+        gates.append(_gate_quarantine_integrity_audit(batch, quarantine_dir, batch_dir))
+        gates.append(_gate_filesystem_integrity(ws, reconciled, ts))
+        gates.append(_gate_scientific_safeguards(batch, reconciled))
+        gates.append(_gate_structured_abstention())
+    except Exception as exc:
+        last_gate_id = gates[-1].gate_id if gates else "initialization"
+        error_gate = RehearsalGate(
+            "execution_failure",
+            "Lifecycle execution failure",
+        )
+        error_gate.fail(f"Execution failed with {type(exc).__name__}: {exc}")
+        gates.append(error_gate)
+        _fail_remaining(last_gate_id, f"{type(exc).__name__}: {exc}")
 
     report = RehearsalReport(
-        run_id=f"REH_{ts.strftime('%Y%m%dT%H%M%SZ')}",
+        run_id=run_id,
         run_timestamp=ts.isoformat(),
         workspace=str(ws),
         gates=gates,
     )
     report.gates.append(_gate_final_readiness(report))
-    _write_reports(report, reports_dir)
+    try:
+        _write_reports(report, reports_dir)
+        _write_reports(report, run_reports_dir)
+    except Exception:
+        # Best-effort attempt to write report
+        pass
     return report
 
 
@@ -1195,13 +1276,20 @@ def _load_export(path: Path) -> Any:
 
 
 def _gate_quarantine_integrity_audit(
-    batch: ProspectiveBatch, quarantine_dir: Path
+    batch: ProspectiveBatch,
+    quarantine_dir: Path,
+    batch_dir: Path | None = None,
 ) -> RehearsalGate:
     gate = RehearsalGate(
         "quarantine_integrity_audit",
         "Quarantine integrity audit",
     )
-    staging = quarantine_dir.parent / "batch" / "contaminated_for_quarantine.json"
+    if batch_dir is not None:
+        staging = batch_dir / "contaminated_for_quarantine.json"
+    elif (quarantine_dir.parent / "batch").exists():
+        staging = quarantine_dir.parent / "batch" / "contaminated_for_quarantine.json"
+    else:
+        staging = quarantine_dir / "contaminated_for_quarantine.json"
     contaminated = _contaminated_batch(batch)
     contaminated.save(staging)
 

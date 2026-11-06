@@ -205,3 +205,96 @@ def test_cli_rehearsal_rejects_a_short_salt(tmp_path: Path, capsys) -> None:
 
     assert exit_code == 1
     assert "Rehearsal could not start" in capsys.readouterr().err
+
+
+# ── Reliability & Hardening (ADR-0050) ─────────────────────────────────────────
+
+
+def test_rehearsal_repeated_runs_at_different_timestamps_are_isolated(tmp_path: Path) -> None:
+    workspace = tmp_path / "shared_workspace"
+    ts1 = datetime(2026, 5, 1, 10, 0, tzinfo=UTC)
+    ts2 = datetime(2026, 5, 2, 14, 30, tzinfo=UTC)
+
+    report1 = run_prospective_rehearsal(workspace, run_timestamp=ts1)
+    report2 = run_prospective_rehearsal(workspace, run_timestamp=ts2)
+
+    assert report1.software_rehearsal_passed is True
+    assert report2.software_rehearsal_passed is True
+
+    # Quarantine is isolated by run_id
+    q1 = workspace / "quarantine" / report1.run_id
+    q2 = workspace / "quarantine" / report2.run_id
+    assert q1.is_dir()
+    assert q2.is_dir()
+    assert q1 != q2
+
+    # Runs archive is populated for both
+    runs_dir = workspace / "runs"
+    assert (runs_dir / report1.run_id / "reports" / "rehearsal_report.json").is_file()
+    assert (runs_dir / report2.run_id / "reports" / "rehearsal_report.json").is_file()
+
+
+def test_rehearsal_output_directory_policy_rejects_unrelated_files(tmp_path: Path) -> None:
+    workspace = tmp_path / "dirty_ws"
+    workspace.mkdir(parents=True)
+    unrelated_file = workspace / "unrelated_user_data.csv"
+    unrelated_file.write_text("raw,ticket,data\n1,2,3\n", encoding="utf-8")
+
+    with pytest.raises(DatasetValidationError) as exc_info:
+        run_prospective_rehearsal(workspace)
+
+    assert "unrelated existing file or directory" in str(exc_info.value)
+    assert "unrelated_user_data.csv" in str(exc_info.value)
+
+
+def test_rehearsal_output_directory_policy_rejects_existing_file_target(tmp_path: Path) -> None:
+    file_target = tmp_path / "a_file.txt"
+    file_target.write_text("not a directory", encoding="utf-8")
+
+    with pytest.raises(DatasetValidationError) as exc_info:
+        run_prospective_rehearsal(file_target)
+
+    assert "must be a directory, but found an existing file" in str(exc_info.value)
+
+
+def test_rehearsal_determinism_across_different_workspaces(tmp_path: Path) -> None:
+    ws1 = tmp_path / "workspace_alpha"
+    ws2 = tmp_path / "workspace_beta"
+
+    rep1 = run_prospective_rehearsal(ws1)
+    rep2 = run_prospective_rehearsal(ws2)
+
+    assert rep1.software_rehearsal_passed is True
+    assert rep2.software_rehearsal_passed is True
+    assert rep1.canonical_fingerprint() == rep2.canonical_fingerprint()
+    assert rep1.canonical_dict() == rep2.canonical_dict()
+
+
+def test_rehearsal_unexpected_gate_exception_produces_diagnostic_report(
+    tmp_path: Path, monkeypatch
+) -> None:
+    workspace = tmp_path / "failing_ws"
+
+    # Inject a simulated runtime failure into one of the gates
+    from railconfirm.data import prospective
+
+    def broken_scan(*args, **kwargs):
+        raise RuntimeError("Simulated memory or hardware fault during scan.")
+
+    monkeypatch.setattr(prospective, "scan_for_personal_data", broken_scan)
+
+    report = run_prospective_rehearsal(workspace)
+
+    assert report.software_rehearsal_passed is False
+    assert report.overall_status is GateStatus.FAIL
+
+    # Report files must still be written to disk with diagnostic information
+    report_json_path = workspace / "reports" / "rehearsal_report.json"
+    report_txt_path = workspace / "reports" / "rehearsal_report.txt"
+    assert report_json_path.is_file()
+    assert report_txt_path.is_file()
+
+    loaded = json.loads(report_json_path.read_text(encoding="utf-8"))
+    assert loaded["software_rehearsal_passed"] is False
+    assert any("Simulated memory or hardware fault" in str(f) for f in loaded.get("gates", []))
+
