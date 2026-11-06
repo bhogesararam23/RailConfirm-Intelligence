@@ -35,6 +35,12 @@ export function Header() {
           >
             Data governance
           </Link>
+          <Link
+            href="/operator"
+            className="rounded hover:text-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            Operator
+          </Link>
         </nav>
       </div>
     </header>

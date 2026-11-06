@@ -1,9 +1,15 @@
 import type {
   ApiErrorBody,
+  BatchInspection,
+  BatchSummary,
   ErrorDetail,
+  ExportPreview,
   HealthResponse,
+  LineageInspection,
+  OperatorStatus,
   PredictionRequest,
   PredictionResponse,
+  RehearsalReportData,
   StoredReportsResponse,
 } from './types';
 
@@ -246,4 +252,126 @@ export function isLoopbackApi(url = configuredApiUrl()): boolean {
   } catch {
     return false;
   }
+}
+
+// ── Operator workbench endpoints (ADR-0050) ────────────────────────────────────
+
+export function fetchOperatorStatus(timeoutMs = REQUEST_TIMEOUT_MS): Promise<OperatorStatus> {
+  return requestJson<OperatorStatus>('/v1/operator/status', { method: 'GET' }, timeoutMs);
+}
+
+export function fetchBatches(timeoutMs = REQUEST_TIMEOUT_MS): Promise<{ batches: BatchSummary[]; count: number }> {
+  return requestJson<{ batches: BatchSummary[]; count: number }>('/v1/operator/batches', { method: 'GET' }, timeoutMs);
+}
+
+export function seedSyntheticBatch(timeoutMs = REQUEST_TIMEOUT_MS): Promise<BatchSummary> {
+  return requestJson<BatchSummary>('/v1/operator/batches/seed', { method: 'POST' }, timeoutMs);
+}
+
+export function inspectBatch(batchId: string, timeoutMs = REQUEST_TIMEOUT_MS): Promise<BatchInspection> {
+  return requestJson<BatchInspection>(`/v1/operator/batches/${encodeURIComponent(batchId)}`, { method: 'GET' }, timeoutMs);
+}
+
+export function reviewSubmission(
+  batchId: string,
+  submissionId: string,
+  action: string,
+  reviewer: string,
+  rationale: string,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+): Promise<unknown> {
+  return requestJson<unknown>(
+    `/v1/operator/batches/${encodeURIComponent(batchId)}/review`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ submission_id: submissionId, action, reviewer, rationale }),
+    },
+    timeoutMs,
+  );
+}
+
+export function withdrawSubmission(
+  batchId: string,
+  submissionId: string,
+  reason: string,
+  operator: string,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+): Promise<unknown> {
+  return requestJson<unknown>(
+    `/v1/operator/batches/${encodeURIComponent(batchId)}/withdraw`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ submission_id: submissionId, reason, operator }),
+    },
+    timeoutMs,
+  );
+}
+
+export function previewExport(batchId: string, timeoutMs = REQUEST_TIMEOUT_MS): Promise<ExportPreview> {
+  return requestJson<ExportPreview>(
+    `/v1/operator/batches/${encodeURIComponent(batchId)}/export-preview`,
+    { method: 'GET' },
+    timeoutMs,
+  );
+}
+
+export function executeExport(
+  batchId: string,
+  datasetId?: string,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+): Promise<unknown> {
+  return requestJson<unknown>(
+    `/v1/operator/batches/${encodeURIComponent(batchId)}/export`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dataset_id: datasetId }),
+    },
+    timeoutMs,
+  );
+}
+
+export function inspectLineage(batchId: string, timeoutMs = REQUEST_TIMEOUT_MS): Promise<LineageInspection> {
+  return requestJson<LineageInspection>(
+    `/v1/operator/batches/${encodeURIComponent(batchId)}/lineage`,
+    { method: 'GET' },
+    timeoutMs,
+  );
+}
+
+export function reconcileExport(batchId: string, timeoutMs = REQUEST_TIMEOUT_MS): Promise<unknown> {
+  return requestJson<unknown>(
+    `/v1/operator/batches/${encodeURIComponent(batchId)}/reconcile`,
+    { method: 'POST' },
+    timeoutMs,
+  );
+}
+
+export function runRehearsal(
+  salt?: string,
+  runTimestamp?: string,
+  timeoutMs = 60000,
+): Promise<{ report: RehearsalReportData; summary_text: string }> {
+  return requestJson<{ report: RehearsalReportData; summary_text: string }>(
+    '/v1/operator/rehearsal/run',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ salt, run_timestamp: runTimestamp }),
+    },
+    timeoutMs,
+  );
+}
+
+export function fetchLatestRehearsal(timeoutMs = REQUEST_TIMEOUT_MS): Promise<RehearsalReportData | null> {
+  return requestJson<RehearsalReportData>('/v1/operator/rehearsal/latest', { method: 'GET' }, timeoutMs).catch(
+    (err) => {
+      if (err instanceof ApiFailure && err.status === 404) {
+        return null;
+      }
+      throw err;
+    },
+  );
 }

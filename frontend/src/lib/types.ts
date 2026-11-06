@@ -253,3 +253,138 @@ export type QuotaCode = keyof typeof QUOTA_CODES;
 
 /** Mirrors MAX_PASSENGERS_PER_REQUEST on the server. */
 export const MAX_PASSENGERS = 6;
+
+// ── Operator workbench types (ADR-0050) ────────────────────────────────────────
+
+export interface OperatorStatus {
+  operator_enabled: boolean;
+  workspace_root: string;
+  batches_count: number;
+  total_submissions: number;
+  total_pending_review: number;
+  total_approved: number;
+  total_withdrawn: number;
+  latest_rehearsal_passed: boolean | null;
+  is_synthetic_environment: boolean;
+}
+
+export interface BatchSummary {
+  batch_id: string;
+  file_path: string;
+  schema_version: string;
+  created_at: string;
+  total_submissions: number;
+  approved_count: number;
+  rejected_count: number;
+  quarantined_count: number;
+  pending_count: number;
+  withdrawn_count: number;
+  canonical_sha256: string;
+}
+
+export interface BatchInspection {
+  summary: BatchSummary;
+  pii_scan: {
+    passed: boolean;
+    findings_count: number;
+    findings: string[];
+  };
+  audit_report: {
+    batch_id: string;
+    total_submissions: number;
+    total_passengers: number;
+    unique_trains: string[];
+    unique_journey_dates: string[];
+    class_distribution: Record<string, number>;
+    quota_distribution: Record<string, number>;
+    quality_warnings: string[];
+    structural_errors: string[];
+    is_technically_eligible: boolean;
+    is_scientifically_adequate: boolean;
+    is_model_training_approved: boolean;
+  };
+  submissions: Array<{
+    submission_id: string;
+    pseudonym_group_id: string;
+    train_number: string;
+    journey_date: string;
+    boarding_station: string;
+    destination_station: string;
+    class_code: string;
+    quota_code: string;
+    scheduled_departure_at: string;
+    review_status: string;
+    review_notes: string | null;
+    reviewed_by: string | null;
+    reviewed_at: string | null;
+    passengers: Array<{
+      passenger_sequence: number;
+      original_status_raw: string;
+      original_status_category: string;
+      original_status_position: number | null;
+      outcome?: {
+        outcome_status_raw: string;
+        outcome_category: string;
+        verification_method: string;
+        label_confidence: string;
+      } | null;
+    }>;
+  }>;
+  withdrawal_log: Array<{
+    submission_id: string;
+    pseudonym_group_id: string;
+    withdrawn_at: string;
+    reason: string;
+    operator: string;
+    prior_review_status: string;
+  }>;
+}
+
+export interface LineageInspection {
+  batch_id: string;
+  export_path: string;
+  is_synced: boolean;
+  status: string;
+  source_sha256_matches: boolean;
+  recorded_source_sha256: string;
+  current_source_sha256: string;
+  withdrawn_groups_present: string[];
+  unapproved_groups_present: string[];
+  new_approved_groups_missing: string[];
+  violations: string[];
+}
+
+export interface ExportPreview {
+  batch_id: string;
+  total_considered: number;
+  approved_count: number;
+  excluded_count: number;
+  booking_groups_count: number;
+  passenger_reservations_count: number;
+  preview_booking_groups: Array<Record<string, unknown>>;
+}
+
+export interface RehearsalGateResult {
+  gate_id: string;
+  title: string;
+  evidence: string[];
+  failures: string[];
+  warnings: string[];
+  human_actions: string[];
+}
+
+export interface RehearsalReportData {
+  schema_version: string;
+  run_id: string;
+  run_timestamp: string;
+  workspace: string;
+  is_synthetic: boolean;
+  overall_status: 'pass' | 'warn' | 'fail';
+  software_rehearsal_passed: boolean;
+  real_world_pilot_authorized: boolean;
+  readiness_statement: string;
+  missing_gate_ids: string[];
+  gate_count: number;
+  failed_gate_count: number;
+  gates: RehearsalGateResult[];
+}

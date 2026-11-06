@@ -52,6 +52,7 @@ export default defineConfig({
       env: {
         RAILCONFIRM_HISTORY_ENABLED: 'true',
         RAILCONFIRM_PERSIST_PREDICTIONS: 'true',
+        RAILCONFIRM_OPERATOR_ENABLED: 'true',
         RAILCONFIRM_CORS_ALLOWED_ORIGINS: JSON.stringify([
           'http://localhost:3000',
           'http://127.0.0.1:3000',

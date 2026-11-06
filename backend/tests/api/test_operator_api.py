@@ -191,3 +191,4 @@ def test_operator_api_lifecycle_and_security_controls(test_operator_ws: Path) ->
     latest_reh_resp = client.get("/v1/operator/rehearsal/latest")
     assert latest_reh_resp.status_code == 200
     assert latest_reh_resp.json()["software_rehearsal_passed"] is True
+
